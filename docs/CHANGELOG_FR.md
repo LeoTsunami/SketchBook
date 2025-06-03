@@ -15,4 +15,19 @@
     - Configuration du .gitignore pour projet Python
     - Mise en place de la structure de documentation dans docs/
     - Création du README.md principal pour la visibilité du projet
-    → Résultat : Le projet est maintenant correctement versionné et documenté sur GitHub 
+    → Résultat : Le projet est maintenant correctement versionné et documenté sur GitHub
+
+### ✅ Tâches :
+- Référence Design UI
+    - Ajout d'une image de référence pour le navigateur d'images
+    - Création d'un document détaillé des spécifications UI
+    - Documentation du système de design et des composants
+    → Résultat : Lignes directrices UI clairement établies pour le développement
+
+### ✅ Tâches :
+- Implémentation du Gestionnaire de Paramètres
+    - Création du template settings.json avec la configuration par défaut
+    - Implémentation de la classe Settings avec validation et vérification de types
+    - Ajout de tests unitaires complets pour la gestion des paramètres
+    - Mise en place de la persistance des données avec stockage JSON
+    → Résultat : Système de paramètres robuste prêt pour la configuration de l'application 
