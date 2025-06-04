@@ -22,7 +22,7 @@ Update this file via prompt:
   - [x] Set up documentation structure
   - [x] Create initial README.md
 
-### Phase 2: Core Features Foundation 🔄 (In Progress)
+### Phase 2: Core Features Foundation ✅ (Completed: 2024-03-27)
 - [x] Define internal settings format (JSON)
   - [x] Create settings.json template
   - [x] Implement settings manager in `core/settings.py`
@@ -31,28 +31,36 @@ Update this file via prompt:
   - [x] Directory creation/validation
 - [x] Create first GUI window
   - [x] Empty Qt window with basic menu structure
-  - [x] Dark/Light mode support preparation
+  - [x] Dark/Light mode support with persistence
+  - [x] Theme system implementation
 
-### Phase 3: Image Management Basics
+### Phase 3: Image Management Basics ✅ (Completed: 2024-03-27)
 - [x] Implement image import system
   - [x] File dialog for selection
   - [x] Drag & drop support
-  - [x] Basic error handling
+  - [x] Comprehensive error handling
+  - [x] Progress tracking and user feedback
 - [x] Create image processing utilities
-  - [x] Auto-resize/compress images (1080p max width)
+  - [x] Auto-resize/compress images (1920p max width)
   - [x] Format standardization
+  - [x] Image optimization
 - [x] Set up local image database structure
-  - [x] Design JSON/SQLite schema for image metadata
-  - [x] Implement basic CRUD operations
+  - [x] Implement Pydantic models for metadata
+  - [x] Create JSON-based storage system
+  - [x] Implement CRUD operations
+  - [x] Add tag-based search functionality
 
 ---
 
 ## 🧠 DISCOVERIES / QUESTIONS
 
 - [x] Research best practices for Qt application architecture
-- [ ] Investigate efficient image processing methods with Pillow
-- [ ] Plan database schema for extensibility
+- [x] Investigate efficient image processing methods with Pillow
+- [x] Plan database schema for extensibility
 - [ ] Document setup process for new developers
+- [ ] Consider adding image format conversion options
+- [ ] Consider implementing batch processing options for large imports
+- [ ] Consider adding image preview functionality
 
 ---
 
@@ -83,8 +91,8 @@ Update this file via prompt:
 ### v0.1 – Foundation (Current Goal)
 - [x] Basic project structure
 - [x] Working GUI shell
-- [ ] Image import & storage
-- [ ] Initial documentation
+- [x] Image import & storage
+- [x] Initial documentation
 
 ### v0.2 – Core Features
 - [ ] Manual image tagging
