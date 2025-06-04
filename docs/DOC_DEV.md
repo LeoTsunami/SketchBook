@@ -183,4 +183,34 @@ image_files = list_files(data_dir, "*.jpg", recursive=True)
 - Implementation: `utils/file_utils.py`
 - Unit tests: `tests/test_file_utils.py`
 
+## Main Window (`gui/main_window.py`)
+
+The main window provides the application's primary interface and menu structure.
+
+### Features
+
+- File menu:
+  - Import Images (Ctrl+I)
+  - Exit (Alt+F4)
+- View menu:
+  - Theme switching (Light/Dark)
+- Help menu:
+  - About dialog
+
+### Theme Support
+
+The application supports light and dark themes, controlled via:
+```python
+from gui.main_window import MainWindow
+
+window = MainWindow()
+window._set_theme("dark")  # or "light"
+```
+
+Theme settings are persisted in the application settings.
+
+### File Locations
+- Implementation: `gui/main_window.py`
+- Unit tests: `tests/test_main_window.py`
+
 --- 

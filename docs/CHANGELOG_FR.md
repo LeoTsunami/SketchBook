@@ -46,3 +46,13 @@
         - Implémentation des opérations sécurisées sur les fichiers et validation des répertoires
         - Ajout de tests unitaires complets avec pytest
         → Résultat: Utilitaires système de fichiers robustes prêts à être utilisés dans l'application 
+
+### ✅ Tâches:
+    - Implémentation de la Fenêtre GUI
+        - Création de la fenêtre principale avec structure de menu (Fichier, Affichage, Aide)
+        - Implémentation du changement de thème (Mode Clair/Sombre)
+        - Ajout de la barre d'état et de la boîte de dialogue À propos
+        - Création de tests unitaires complets
+        → Résultat: Interface graphique de base prête avec support des thèmes
+
+--- 
