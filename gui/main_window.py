@@ -151,5 +151,30 @@ class MainWindow(QMainWindow):
                 }
             """)
         else:
-            # Light theme (default Qt style)
-            self.setStyleSheet("") 
+            # Light theme
+            self.setStyleSheet("""
+                QMainWindow {
+                    background-color: #ffffff;
+                    color: #000000;
+                }
+                QMenuBar {
+                    background-color: #f0f0f0;
+                    color: #000000;
+                }
+                QMenuBar::item:selected {
+                    background-color: #0078d7;
+                    color: #ffffff;
+                }
+                QMenu {
+                    background-color: #ffffff;
+                    color: #000000;
+                }
+                QMenu::item:selected {
+                    background-color: #0078d7;
+                    color: #ffffff;
+                }
+                QStatusBar {
+                    background-color: #f0f0f0;
+                    color: #000000;
+                }
+            """) 
