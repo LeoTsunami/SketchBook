@@ -11,7 +11,7 @@ from qtpy.QtWidgets import (
     QStatusBar
 )
 from qtpy.QtCore import Qt
-from qtpy.QtGui import QAction
+from qtpy.QtGui import QAction, QActionGroup
 from core.settings import settings
 
 class MainWindow(QMainWindow):
@@ -62,14 +62,18 @@ class MainWindow(QMainWindow):
         
         # - Theme submenu
         theme_menu = QMenu("&Theme", self)
+        theme_group = QActionGroup(self)
+        theme_group.setExclusive(True)
         
         light_theme_action = QAction("&Light", self)
         light_theme_action.setCheckable(True)
         light_theme_action.triggered.connect(lambda: self._set_theme("light"))
+        theme_group.addAction(light_theme_action)
         
         dark_theme_action = QAction("&Dark", self)
         dark_theme_action.setCheckable(True)
         dark_theme_action.triggered.connect(lambda: self._set_theme("dark"))
+        theme_group.addAction(dark_theme_action)
         
         # Set initial check state
         if settings.get("ui.theme") == "dark":
