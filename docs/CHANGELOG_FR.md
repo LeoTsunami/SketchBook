@@ -55,4 +55,18 @@
         - Création de tests unitaires complets
         → Résultat: Interface graphique de base prête avec support des thèmes
 
+## 2024-03-26
+### ✅ Tâches :
+    - Système d'Import d'Images
+        - Implémentation de la boîte de dialogue de sélection de fichiers
+        - Ajout du support glisser-déposer pour les images
+        - Création des utilitaires de traitement d'images
+        → Résultat : Les utilisateurs peuvent maintenant importer des images via une boîte de dialogue ou par glisser-déposer, avec redimensionnement et optimisation automatiques
+    
+    - Base de Données d'Images
+        - Conception et implémentation du stockage de métadonnées en JSON
+        - Ajout du support des tags et des notes pour les images
+        - Création des opérations CRUD pour la gestion des métadonnées
+        → Résultat : Système complet de gestion des métadonnées pour les images importées
+
 --- 

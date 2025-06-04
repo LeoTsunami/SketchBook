@@ -213,4 +213,141 @@ Theme settings are persisted in the application settings.
 - Implementation: `gui/main_window.py`
 - Unit tests: `tests/test_main_window.py`
 
+## Image Management System
+
+### Image Import
+The image import system is implemented in `core/image_manager.py` and provides the following features:
+
+- Supported formats: JPG, JPEG, PNG
+- Automatic image processing:
+  - Resizing to max width of 1920px (preserving aspect ratio)
+  - Conversion to RGB color space
+  - JPEG compression with configurable quality
+  - Unique filename generation to prevent conflicts
+
+#### Usage Example
+```python
+from core.image_manager import ImageManager
+
+# Initialize manager
+manager = ImageManager()
+
+# Import single image
+result_path = manager.import_image(source_path)
+if result_path:
+    print(f"Image imported to: {result_path}")
+
+# Import multiple images
+successful, total = manager.import_images([path1, path2, path3])
+print(f"Imported {successful} out of {total} images")
+
+# Get list of imported images
+images = manager.get_image_list()
+```
+
+### GUI Integration
+The main window (`gui/main_window.py`) implements image import via:
+
+1. File Dialog:
+   - Accessible through File > Import Images... menu
+   - Filters for supported image formats
+   - Multiple file selection support
+
+2. Drag & Drop:
+   - Accepts files with supported extensions
+   - Validates file types before accepting drop
+   - Provides visual feedback during drag
+
+### Configuration
+Image processing settings can be customized via the settings system:
+
+- `images.storage_path`: Directory for imported images (default: "data/images")
+- `images.compression.quality`: JPEG compression quality (default: 85)
+
+### Image Database
+The image database system is implemented in `core/image_db.py` and provides a JSON-based storage solution for image metadata.
+
+#### Data Model
+```python
+class ImageMetadata(BaseModel):
+    id: str                  # Unique identifier (filename without extension)
+    path: Path              # Path to image file relative to storage directory
+    original_filename: str   # Original filename before import
+    import_date: datetime   # Import timestamp
+    width: int              # Image width in pixels
+    height: int             # Image height in pixels
+    file_size: int         # File size in bytes
+    format: str            # Image format (e.g., 'JPEG', 'PNG')
+    tags: List[str]        # User-defined tags
+    notes: str             # User notes about the image
+```
+
+#### Database Operations
+The `ImageDatabase` class provides the following operations:
+
+1. **Add Image**
+   ```python
+   db.add_image(metadata: ImageMetadata) -> bool
+   ```
+   - Adds new image metadata to the database
+   - Returns `False` if image ID already exists
+
+2. **Get Image**
+   ```python
+   db.get_image(image_id: str) -> Optional[ImageMetadata]
+   ```
+   - Retrieves metadata for a specific image
+   - Returns `None` if image not found
+
+3. **Update Image**
+   ```python
+   db.update_image(image_id: str, **updates) -> bool
+   ```
+   - Updates metadata fields for an image
+   - Returns `False` if image not found
+
+4. **Delete Image**
+   ```python
+   db.delete_image(image_id: str) -> bool
+   ```
+   - Removes image metadata from database
+   - Returns `False` if image not found
+
+5. **List Images**
+   ```python
+   db.list_images() -> List[ImageMetadata]
+   ```
+   - Returns list of all image metadata
+
+6. **Search Images**
+   ```python
+   db.search_images(tags: Optional[List[str]] = None) -> List[ImageMetadata]
+   ```
+   - Searches images by tags
+   - Returns all images if no tags specified
+
+#### Storage Format
+The database is stored in JSON format with the following structure:
+```json
+{
+  "image_id_1": {
+    "id": "image_id_1",
+    "path": "relative/path/to/image.jpg",
+    "original_filename": "original.jpg",
+    "import_date": "2024-03-26T12:34:56",
+    "width": 1920,
+    "height": 1080,
+    "file_size": 1024000,
+    "format": "JPEG",
+    "tags": ["landscape", "nature"],
+    "notes": "Mountain vista"
+  },
+  // ... more images ...
+}
+```
+
+#### Configuration
+Database settings can be customized via the settings system:
+- `images.db_path`: Path to the JSON database file (default: "data/config/images.json")
+
 --- 

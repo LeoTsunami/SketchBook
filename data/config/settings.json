@@ -12,12 +12,17 @@
             "columns": 4,
             "spacing": 16,
             "card_ratio": "3:4"
-        }
+        },
+        "dev_mode": false
     },
     "images": {
         "storage_path": "data/images",
         "max_width": 1920,
-        "formats": ["jpg", "jpeg", "png"],
+        "formats": [
+            "jpg",
+            "jpeg",
+            "png"
+        ],
         "compression": {
             "enabled": true,
             "quality": 85
@@ -27,10 +32,15 @@
         "auto_save": true,
         "save_path": "data/sessions",
         "default_duration": 300,
-        "intervals": [30, 60, 120, 300]
+        "intervals": [
+            30,
+            60,
+            120,
+            300
+        ]
     },
     "database": {
         "type": "json",
         "path": "data/db.json"
     }
-} 
+}

@@ -2,7 +2,10 @@
 Tests for the main window.
 """
 import pytest
-from qtpy.QtCore import Qt
+from pathlib import Path
+from PIL import Image
+from qtpy.QtCore import Qt, QMimeData, QUrl
+from qtpy.QtGui import QDragEnterEvent, QDropEvent
 from gui.main_window import MainWindow
 from core.settings import settings
 
@@ -12,6 +15,14 @@ def main_window(qtbot):
     window = MainWindow()
     qtbot.addWidget(window)
     return window
+
+@pytest.fixture
+def sample_image(tmp_path):
+    """Create a sample test image."""
+    image_path = tmp_path / "test.jpg"
+    image = Image.new('RGB', (100, 100), color='red')
+    image.save(image_path, 'JPEG')
+    return image_path
 
 def test_window_title(main_window):
     """Test window title."""
@@ -67,4 +78,82 @@ def test_about_dialog(main_window, qtbot):
     about_action = next(action for action in help_menu.actions() if action.text() == "&About")
     
     # Click should not raise any exception
-    about_action.trigger() 
+    about_action.trigger()
+
+def test_import_dialog(main_window, qtbot, tmp_path, monkeypatch):
+    """Test image import via dialog."""
+    # Create test image
+    test_image = tmp_path / "test.jpg"
+    Image.new('RGB', (100, 100), color='red').save(test_image)
+    
+    # Mock file dialog
+    def mock_get_files(*args, **kwargs):
+        return [str(test_image)], None
+    
+    monkeypatch.setattr(
+        main_window.findChild(main_window.menuBar().__class__, "&File"),
+        "getOpenFileNames",
+        mock_get_files
+    )
+    
+    # Trigger import action
+    import_action = next(
+        action for action in main_window.menuBar().actions()
+        if "&Import Images..." in action.text()
+    )
+    import_action.trigger()
+    
+    # Verify status message
+    assert "Successfully imported 1 images" in main_window.statusBar().currentMessage()
+
+def test_drag_and_drop(main_window, qtbot, sample_image):
+    """Test drag and drop image import."""
+    # Create mime data with image URL
+    mime_data = QMimeData()
+    mime_data.setUrls([QUrl.fromLocalFile(str(sample_image))])
+    
+    # Simulate drag enter
+    drag_event = QDragEnterEvent(
+        main_window.pos(),
+        Qt.CopyAction,
+        mime_data,
+        Qt.LeftButton,
+        Qt.NoModifier
+    )
+    main_window.dragEnterEvent(drag_event)
+    assert drag_event.isAccepted()
+    
+    # Simulate drop
+    drop_event = QDropEvent(
+        main_window.pos(),
+        Qt.CopyAction,
+        mime_data,
+        Qt.LeftButton,
+        Qt.NoModifier
+    )
+    main_window.dropEvent(drop_event)
+    assert drop_event.isAccepted()
+    
+    # Verify status message
+    assert "Successfully imported 1 images" in main_window.statusBar().currentMessage()
+
+def test_invalid_drop(main_window, qtbot, tmp_path):
+    """Test dropping invalid files."""
+    # Create invalid file
+    invalid_file = tmp_path / "test.txt"
+    invalid_file.write_text("Not an image")
+    
+    # Create mime data with invalid URL
+    mime_data = QMimeData()
+    mime_data.setUrls([QUrl.fromLocalFile(str(invalid_file))])
+    
+    # Simulate drag enter
+    drag_event = QDragEnterEvent(
+        main_window.pos(),
+        Qt.CopyAction,
+        mime_data,
+        Qt.LeftButton,
+        Qt.NoModifier
+    )
+    main_window.dragEnterEvent(drag_event)
+    assert not drag_event.isAccepted() 

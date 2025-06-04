@@ -34,16 +34,16 @@ Update this file via prompt:
   - [x] Dark/Light mode support preparation
 
 ### Phase 3: Image Management Basics
-- [ ] Implement image import system
-  - [ ] File dialog for selection
-  - [ ] Drag & drop support
-  - [ ] Basic error handling
-- [ ] Create image processing utilities
-  - [ ] Auto-resize/compress images (1080p max width)
-  - [ ] Format standardization
-- [ ] Set up local image database structure
-  - [ ] Design JSON/SQLite schema for image metadata
-  - [ ] Implement basic CRUD operations
+- [x] Implement image import system
+  - [x] File dialog for selection
+  - [x] Drag & drop support
+  - [x] Basic error handling
+- [x] Create image processing utilities
+  - [x] Auto-resize/compress images (1080p max width)
+  - [x] Format standardization
+- [x] Set up local image database structure
+  - [x] Design JSON/SQLite schema for image metadata
+  - [x] Implement basic CRUD operations
 
 ---
 
