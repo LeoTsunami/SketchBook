@@ -30,4 +30,19 @@
     - Implémentation de la classe Settings avec validation et vérification de types
     - Ajout de tests unitaires complets pour la gestion des paramètres
     - Mise en place de la persistance des données avec stockage JSON
-    → Résultat : Système de paramètres robuste prêt pour la configuration de l'application 
+    → Résultat : Système de paramètres robuste prêt pour la configuration de l'application
+
+## 2024-03-07
+### ✅ Tâches:
+    - Implémentation du Gestionnaire de Paramètres
+        - Création du modèle settings.json avec la configuration par défaut
+        - Implémentation du gestionnaire de paramètres dans core/settings.py avec fonctionnalités complètes
+        - Ajout de tests unitaires complets dans tests/test_settings.py
+        → Résultat: Système complet de gestion des paramètres avec persistance JSON, validation des types et couverture de tests 
+
+### ✅ Tâches:
+    - Implémentation des Utilitaires Système de Fichiers
+        - Création de file_utils.py avec gestion des chemins et des répertoires
+        - Implémentation des opérations sécurisées sur les fichiers et validation des répertoires
+        - Ajout de tests unitaires complets avec pytest
+        → Résultat: Utilitaires système de fichiers robustes prêts à être utilisés dans l'application 

@@ -102,4 +102,85 @@ Format: `[type]: [module] Action description`
 🔍 Affected files:
 - path/to/file1
 - path/to/file2
-``` 
+```
+
+## Settings Manager (`core/settings.py`)
+
+The Settings Manager provides a centralized way to handle application configuration. It uses JSON for persistence and includes type validation.
+
+### Usage
+
+```python
+from core.settings import settings
+
+# Get a setting (with optional default)
+theme = settings.get("ui.theme", default="dark")
+
+# Set a setting
+settings.set("ui.theme", "light")
+
+# Save changes
+settings.save()
+
+# Reset to defaults
+settings.reset()
+
+# Get all settings
+all_settings = settings.all
+```
+
+### Configuration Structure
+
+The settings are organized in the following structure:
+```json
+{
+    "version": "0.1.0",
+    "ui": {
+        "theme": "dark",
+        "language": "fr",
+        "window": {...},
+        "grid": {...}
+    },
+    "images": {...},
+    "session": {...},
+    "database": {...}
+}
+```
+
+### File Locations
+- Default configuration: `data/config/settings.json`
+- Unit tests: `tests/test_settings.py`
+
+## File System Utilities (`utils/file_utils.py`)
+
+The File System Utilities module provides safe and convenient functions for file and directory operations.
+
+### Usage
+
+```python
+from utils.file_utils import ensure_dir, safe_path, list_files
+
+# Create/ensure directory exists
+data_dir = ensure_dir("data/images")
+
+# Safely join paths (prevents directory traversal)
+safe_file_path = safe_path(data_dir, "user_uploads", "image.jpg")
+
+# List files with pattern matching
+image_files = list_files(data_dir, "*.jpg", recursive=True)
+```
+
+### Available Functions
+
+- `ensure_dir(path)`: Create/ensure directory exists
+- `validate_dir(path)`: Check if directory exists and is accessible
+- `safe_path(base_path, *parts)`: Safely join paths (prevents directory traversal)
+- `list_files(directory, pattern="*", recursive=False)`: List files matching pattern
+- `safe_remove(path)`: Safely remove file or directory
+- `get_file_size(path)`: Get file size in bytes
+
+### File Locations
+- Implementation: `utils/file_utils.py`
+- Unit tests: `tests/test_file_utils.py`
+
+--- 
