@@ -36,39 +36,52 @@ class ImageManager:
         """
         with open(image_path, "rb") as f:
             print(f"Hashing image: {image_path}")
-            print(f"File size: {os.path.getsize(image_path)} bytes")
+            print(f"Hash: {hashlib.sha256(f.read()).hexdigest()}")
             return hashlib.sha256(f.read()).hexdigest()
     
-    def _is_duplicate(self, source_path: Path, hash_value: str) -> bool:
+    def _is_duplicate(self, source_path: Path, source_img: Image.Image) -> bool:
         """
-        Check if an image is already imported.
+        Check if an image is already imported by comparing name, size and resolution.
         
         Args:
             source_path: Path to the source image
-            hash_value: SHA-256 hash of the image content
+            source_img: PIL Image object of the source image
             
         Returns:
             True if the image is a duplicate
         """
-        # First check if hash exists in metadata
+        print(f"\n=== Starting duplicate check for: {source_path} ===")
+        source_name = source_path.stem.lower()  # Nom sans extension en minuscules
+        source_size = source_path.stat().st_size
+        source_resolution = source_img.size
+        
+        print(f"Source details:")
+        print(f"- Name (without extension): {source_name}")
+        print(f"- Size: {source_size} bytes")
+        print(f"- Resolution: {source_resolution}")
+        
         for metadata in self.db.list_images():
-            if hasattr(metadata, 'hash') and metadata.hash == hash_value:
-                print(f"Found duplicate by hash: {source_path}")
+            # Si le chemin original est le même, c'est un doublon
+            if metadata.original_path and Path(metadata.original_path) == source_path:
+                print(f"\n=== DUPLICATE FOUND (same path) ===")
+                print(f"Matches with: {metadata.original_filename}")
                 return True
             
-            # If no hash in metadata (legacy data), check file content
-            existing_path = self.image_dir / metadata.path
-            if existing_path.exists():
-                # Compare file sizes first (quick check)
-                if existing_path.stat().st_size == source_path.stat().st_size:
-                    # Compare hashes (more thorough)
-                    existing_hash = self._compute_image_hash(existing_path)
-                    if existing_hash == hash_value:
-                        # Update metadata with hash if missing
-                        if not hasattr(metadata, 'hash'):
-                            self.db.update_image(metadata.id, hash=existing_hash)
-                        print(f"Found duplicate by content: {source_path}")
-                        return True
+            # Compare la taille et la résolution
+            if metadata.file_size == source_size and \
+               metadata.width == source_resolution[0] and \
+               metadata.height == source_resolution[1]:
+                # Si même taille et résolution, on compare les noms (sans extension)
+                existing_name = metadata.original_filename.rsplit('.', 1)[0].lower()
+                if source_name == existing_name:
+                    print(f"\n=== DUPLICATE FOUND ===")
+                    print(f"Matches with: {metadata.original_filename}")
+                    print(f"Same name: {source_name}")
+                    print(f"Same size: {source_size}")
+                    print(f"Same resolution: {source_resolution}")
+                    return True
+        
+        print(f"\n=== No duplicates found ===\n")
         return False
     
     def find_images_in_directory(self, directory: Path) -> List[Path]:
@@ -105,14 +118,18 @@ class ImageManager:
         total = len(image_paths)
         
         for path in image_paths:
-            # Compute hash before import to check for duplicates
-            hash_value = self._compute_image_hash(path)
-            if self._is_duplicate(path, hash_value):
-                duplicates += 1
+            try:
+                # Ouvrir l'image pour vérifier les doublons
+                with Image.open(path) as img:
+                    if self._is_duplicate(path, img):
+                        duplicates += 1
+                        continue
+                        
+                    if self.import_image(path) is not None:
+                        successful += 1
+            except Exception as e:
+                print(f"Error processing image {path}: {str(e)}")
                 continue
-                
-            if self.import_image(path) is not None:
-                successful += 1
         
         return successful, duplicates, total
     
@@ -134,18 +151,16 @@ class ImageManager:
             if source_path.suffix.lower() not in self.SUPPORTED_FORMATS:
                 raise ValueError(f"Unsupported image format: {source_path.suffix}")
             
-            # Check for duplicates
-            hash_value = self._compute_image_hash(source_path)
-            if self._is_duplicate(source_path, hash_value):
-                print(f"Skipping duplicate image: {source_path}")
-                return None
-            
-            # Create unique filename
-            dest_filename = f"{source_path.stem}_{os.urandom(4).hex()}{source_path.suffix.lower()}"
-            dest_path = safe_path(self.image_dir, dest_filename)
-            
-            # Process and save image
+            # Ouvre l'image pour vérifier si c'est un doublon
             with Image.open(source_path) as img:
+                if self._is_duplicate(source_path, img):
+                    print(f"Skipping duplicate image: {source_path}")
+                    return None
+                
+                # Create unique filename
+                dest_filename = f"{source_path.stem}_{os.urandom(4).hex()}{source_path.suffix.lower()}"
+                dest_path = safe_path(self.image_dir, dest_filename)
+                
                 # Get original dimensions
                 original_width, original_height = img.size
                 
@@ -176,7 +191,7 @@ class ImageManager:
                     height=img.height,
                     file_size=dest_path.stat().st_size,
                     format=img.format or "JPEG",
-                    hash=hash_value  # Store hash for future duplicate checks
+                    original_path=str(source_path)
                 )
                 self.db.add_image(metadata)
             
@@ -208,14 +223,18 @@ class ImageManager:
                 total += t
             else:
                 total += 1
-                # Check for duplicates
-                hash_value = self._compute_image_hash(path)
-                if self._is_duplicate(path, hash_value):
-                    duplicates += 1
+                try:
+                    # Ouvrir l'image pour vérifier les doublons
+                    with Image.open(path) as img:
+                        if self._is_duplicate(path, img):
+                            duplicates += 1
+                            continue
+                            
+                        if self.import_image(path) is not None:
+                            successful += 1
+                except Exception as e:
+                    print(f"Error processing image {path}: {str(e)}")
                     continue
-                    
-                if self.import_image(path) is not None:
-                    successful += 1
         
         return successful, duplicates, total
     

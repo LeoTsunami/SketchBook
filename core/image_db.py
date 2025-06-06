@@ -4,80 +4,85 @@ Local database for image metadata management.
 import json
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional
+from typing import Dict, List, Optional, Set
 from pydantic import BaseModel, Field
 from core.settings import settings
+from dataclasses import dataclass, asdict, field
 
-class ImageMetadata(BaseModel):
-    """Model for image metadata."""
-    
-    id: str = Field(..., description="Unique identifier (filename without extension)")
-    path: Path = Field(..., description="Path to image file relative to storage directory")
-    original_filename: str = Field(..., description="Original filename before import")
-    import_date: datetime = Field(default_factory=datetime.now)
-    width: int = Field(..., description="Image width in pixels")
-    height: int = Field(..., description="Image height in pixels")
-    file_size: int = Field(..., description="File size in bytes")
-    format: str = Field(..., description="Image format (e.g., 'JPEG', 'PNG')")
-    hash: str = Field(..., description="SHA-256 hash of image content")
-    tags: List[str] = Field(default_factory=list, description="User-defined tags")
-    notes: str = Field(default="", description="User notes about the image")
+@dataclass
+class ImageMetadata:
+    """Metadata for an imported image."""
+    id: str
+    path: str
+    original_filename: str
+    width: int
+    height: int
+    file_size: int
+    format: str
+    original_path: str = ""  # Path to the original image file
+    tags: Set[str] = field(default_factory=set)
 
 class ImageDatabase:
     """Local database for image metadata."""
     
     def __init__(self):
         """Initialize the database."""
-        self.db_path = Path(settings.get("images.db_path", "data/config/images.json"))
-        self.db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._db_path = Path(settings.get("images.db_path", "data/config/images.json")).resolve()
+        self._db_path.parent.mkdir(parents=True, exist_ok=True)
+        self._images = {}
         self._load_db()
     
     def _load_db(self):
-        """Load database from file."""
-        if self.db_path.exists():
-            try:
-                data = json.loads(self.db_path.read_text())
-                self._images = {
-                    id_: ImageMetadata(**metadata)
-                    for id_, metadata in data.items()
-                }
-            except Exception as e:
-                print(f"Error loading image database: {e}")
-                self._images = {}
-        else:
+        """Load the database from disk."""
+        try:
+            if self._db_path.exists():
+                with open(self._db_path, "r") as f:
+                    data = json.load(f)
+                    self._images = {
+                        id: ImageMetadata(**{
+                            k: set(v) if k == "tags" else v
+                            for k, v in metadata.items()
+                        })
+                        for id, metadata in data.items()
+                    }
+        except Exception as e:
+            print(f"Error loading image database: {str(e)}")
             self._images = {}
     
     def _save_db(self):
-        """Save database to file."""
-        data = {
-            id_: metadata.model_dump()
-            for id_, metadata in self._images.items()
-        }
-        self.db_path.write_text(json.dumps(data, indent=2, default=str))
+        """Save the database to disk."""
+        try:
+            with open(self._db_path, "w") as f:
+                json.dump(
+                    {
+                        id: {
+                            k: list(v) if k == "tags" else v
+                            for k, v in asdict(metadata).items()
+                        }
+                        for id, metadata in self._images.items()
+                    },
+                    f,
+                    indent=2
+                )
+        except Exception as e:
+            print(f"Error saving image database: {str(e)}")
     
-    def add_image(self, metadata: ImageMetadata) -> bool:
+    def add_image(self, metadata: ImageMetadata):
         """
-        Add image metadata to database.
+        Add or update image metadata.
         
         Args:
             metadata: Image metadata to add
-            
-        Returns:
-            True if successful, False if image already exists
         """
-        if metadata.id in self._images:
-            return False
-        
         self._images[metadata.id] = metadata
         self._save_db()
-        return True
     
     def get_image(self, image_id: str) -> Optional[ImageMetadata]:
         """
-        Get image metadata by ID.
+        Get metadata for an image.
         
         Args:
-            image_id: Image ID to look up
+            image_id: ID of the image
             
         Returns:
             Image metadata or None if not found
@@ -89,7 +94,7 @@ class ImageDatabase:
         Update image metadata.
         
         Args:
-            image_id: ID of image to update
+            image_id: ID of the image to update
             **updates: Fields to update and their new values
             
         Returns:
@@ -97,10 +102,11 @@ class ImageDatabase:
         """
         if image_id not in self._images:
             return False
-        
+            
         metadata = self._images[image_id]
-        for field, value in updates.items():
-            setattr(metadata, field, value)
+        for key, value in updates.items():
+            if hasattr(metadata, key):
+                setattr(metadata, key, value)
         
         self._save_db()
         return True
@@ -110,17 +116,16 @@ class ImageDatabase:
         Delete image metadata.
         
         Args:
-            image_id: ID of image to delete
+            image_id: ID of the image to delete
             
         Returns:
             True if successful, False if image not found
         """
-        if image_id not in self._images:
-            return False
-        
-        del self._images[image_id]
-        self._save_db()
-        return True
+        if image_id in self._images:
+            del self._images[image_id]
+            self._save_db()
+            return True
+        return False
     
     def list_images(self) -> List[ImageMetadata]:
         """
@@ -143,8 +148,10 @@ class ImageDatabase:
         """
         if not tags:
             return self.list_images()
-        
+            
+        tag_set = set(tags)
         return [
-            metadata for metadata in self._images.values()
-            if all(tag in metadata.tags for tag in tags)
+            metadata
+            for metadata in self._images.values()
+            if metadata.tags & tag_set == tag_set
         ] 

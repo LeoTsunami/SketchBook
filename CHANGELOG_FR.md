@@ -20,4 +20,13 @@
   - Ajout de la fonctionnalité de recherche
   → Résultat : Système efficace d'organisation et de recherche d'images
 
+## 2024-03-19
+### ✅ Tâches:
+    - Correction du Système d'Import d'Images
+
+        - Correction de la détection des doublons utilisant la comparaison des métadonnées
+        - Ajout du suivi du chemin original pour une détection exacte des doublons
+        - Amélioration des logs de détection des doublons
+        → Résultat: Détection fiable des doublons avec un meilleur retour utilisateur
+
 --- 

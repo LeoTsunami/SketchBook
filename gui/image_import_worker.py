@@ -4,6 +4,7 @@ Worker class for handling image imports in a background thread.
 from pathlib import Path
 from typing import List
 import traceback
+from PIL import Image
 from qtpy.QtCore import QObject, QRunnable, Signal, Slot, QThread
 
 class ImageImportSignals(QObject):
@@ -12,6 +13,7 @@ class ImageImportSignals(QObject):
     finished = Signal(int, int, int)  # successful, duplicates, total
     error = Signal(str)
     log = Signal(str, str)  # message, level
+    image_imported = Signal(str)  # image_id of successfully imported image
 
 class ImageImportWorker(QRunnable):
     """Worker for importing images in a background thread."""
@@ -45,6 +47,7 @@ class ImageImportWorker(QRunnable):
     def _log(self, message: str, level: str = "INFO"):
         """Emit a log message."""
         self.signals.log.emit(message, level)
+        print(f"[{level}] {message}")  # Add console logging for debugging
         
     @Slot()
     def run(self):
@@ -87,43 +90,26 @@ class ImageImportWorker(QRunnable):
                 try:
                     self._log(f"Processing {path.name} ({i}/{total})")
                     
-                    # Check for duplicates
-                    try:
-                        hash_value = self.image_manager._compute_image_hash(path)
-                    except Exception as e:
-                        self._log(f"Error computing hash for {path.name}: {str(e)}", "ERROR")
-                        self._log(traceback.format_exc(), "ERROR")
-                        errors += 1
-                        self._emit_progress(i, total)
-                        continue
-                    
-                    try:
-                        if self.image_manager._is_duplicate(path, hash_value):
-                            self._log(f"Skipping duplicate: {path.name}", "INFO")
-                            duplicates += 1
-                        else:
-                            result = self.image_manager.import_image(path)
-                            if result is not None:
-                                successful += 1
-                                self._log(f"Successfully imported: {path.name}")
-                            else:
-                                self._log(f"Failed to import: {path.name}", "ERROR")
-                                errors += 1
-                    except Exception as e:
-                        self._log(f"Error processing {path.name}: {str(e)}", "ERROR")
-                        self._log(traceback.format_exc(), "ERROR")
-                        errors += 1
-                        continue
-                    finally:
-                        # Emit progress even if there was an error
-                        self._emit_progress(i, total)
-                    
+                    # Try to import the image directly - duplicate check is handled in import_image
+                    result = self.image_manager.import_image(path)
+                    if result is not None:
+                        successful += 1
+                        self._log(f"Successfully imported: {path.name}")
+                        # Emit signal with the stem (ID) of the imported image
+                        self.signals.image_imported.emit(result.stem)
+                    else:
+                        # If result is None, it might be a duplicate or error
+                        self._log(f"Image not imported (possible duplicate): {path.name}", "INFO")
+                        duplicates += 1
+                        
                 except Exception as e:
-                    self._log(f"Unexpected error processing {path.name}: {str(e)}", "ERROR")
+                    self._log(f"Error processing {path.name}: {str(e)}", "ERROR")
                     self._log(traceback.format_exc(), "ERROR")
                     errors += 1
-                    self._emit_progress(i, total)
                     continue
+                finally:
+                    # Emit progress even if there was an error
+                    self._emit_progress(i, total)
             
             # Ensure we emit 100% progress
             self._emit_progress(total, total)
