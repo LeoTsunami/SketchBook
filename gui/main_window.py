@@ -15,13 +15,16 @@ from qtpy.QtWidgets import (
     QProgressBar,
     QDockWidget,
     QTextEdit,
-    QLabel
+    QLabel,
+    QSplitter
 )
 from qtpy.QtCore import Qt, QThreadPool, QMetaObject, Q_ARG, Slot, QThread
 from qtpy.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent
 from core.settings import settings
 from core.image_manager import ImageManager
 from gui.image_import_worker import ImageImportWorker
+from gui.image_grid import ImageGrid
+from gui.tag_manager import TagManager
 
 class MainWindow(QMainWindow):
     """Main window of the application."""
@@ -55,6 +58,9 @@ class MainWindow(QMainWindow):
         
         # Enable drag and drop
         self.setAcceptDrops(True)
+        
+        # Load initial images
+        self.image_grid.load_images()
     
     def _setup_ui(self):
         """Set up the main UI components."""
@@ -62,9 +68,60 @@ class MainWindow(QMainWindow):
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
         
-        # Create layout
+        # Create main layout
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(10, 10, 10, 10)
+        layout.setSpacing(10)
+        
+        # Create tag manager
+        self.tag_manager = TagManager()
+        self.tag_manager.tags_changed.connect(self._on_tags_changed)
+        layout.addWidget(self.tag_manager)
+        
+        # Create image grid
+        self.image_grid = ImageGrid(self.image_manager)
+        self.image_grid.image_clicked.connect(self._on_image_clicked)
+        layout.addWidget(self.image_grid)
+        
+        # Update available tags
+        self._update_available_tags()
+    
+    def _update_available_tags(self):
+        """Update the list of available tags in the tag manager."""
+        # Collect all unique tags from the database
+        all_tags = set()
+        for metadata in self.image_manager.db.list_images():
+            all_tags.update(metadata.tags)
+        
+        self.tag_manager.set_available_tags(sorted(all_tags))
+    
+    def _on_tags_changed(self, active_tags: List[str]):
+        """
+        Handle changes in active tags.
+        
+        Args:
+            active_tags: List of currently active tags
+        """
+        # Update image grid with new filter
+        self.image_grid.load_images(active_tags if active_tags else None)
+    
+    def _on_image_clicked(self, image_id: str):
+        """
+        Handle image click events.
+        
+        Args:
+            image_id: ID of the clicked image
+        """
+        # For now, just show image metadata
+        metadata = self.image_manager.get_image_metadata(image_id)
+        if metadata:
+            QMessageBox.information(
+                self,
+                "Image Info",
+                f"Image: {metadata.original_filename}\n"
+                f"Size: {metadata.width}x{metadata.height}\n"
+                f"Tags: {', '.join(metadata.tags) if metadata.tags else 'No tags'}"
+            )
     
     def _setup_dev_tools(self):
         """Set up development tools dock widget."""
@@ -321,6 +378,10 @@ class MainWindow(QMainWindow):
             
             # Clean up all progress bars
             self._cleanup_progress_bars()
+            
+            # Reload images and update tags
+            self.image_grid.load_images()
+            self._update_available_tags()
             
         except Exception as e:
             print(f"Error in import finished handler: {e}")
