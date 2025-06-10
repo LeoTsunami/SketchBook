@@ -16,7 +16,9 @@ from qtpy.QtWidgets import (
     QDockWidget,
     QTextEdit,
     QLabel,
-    QSplitter
+    QSplitter,
+    QHBoxLayout,
+    QSlider
 )
 from qtpy.QtCore import Qt, QThreadPool, QMetaObject, Q_ARG, Slot, QThread
 from qtpy.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent
@@ -78,9 +80,33 @@ class MainWindow(QMainWindow):
         self.tag_manager.tags_changed.connect(self._on_tags_changed)
         layout.addWidget(self.tag_manager)
         
+        # Create grid controls
+        grid_controls = QHBoxLayout()
+        
+        # Add column control slider
+        columns_label = QLabel("Columns:")
+        self.columns_slider = QSlider(Qt.Horizontal)
+        self.columns_slider.setMinimum(3)
+        self.columns_slider.setMaximum(8)
+        self.columns_slider.setValue(settings.get("ui.grid.columns", 4))
+        self.columns_slider.setTickPosition(QSlider.TicksBelow)
+        self.columns_slider.setTickInterval(1)
+        self.columns_slider.valueChanged.connect(self._on_columns_changed)
+        
+        # Add column count label
+        self.columns_count = QLabel(str(self.columns_slider.value()))
+        
+        grid_controls.addWidget(columns_label)
+        grid_controls.addWidget(self.columns_slider)
+        grid_controls.addWidget(self.columns_count)
+        grid_controls.addStretch()
+        
+        layout.addLayout(grid_controls)
+        
         # Create image grid
         self.image_grid = ImageGrid(self.image_manager)
         self.image_grid.image_clicked.connect(self._on_image_clicked)
+        self.image_grid.set_columns(self.columns_slider.value())
         layout.addWidget(self.image_grid)
         
         # Update available tags
@@ -655,4 +681,10 @@ class MainWindow(QMainWindow):
                     self,
                     "Purge Error",
                     f"Error purging library: {str(e)}"
-                ) 
+                )
+
+    def _on_columns_changed(self, value: int):
+        """Handle column slider value changes."""
+        self.columns_count.setText(str(value))
+        self.image_grid.set_columns(value)
+        settings.set("ui.grid.columns", value) 
