@@ -82,24 +82,28 @@ class MainWindow(QMainWindow):
         
         # Create grid controls
         grid_controls = QHBoxLayout()
+        grid_controls.setContentsMargins(0, 0, 10, 0)  # Reduced margins
         
         # Add column control slider
         columns_label = QLabel("Columns:")
+        columns_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")  # Smaller, dimmer text
         self.columns_slider = QSlider(Qt.Horizontal)
-        self.columns_slider.setMinimum(3)
-        self.columns_slider.setMaximum(8)
+        self.columns_slider.setMinimum(4)  # Changed from 3 to 4
+        self.columns_slider.setMaximum(10)  # Changed from 8 to 10
         self.columns_slider.setValue(settings.get("ui.grid.columns", 4))
-        self.columns_slider.setTickPosition(QSlider.TicksBelow)
-        self.columns_slider.setTickInterval(1)
+        self.columns_slider.setTickPosition(QSlider.NoTicks)  # Removed ticks for cleaner look
+        self.columns_slider.setFixedWidth(100)  # Fixed width for more compact look
         self.columns_slider.valueChanged.connect(self._on_columns_changed)
         
         # Add column count label
         self.columns_count = QLabel(str(self.columns_slider.value()))
+        self.columns_count.setStyleSheet("color: #aaaaaa; font-size: 11px;")  # Matching style
         
+        # Add widgets to layout with right alignment
+        grid_controls.addStretch()  # Push everything to the right
         grid_controls.addWidget(columns_label)
         grid_controls.addWidget(self.columns_slider)
         grid_controls.addWidget(self.columns_count)
-        grid_controls.addStretch()
         
         layout.addLayout(grid_controls)
         
