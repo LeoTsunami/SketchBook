@@ -167,7 +167,8 @@ class ImageGrid(QScrollArea):
     """Scrollable grid of image thumbnails."""
     
     image_clicked = Signal(str)  # Emits image ID when an image is clicked
-    LOAD_BATCH_SIZE = 20  # Number of images to load in each batch
+    BASE_BATCH_SIZE = 20  # Base number of images to load per batch (for 4 columns)
+    MIN_ROWS_LOADED = 5  # Minimum number of rows to load
     
     def __init__(self, image_manager: ImageManager, parent=None):
         """
@@ -222,7 +223,7 @@ class ImageGrid(QScrollArea):
         self.content.setObjectName("content")
         
         # Initialize state
-        self.thumbnails: Dict[str, ImageThumbnail] = {}  # image_id -> thumbnail
+        self.thumbnails: Dict[str, ImageThumbnail] = {}
         self.current_filter = None
         self.all_images: List[ImageMetadata] = []
         self.loaded_count = 0
@@ -287,7 +288,12 @@ class ImageGrid(QScrollArea):
             
         self.columns = columns
         self.needs_relayout = True
-        self.layout_timer.start()
+        
+        # Adjust batch size based on new column count
+        if self.loaded_count < len(self.all_images):
+            self._load_next_batch()
+        else:
+            self.layout_timer.start()
     
     def _calculate_row_heights(self):
         """Calculate optimal height for each row based on actual image dimensions."""
@@ -415,13 +421,24 @@ class ImageGrid(QScrollArea):
         # Trigger initial layout update
         self.layout_timer.start()
     
+    def _calculate_batch_size(self) -> int:
+        """Calculate the batch size based on current number of columns."""
+        # Calculate proportional batch size
+        column_factor = self.columns / 4  # Base proportion on 4 columns
+        base_rows = max(self.MIN_ROWS_LOADED, self.BASE_BATCH_SIZE // 4)  # Ensure minimum rows
+        batch_size = int(base_rows * self.columns * column_factor)
+        return batch_size
+
     def _load_next_batch(self):
         """Load the next batch of thumbnails."""
         if self.loaded_count >= len(self.all_images):
             return
         
+        # Calculate batch size based on current columns
+        batch_size = self._calculate_batch_size()
+        
         # Load next batch
-        end_idx = min(self.loaded_count + self.LOAD_BATCH_SIZE, len(self.all_images))
+        end_idx = min(self.loaded_count + batch_size, len(self.all_images))
         for idx in range(self.loaded_count, end_idx):
             metadata = self.all_images[idx]
             
