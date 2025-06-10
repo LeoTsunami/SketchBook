@@ -166,9 +166,12 @@ class ImageThumbnail(QFrame):
 class ImageGrid(QScrollArea):
     """Scrollable grid of image thumbnails."""
     
-    image_clicked = Signal(str)  # Emits image ID when an image is clicked
-    BASE_BATCH_SIZE = 20  # Base number of images to load per batch (for 4 columns)
-    MIN_ROWS_LOADED = 5  # Minimum number of rows to load
+    image_clicked = Signal(str)
+    BASE_BATCH_SIZE = 20
+    MIN_ROWS_LOADED = 5
+    MIN_THUMBNAIL_HEIGHT = 150
+    MIN_WINDOW_WIDTH = 800
+    ASPECT_RATIO = 1.2
     
     def __init__(self, image_manager: ImageManager, parent=None):
         """
@@ -253,6 +256,9 @@ class ImageGrid(QScrollArea):
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
         
         self.row_heights = {}  # Store optimal height for each row
+        
+        self.is_layout_locked = False  # Add lock to prevent concurrent layout updates
+        self.pending_column_change = None  # Store pending column change
     
     def _on_scroll(self, value):
         """Handle scroll events."""
@@ -289,11 +295,15 @@ class ImageGrid(QScrollArea):
         self.columns = columns
         self.needs_relayout = True
         
-        # Adjust batch size based on new column count
+        # Clear cache to force proper image reloading
+        self.pixmap_cache.clear()
+        
+        # Trigger layout update
+        self.layout_timer.start()
+        
+        # Load more images if needed
         if self.loaded_count < len(self.all_images):
             self._load_next_batch()
-        else:
-            self.layout_timer.start()
     
     def _calculate_row_heights(self):
         """Calculate optimal height for each row based on actual image dimensions."""
@@ -335,16 +345,31 @@ class ImageGrid(QScrollArea):
         for row in self.row_heights:
             self.row_heights[row] = max(200, int(self.row_heights[row]))
 
+    def _calculate_optimal_dimensions(self):
+        """Calculate optimal thumbnail dimensions based on available space."""
+        spacing = self.grid.spacing()
+        margins = self.grid.contentsMargins()
+        available_width = max(self.viewport().width() - margins.left() - margins.right(),
+                            self.MIN_WINDOW_WIDTH - margins.left() - margins.right())
+        
+        # Calculate thumbnail width based on available space and columns
+        thumbnail_width = (available_width - (self.columns - 1) * spacing) // self.columns
+        
+        # Calculate height using our desired aspect ratio
+        optimal_height = int(thumbnail_width * self.ASPECT_RATIO)
+        
+        # Ensure minimum height
+        thumbnail_height = max(optimal_height, self.MIN_THUMBNAIL_HEIGHT)
+        
+        return thumbnail_width, thumbnail_height
+
     def _do_relayout(self):
         """Perform the actual grid layout."""
         if not self.thumbnails:
             return
         
-        # Calculate thumbnail width
-        spacing = self.grid.spacing()
-        margins = self.grid.contentsMargins()
-        available_width = self.viewport().width() - margins.left() - margins.right()
-        thumbnail_width = (available_width - (self.columns - 1) * spacing) // self.columns
+        # Get optimal dimensions
+        thumbnail_width, thumbnail_height = self._calculate_optimal_dimensions()
         
         # Clear the grid
         while self.grid.count():
@@ -362,13 +387,12 @@ class ImageGrid(QScrollArea):
             
             if metadata.id in self.thumbnails:
                 thumbnail = self.thumbnails[metadata.id]
-                row_height = self.row_heights.get(row, 200)
                 
                 # Set sizes
                 thumbnail.setFixedWidth(thumbnail_width)
-                thumbnail.setFixedHeight(row_height)
-                thumbnail.image_container.setFixedSize(thumbnail_width - 8, row_height - 8)
-                thumbnail.graphics_view.setFixedSize(thumbnail_width - 8, row_height - 8)
+                thumbnail.setFixedHeight(thumbnail_height)
+                thumbnail.image_container.setFixedSize(thumbnail_width - 4, thumbnail_height - 4)
+                thumbnail.graphics_view.setFixedSize(thumbnail_width - 4, thumbnail_height - 4)
                 
                 # Add to grid
                 self.grid.addWidget(thumbnail, row, col)
@@ -437,6 +461,9 @@ class ImageGrid(QScrollArea):
         # Calculate batch size based on current columns
         batch_size = self._calculate_batch_size()
         
+        # Get optimal dimensions
+        thumbnail_width, thumbnail_height = self._calculate_optimal_dimensions()
+        
         # Load next batch
         end_idx = min(self.loaded_count + batch_size, len(self.all_images))
         for idx in range(self.loaded_count, end_idx):
@@ -449,9 +476,11 @@ class ImageGrid(QScrollArea):
             # Create thumbnail
             thumbnail = ImageThumbnail(metadata.id, metadata.original_filename, self)
             
-            # Set initial size based on row height if available
-            if row in self.row_heights:
-                thumbnail.setFixedHeight(self.row_heights[row])
+            # Set initial size
+            thumbnail.setFixedWidth(thumbnail_width)
+            thumbnail.setFixedHeight(thumbnail_height)
+            thumbnail.image_container.setFixedSize(thumbnail_width - 4, thumbnail_height - 4)
+            thumbnail.graphics_view.setFixedSize(thumbnail_width - 4, thumbnail_height - 4)
             
             self.grid.addWidget(thumbnail, row, col)
             self.thumbnails[metadata.id] = thumbnail
@@ -488,6 +517,24 @@ class ImageGrid(QScrollArea):
         for image_id in to_load:
             self._load_thumbnail_image(image_id)
     
+    def _is_thumbnail_visible(self, thumbnail: QWidget) -> bool:
+        """Check if a thumbnail is in or near the viewport."""
+        if not thumbnail.isVisible():
+            return False
+            
+        viewport_rect = QRect(
+            self.horizontalScrollBar().value(),
+            self.verticalScrollBar().value(),
+            self.viewport().width(),
+            self.viewport().height()
+        )
+        
+        # Add margin for preloading
+        margin = 500
+        viewport_rect.adjust(-margin, -margin, margin, margin)
+        
+        return viewport_rect.intersects(self._get_widget_geometry(thumbnail))
+
     def _get_widget_geometry(self, widget: QWidget) -> QRect:
         """Get the global geometry of a widget relative to the scroll area."""
         return QRect(

@@ -350,4 +350,35 @@ The database is stored in JSON format with the following structure:
 Database settings can be customized via the settings system:
 - `images.db_path`: Path to the JSON database file (default: "data/config/images.json")
 
+## Image Grid Component
+
+The `ImageGrid` class manages the display of image thumbnails in a responsive grid layout. Key features include:
+
+### Layout Management
+- Uses Qt's `QGridLayout` for efficient image arrangement
+- Maintains consistent aspect ratio (1.2:1, height:width) for all thumbnails
+- Minimum thumbnail height of 150px to ensure visibility
+- Dynamic column adjustment via slider with smooth transitions
+
+### Performance Optimizations
+- Asynchronous image loading using `QThreadPool`
+- Debounced layout updates using `QTimer`
+- Efficient thumbnail resizing with proper scaling
+- Viewport-based loading for visible thumbnails only
+
+### Key Methods
+```python
+def set_columns(self, columns: int):
+    """Updates the grid layout with the specified number of columns.
+    Triggers layout recalculation and image reloading as needed."""
+
+def _calculate_optimal_dimensions(self):
+    """Calculates optimal thumbnail dimensions based on viewport size,
+    column count, and desired aspect ratio (1.2:1)."""
+
+def _do_relayout(self):
+    """Performs the actual grid layout update, maintaining proper
+    thumbnail sizes and aspect ratios."""
+```
+
 --- 
