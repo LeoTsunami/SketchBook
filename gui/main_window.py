@@ -18,15 +18,29 @@ from qtpy.QtWidgets import (
     QLabel,
     QSplitter,
     QHBoxLayout,
-    QSlider
+    QSlider,
+    QLineEdit,
+    QPushButton
 )
 from qtpy.QtCore import Qt, QThreadPool, QMetaObject, Q_ARG, Slot, QThread
 from qtpy.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent
 from core.settings import settings
 from core.image_manager import ImageManager
 from gui.image_import_worker import ImageImportWorker
-from gui.image_grid import ImageGrid
-from gui.tag_manager import TagManager
+from gui.image_grid import ImageGrid, ImageThumbnail
+from gui.tag_manager import TagManager, TagChip
+from qtpy.QtWidgets import QApplication
+import os
+
+def apply_global_stylesheet():
+    app = QApplication.instance()
+    theme = settings.get("ui.theme", "dark")
+    qss_path = os.path.join(os.path.dirname(__file__), "styles", f"style_{theme}.qss")
+    if os.path.exists(qss_path):
+        with open(qss_path, "r", encoding="utf-8") as f:
+            app.setStyleSheet(f.read())
+    else:
+        app.setStyleSheet("")
 
 class MainWindow(QMainWindow):
     """Main window of the application."""
@@ -142,16 +156,9 @@ class MainWindow(QMainWindow):
         Args:
             image_id: ID of the clicked image
         """
-        # For now, just show image metadata
-        metadata = self.image_manager.get_image_metadata(image_id)
-        if metadata:
-            QMessageBox.information(
-                self,
-                "Image Info",
-                f"Image: {metadata.original_filename}\n"
-                f"Size: {metadata.width}x{metadata.height}\n"
-                f"Tags: {', '.join(metadata.tags) if metadata.tags else 'No tags'}"
-            )
+        # TODO: Implement image selection functionality
+        # For now, do nothing when clicking on images
+        pass
     
     def _setup_dev_tools(self):
         """Set up development tools dock widget."""
@@ -561,64 +568,21 @@ class MainWindow(QMainWindow):
         """
         settings.set("ui.theme", theme)
         settings.save()
-        self._apply_theme()
+        apply_global_stylesheet()
+        self.tag_manager._apply_theme()
+        self.image_grid._apply_theme()
+        for i in range(self.image_grid.grid.count()):
+            widget = self.image_grid.grid.itemAt(i).widget()
+            if isinstance(widget, ImageThumbnail):
+                widget._apply_theme()
+        for i in range(self.tag_manager.tag_layout.count()):
+            widget = self.tag_manager.tag_layout.itemAt(i).widget()
+            if isinstance(widget, TagChip):
+                widget._apply_theme()
     
     def _apply_theme(self):
         """Apply the current theme from settings."""
-        if settings.get("ui.theme") == "dark":
-            # Dark theme palette
-            self.setStyleSheet("""
-                QMainWindow {
-                    background-color: #2b2b2b;
-                    color: #ffffff;
-                }
-                QMenuBar {
-                    background-color: #3c3f41;
-                    color: #ffffff;
-                }
-                QMenuBar::item:selected {
-                    background-color: #4b6eaf;
-                }
-                QMenu {
-                    background-color: #3c3f41;
-                    color: #ffffff;
-                }
-                QMenu::item:selected {
-                    background-color: #4b6eaf;
-                }
-                QStatusBar {
-                    background-color: #3c3f41;
-                    color: #ffffff;
-                }
-            """)
-        else:
-            # Light theme
-            self.setStyleSheet("""
-                QMainWindow {
-                    background-color: #ffffff;
-                    color: #000000;
-                }
-                QMenuBar {
-                    background-color: #f0f0f0;
-                    color: #000000;
-                }
-                QMenuBar::item:selected {
-                    background-color: #0078d7;
-                    color: #ffffff;
-                }
-                QMenu {
-                    background-color: #ffffff;
-                    color: #000000;
-                }
-                QMenu::item:selected {
-                    background-color: #0078d7;
-                    color: #ffffff;
-                }
-                QStatusBar {
-                    background-color: #f0f0f0;
-                    color: #000000;
-                }
-            """)
+        apply_global_stylesheet()
     
     def _toggle_dev_mode(self, enabled: bool):
         """

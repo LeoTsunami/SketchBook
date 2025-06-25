@@ -106,4 +106,14 @@
         - Optimized layout update timing
         → Result: Smooth and responsive image grid with proper aspect ratios and no UI blocking
 
+## 2024-12-19
+### ✅ Tasks:
+    - Selection System Improvements
+        - Fixed drag selection rectangle visibility when starting drag on thumbnails
+        - Centralized all mouse event handling in ImageGrid (removed from ImageThumbnail)
+        - Improved rubber band positioning and styling for better visibility
+        - Enhanced Ctrl+drag behavior: always removes thumbnails from selection
+        - Fixed image centering in thumbnails for better visual alignment
+        → Result: Intuitive and responsive selection system with proper visual feedback
+
 --- 

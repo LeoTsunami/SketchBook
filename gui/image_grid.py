@@ -12,161 +12,67 @@ from qtpy.QtWidgets import (
     QFrame,
     QScrollBar,
     QGraphicsView,
-    QGraphicsScene
+    QGraphicsScene,
+    QRubberBand,
+    QMenu,
+    QDialog,
+    QLineEdit,
+    QPushButton,
+    QMessageBox
 )
-from qtpy.QtCore import Qt, QSize, Signal, QTimer, QThreadPool, QRect
-from qtpy.QtGui import QPixmap, QImage
+from qtpy.QtCore import Qt, QSize, Signal, QTimer, QThreadPool, QRect, QPoint
+from qtpy.QtGui import QPixmap, QImage, QResizeEvent
 from core.image_manager import ImageManager
 from core.image_db import ImageMetadata
 from gui.image_loader_worker import ImageLoaderWorker
+from gui.image_thumbnail import ImageThumbnail
+from qtpy.QtWidgets import QCompleter
 
-class ImageThumbnail(QFrame):
-    """Widget representing a single image thumbnail."""
+def load_stylesheet(path: str) -> str:
+    with open(path, "r", encoding="utf-8") as f:
+        return f.read()
+
+class AddTagDialog(QDialog):
+    """Dialog for adding tags to selected images."""
     
-    clicked = Signal(str)  # Emits image ID when clicked
-    
-    def __init__(self, image_id: str, label: str, parent=None):
-        """
-        Initialize the thumbnail widget.
-        
-        Args:
-            image_id: Unique identifier of the image
-            label: Text to display under the image (not used anymore)
-            parent: Parent widget
-        """
+    def __init__(self, parent=None, existing_tags=None):
         super().__init__(parent)
-        self.image_id = image_id
-        self.setFrameStyle(QFrame.Panel | QFrame.Raised)
-        self.setLineWidth(1)
+        self.setWindowTitle("Add Tags")
+        self.existing_tags = existing_tags or []
+        self.selected_tags = []
         
-        # Create layout
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(0)  # Reduced spacing since we don't have labels anymore
         
-        # Create graphics view for better image rendering
-        self.graphics_view = QGraphicsView()
-        self.graphics_view.setStyleSheet("""
-            QGraphicsView {
-                background: transparent;
-                border: none;
-            }
-        """)
-        self.graphics_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.scene = QGraphicsScene()
-        self.scene.setBackgroundBrush(Qt.transparent)
-        self.graphics_view.setScene(self.scene)
+        # Tag input with autocomplete
+        self.tag_input = QLineEdit()
+        self.tag_input.setPlaceholderText("Enter tags (comma separated)")
+        layout.addWidget(self.tag_input)
         
-        # Create image container that maintains aspect ratio
-        self.image_container = QWidget()
-        self.image_container.setMinimumHeight(100)  # Minimum height to prevent collapse
-        self.image_container.setStyleSheet("background: transparent;")
+        # Add completer
+        completer = QCompleter(self.existing_tags)
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        self.tag_input.setCompleter(completer)
         
-        # Create container layout
-        container_layout = QVBoxLayout(self.image_container)
-        container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.addWidget(self.graphics_view)
-        
-        layout.addWidget(self.image_container, 1)  # Give image container stretch factor
-        
-        # Style for dark theme
-        self.setStyleSheet("""
-            ImageThumbnail {
-                background-color: #2d2d2d;
-                border-radius: 4px;
-                border: 1px solid #3d3d3d;
-            }
-            ImageThumbnail:hover {
-                background-color: #353535;
-                border: 1px solid #4d4d4d;
-            }
-        """)
-        
-        # Store original pixmap for resizing
-        self.original_pixmap = None
-        self.pixmap_item = None
+        # Buttons
+        button_layout = QHBoxLayout()
+        ok_button = QPushButton("Add")
+        ok_button.clicked.connect(self.accept)
+        cancel_button = QPushButton("Cancel")
+        cancel_button.clicked.connect(self.reject)
+        button_layout.addWidget(ok_button)
+        button_layout.addWidget(cancel_button)
+        layout.addLayout(button_layout)
     
-    def set_image(self, pixmap: QPixmap):
-        """Set the image pixmap."""
-        if not self.scene:
-            return
-            
-        try:
-            # Clear previous pixmap item
-            if self.pixmap_item:
-                self.scene.removeItem(self.pixmap_item)
-            
-            # Create new pixmap item
-            self.pixmap_item = self.scene.addPixmap(pixmap)
-            
-            # Set scene rect to match pixmap size
-            self.scene.setSceneRect(self.pixmap_item.boundingRect())
-            
-            # Center the view
-            self.graphics_view.setAlignment(Qt.AlignCenter)
-            
-            # Fit the view to show the entire image
-            self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
-            
-            # Schedule another fit after a short delay to ensure proper scaling
-            QTimer.singleShot(50, lambda: self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio))
-            
-        except Exception as e:
-            self.set_error(str(e))
-    
-    def _apply_high_quality_resize(self):
-        """Apply high quality resize after the initial fast resize."""
-        if not self.original_pixmap or not self.scene:
-            return
-            
-        available_width = self.graphics_view.width()
-        
-        if available_width <= 0:
-            return
-            
-        # Calculate new height preserving aspect ratio
-        image_ratio = self.original_pixmap.width() / self.original_pixmap.height()
-        new_height = int(available_width / image_ratio)
-        
-        scaled_pixmap = self.original_pixmap.scaled(
-            available_width,
-            new_height,
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
-        )
-        
-        if self.pixmap_item:
-            self.pixmap_item.setPixmap(scaled_pixmap)
-            self.scene.setSceneRect(self.pixmap_item.boundingRect())
-            self.graphics_view.setFixedHeight(new_height)
-    
-    def set_error(self, error_msg: str):
-        """Show error message."""
-        if not self.scene:
-            return
-        # Clear scene
-        self.scene.clear()
-        # Add error text
-        self.scene.addText(f"Error: {error_msg}")
-    
-    def resizeEvent(self, event):
-        """Handle resize events to adjust image scaling."""
-        super().resizeEvent(event)
-        
-        if self.scene and self.pixmap_item:
-            self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
-    
-    def mousePressEvent(self, event):
-        """Handle mouse click events."""
-        if event.button() == Qt.LeftButton:
-            self.clicked.emit(self.image_id)
-        super().mousePressEvent(event)
+    def get_tags(self):
+        """Return the entered tags as a list."""
+        return [tag.strip() for tag in self.tag_input.text().split(",") if tag.strip()]
 
 class ImageGrid(QScrollArea):
     """Scrollable grid of image thumbnails."""
     
-    image_clicked = Signal(str)
+    image_clicked = Signal(str)  # Emits image ID when clicked
+    selection_changed = Signal(list)  # Emits list of selected image IDs
+    session_images_selected = Signal(list)  # Emits list of image IDs for drawing session
     BASE_BATCH_SIZE = 20
     MIN_ROWS_LOADED = 5
     MIN_THUMBNAIL_HEIGHT = 150
@@ -183,6 +89,9 @@ class ImageGrid(QScrollArea):
         """
         super().__init__(parent)
         self.image_manager = image_manager
+        self.selected_images = set()  # Store selected image IDs
+        self.selection_start = None  # For drag selection
+        self.is_selecting = False
         
         # Create widget to hold the grid
         self.content = QWidget()
@@ -194,35 +103,24 @@ class ImageGrid(QScrollArea):
         self.grid.setSpacing(8)
         self.grid.setContentsMargins(8, 8, 8, 8)
         
-        # Set dark theme styles
-        self.setStyleSheet("""
-            QScrollArea {
-                background-color: #1e1e1e;
-                border: none;
-            }
-            QScrollBar:vertical {
-                background-color: #2d2d2d;
-                width: 12px;
-                margin: 0px;
-            }
-            QScrollBar::handle:vertical {
-                background-color: #4d4d4d;
-                min-height: 20px;
-                border-radius: 6px;
-            }
-            QScrollBar::handle:vertical:hover {
-                background-color: #5d5d5d;
-            }
-            QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
-                height: 0px;
-            }
-            QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
-                background-color: #2d2d2d;
-            }
-            QWidget#content {
-                background-color: #1e1e1e;
+        # Enable mouse tracking for drag selection
+        self.setMouseTracking(True)
+        self.content.setMouseTracking(True)
+        
+        # Create selection rubber band
+        self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.viewport())
+        self.rubber_band.setStyleSheet("""
+            QRubberBand {
+                background-color: rgba(0, 120, 215, 0.2);
+                border: 2px solid rgb(0, 120, 215);
+                border-radius: 2px;
             }
         """)
+        # Ensure rubber band is always on top
+        self.rubber_band.raise_()
+        
+        # Apply theme-aware styles
+        self._apply_theme()
         self.content.setObjectName("content")
         
         # Initialize state
@@ -259,6 +157,25 @@ class ImageGrid(QScrollArea):
         
         self.is_layout_locked = False  # Add lock to prevent concurrent layout updates
         self.pending_column_change = None  # Store pending column change
+        
+        # Create context menu
+        self.context_menu = QMenu(self)
+        self.add_tags_action = self.context_menu.addAction("Add Tags...")
+        self.delete_action = self.context_menu.addAction("Delete from Library")
+        self.use_for_session_action = self.context_menu.addAction("Use for Drawing Session")
+        
+        # Connect actions
+        self.add_tags_action.triggered.connect(self._add_tags_to_selection)
+        self.delete_action.triggered.connect(self._delete_selected)
+        self.use_for_session_action.triggered.connect(self._use_for_session)
+    
+    def _apply_theme(self):
+        from core.settings import settings
+        theme = settings.get("ui.theme")
+        self._update_thumbnail_theme(theme)
+    
+    def _update_thumbnail_theme(self, theme: str):
+        pass  # Le style des thumbnails est désormais géré uniquement par QSS global
     
     def _on_scroll(self, value):
         """Handle scroll events."""
@@ -627,4 +544,134 @@ class ImageGrid(QScrollArea):
         # Use either calculated height or default if no images loaded
         self.max_thumbnail_height = int(max_height) if max_height > 0 else 300
         
-        return thumbnail_width, self.max_thumbnail_height 
+        return thumbnail_width, self.max_thumbnail_height
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self.selection_start = event.pos()
+            self.is_selecting = True
+
+            # Convert viewport coordinates to content coordinates
+            content_pos = self.content.mapFrom(self, event.pos())
+            
+            # Check if clicked on a thumbnail
+            child = self.content.childAt(content_pos)
+            if isinstance(child, ImageThumbnail):
+                # Store the clicked thumbnail for later processing
+                self.clicked_on_thumbnail = child.image_id
+                self.clicked_position = event.pos()
+            else:
+                self.clicked_on_thumbnail = None
+                if not (event.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier)):
+                    # Clear selection if clicking empty space without modifiers
+                    self.selected_images.clear()
+                    self._update_selection()
+            
+            # Always show rubber band for drag selection
+            # Position the rubber band correctly in viewport coordinates
+            self.rubber_band.setGeometry(QRect(event.pos(), QSize()))
+            self.rubber_band.show()
+            self.rubber_band.raise_()  # Ensure it's on top
+        
+        super().mousePressEvent(event)
+    
+    def mouseMoveEvent(self, event):
+        if self.is_selecting:
+            # Update rubber band geometry with proper coordinates
+            selection_rect = QRect(self.selection_start, event.pos()).normalized()
+            self.rubber_band.setGeometry(selection_rect)
+        super().mouseMoveEvent(event)
+    
+    def mouseReleaseEvent(self, event):
+        if event.button() == Qt.LeftButton and self.is_selecting:
+            self.is_selecting = False
+            self.rubber_band.hide()
+            
+            # Check if this was a single click (no drag)
+            if hasattr(self, 'clicked_position') and self.clicked_position == event.pos():
+                # Single click - handle thumbnail selection
+                if hasattr(self, 'clicked_on_thumbnail') and self.clicked_on_thumbnail:
+                    if event.modifiers() == Qt.ShiftModifier:
+                        # Add to selection
+                        self.selected_images.add(self.clicked_on_thumbnail)
+                    elif event.modifiers() == Qt.ControlModifier:
+                        # Toggle selection
+                        if self.clicked_on_thumbnail in self.selected_images:
+                            self.selected_images.remove(self.clicked_on_thumbnail)
+                        else:
+                            self.selected_images.add(self.clicked_on_thumbnail)
+                    else:
+                        # New selection
+                        self.selected_images = {self.clicked_on_thumbnail}
+                    
+                    self._update_selection()
+                    # Emit clicked signal for single click
+                    self.image_clicked.emit(self.clicked_on_thumbnail)
+            else:
+                # Drag selection - get thumbnails in selection rectangle
+                selection_rect = QRect(self.selection_start, event.pos()).normalized()
+                for i in range(self.grid.count()):
+                    widget = self.grid.itemAt(i).widget()
+                    if isinstance(widget, ImageThumbnail):
+                        # Convert widget position to viewport coordinates for proper intersection test
+                        widget_rect = QRect(widget.mapTo(self, QPoint(0, 0)), widget.size())
+                        if selection_rect.intersects(widget_rect):
+                            if event.modifiers() == Qt.ControlModifier:
+                                # Ctrl + drag always removes from selection
+                                self.selected_images.discard(widget.image_id)
+                            else:
+                                # Normal drag adds to selection
+                                self.selected_images.add(widget.image_id)
+                
+                self._update_selection()
+            
+            # Clean up
+            if hasattr(self, 'clicked_on_thumbnail'):
+                delattr(self, 'clicked_on_thumbnail')
+            if hasattr(self, 'clicked_position'):
+                delattr(self, 'clicked_position')
+        
+        super().mouseReleaseEvent(event)
+    
+    def _update_selection(self):
+        """Update visual selection state of all thumbnails."""
+        for i in range(self.grid.count()):
+            widget = self.grid.itemAt(i).widget()
+            if isinstance(widget, ImageThumbnail):
+                widget.set_selected(widget.image_id in self.selected_images)
+        self.selection_changed.emit(list(self.selected_images))
+
+    def contextMenuEvent(self, event):
+        """Show context menu."""
+        if self.selected_images:  # Only show if there are selected images
+            self.context_menu.popup(event.globalPos())
+    
+    def _add_tags_to_selection(self):
+        """Open dialog to add tags to selected images."""
+        dialog = AddTagDialog(self, self.image_manager.get_all_tags())
+        if dialog.exec_() == QDialog.Accepted:
+            new_tags = dialog.get_tags()
+            if new_tags:
+                for image_id in self.selected_images:
+                    self.image_manager.add_tags(image_id, new_tags)
+    
+    def _delete_selected(self):
+        """Delete selected images after confirmation."""
+        count = len(self.selected_images)
+        msg = QMessageBox(self)
+        msg.setIcon(QMessageBox.Warning)
+        msg.setWindowTitle("Confirm Deletion")
+        msg.setText(f"Are you sure you want to delete {count} image{'s' if count > 1 else ''}?")
+        msg.setInformativeText("This action cannot be undone.")
+        msg.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg.setDefaultButton(QMessageBox.No)
+        
+        if msg.exec_() == QMessageBox.Yes:
+            for image_id in self.selected_images:
+                self.image_manager.delete_image(image_id)
+            self.selected_images.clear()
+            self._update_selection()
+    
+    def _use_for_session(self):
+        """Emit signal with selected images for drawing session."""
+        self.session_images_selected.emit(list(self.selected_images)) 

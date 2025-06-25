@@ -42,4 +42,3 @@ data/sessions/*
 !data/sessions/.gitkeep
 
 # Cursor specific
-.cursor/ 

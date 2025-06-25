@@ -46,22 +46,53 @@ class TagChip(QFrame):
         remove_btn.clicked.connect(lambda: self.removed.emit(self.text))
         layout.addWidget(remove_btn)
         
-        # Style
-        self.setStyleSheet("""
-            TagChip {
-                background-color: #e0e0e0;
-                border-radius: 10px;
-            }
-            QPushButton {
-                background-color: transparent;
-                border: none;
-                color: #666666;
-                font-weight: bold;
-            }
-            QPushButton:hover {
-                color: #000000;
-            }
-        """)
+        # Apply theme-aware styles
+        self._apply_theme()
+    
+    def _apply_theme(self):
+        """Apply theme-aware styles to components."""
+        from core.settings import settings
+        
+        if settings.get("ui.theme") == "dark":
+            # Dark theme
+            self.setStyleSheet("""
+                TagChip {
+                    background-color: #3c3f41;
+                    border-radius: 10px;
+                }
+                QLabel {
+                    color: #ffffff;
+                }
+                QPushButton {
+                    background-color: transparent;
+                    border: none;
+                    color: #999999;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    color: #ffffff;
+                }
+            """)
+        else:
+            # Light theme
+            self.setStyleSheet("""
+                TagChip {
+                    background-color: #e0e0e0;
+                    border-radius: 10px;
+                }
+                QLabel {
+                    color: #000000;
+                }
+                QPushButton {
+                    background-color: transparent;
+                    border: none;
+                    color: #666666;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    color: #000000;
+                }
+            """)
 
 class TagManager(QWidget):
     """Widget for managing image tags with search and filtering."""
@@ -115,24 +146,67 @@ class TagManager(QWidget):
         self.completer.setFilterMode(Qt.MatchContains)
         self.search_input.setCompleter(self.completer)
         
-        # Style
-        self.setStyleSheet("""
-            QLineEdit {
-                padding: 6px;
-                border: 1px solid #cccccc;
-                border-radius: 4px;
-                background-color: white;
-            }
-            QPushButton {
-                padding: 6px 12px;
-                border: none;
-                border-radius: 4px;
-                background-color: #e0e0e0;
-            }
-            QPushButton:hover {
-                background-color: #d0d0d0;
-            }
-        """)
+        # Apply theme-aware styles
+        self._apply_theme()
+    
+    def _apply_theme(self):
+        """Apply theme-aware styles to components."""
+        from core.settings import settings
+        
+        if settings.get("ui.theme") == "dark":
+            # Dark theme
+            self.setStyleSheet("""
+                QLineEdit {
+                    background-color: #3c3f41;
+                    color: #ffffff;
+                    border: 1px solid #4d4d4d;
+                    border-radius: 4px;
+                    padding: 4px;
+                }
+                QLineEdit:focus {
+                    border: 1px solid #5d5d5d;
+                }
+                QPushButton {
+                    background-color: #3c3f41;
+                    color: #ffffff;
+                    border: 1px solid #4d4d4d;
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                }
+                QPushButton:hover {
+                    background-color: #4b6eaf;
+                }
+                QPushButton:pressed {
+                    background-color: #3d5a8c;
+                }
+            """)
+        else:
+            # Light theme
+            self.setStyleSheet("""
+                QLineEdit {
+                    background-color: #ffffff;
+                    color: #000000;
+                    border: 1px solid #cccccc;
+                    border-radius: 4px;
+                    padding: 4px;
+                }
+                QLineEdit:focus {
+                    border: 1px solid #0078d7;
+                }
+                QPushButton {
+                    background-color: #f0f0f0;
+                    color: #000000;
+                    border: 1px solid #cccccc;
+                    border-radius: 4px;
+                    padding: 4px 8px;
+                }
+                QPushButton:hover {
+                    background-color: #e5e5e5;
+                }
+                QPushButton:pressed {
+                    background-color: #d0d0d0;
+                }
+            """)
     
     def set_available_tags(self, tags: List[str]):
         """

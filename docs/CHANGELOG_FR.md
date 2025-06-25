@@ -98,12 +98,22 @@
 → Résultat : Une grille d'images plus raffinée et réactive avec une meilleure cohérence visuelle et des performances améliorées
 
 ## 2024-03-27
-### ✅ Tâches:
+### ✅ Tâches :
     - Optimisation de la grille d'images
-        - Correction de la réactivité du slider de colonnes
-        - Amélioration de la mise en page et gestion du ratio d'aspect
-        - Suppression du mécanisme de verrouillage complexe causant des gels de l'interface
-        - Optimisation de la temporisation des mises à jour
-        → Résultat: Grille d'images fluide et réactive avec des ratios d'aspect corrects et sans blocage de l'interface
+        - Correction de la réactivité du curseur de colonnes
+        - Amélioration de la mise en page et de la gestion des ratios d'aspect
+        - Suppression du mécanisme de verrouillage complexe causant des blocages d'interface
+        - Optimisation du timing des mises à jour de mise en page
+        → Résultat : Grille d'images fluide et réactive avec des ratios d'aspect appropriés et sans blocage d'interface
+
+## 2024-12-19
+### ✅ Tâches :
+    - Améliorations du système de sélection
+        - Correction de la visibilité du rectangle de sélection lors du début du glissement sur les vignettes
+        - Centralisation de toute la gestion des événements de souris dans ImageGrid (supprimé d'ImageThumbnail)
+        - Amélioration du positionnement et du style de la bande élastique pour une meilleure visibilité
+        - Amélioration du comportement Ctrl+glissement : retire toujours les vignettes de la sélection
+        - Correction du centrage des images dans les vignettes pour un meilleur alignement visuel
+        → Résultat : Système de sélection intuitif et réactif avec un retour visuel approprié
 
 --- 
