@@ -85,4 +85,69 @@ QFrame#ImageThumbnail[selected="true"] {
 QFrame#ImageThumbnail[selected="true"]:hover {
     background-color: #5d7bc0;
     border: 2px solid #6d8bd0;
+}
+
+/* Tag Components */
+QFrame#DraggableTagChip {
+    background-color: #3c3f41;
+    border: 1px solid #4d4d4d;
+    border-radius: 12px;
+    color: #ffffff;
+}
+QFrame#DraggableTagChip:hover {
+    background-color: #4c4f51;
+    border: 1px solid #5d5d5d;
+}
+QFrame#DraggableTagChip QLabel {
+    color: #ffffff;
+    background-color: transparent;
+}
+QFrame#DraggableTagChip QPushButton {
+    background-color: transparent;
+    border: none;
+    color: inherit;
+    font-weight: bold;
+    font-size: 12px;
+    padding: 0px;
+}
+QFrame#DraggableTagChip QPushButton:hover {
+    color: #ff4444;
+    background-color: transparent;
+}
+
+QFrame#TagDropZone {
+    background-color: #2b2b2b;
+    border: 2px dashed #4d4d4d;
+    border-radius: 8px;
+    color: #ffffff;
+}
+QFrame#TagDropZone:hover {
+    border: 2px dashed #5d5d5d;
+    background-color: #2f2f2f;
+}
+QFrame#TagDropZone[dragOver="true"] {
+    border: 2px solid #5d5d5d;
+    background-color: #2f2f2f;
+}
+QFrame#TagDropZone QScrollArea {
+    background-color: transparent;
+    border: none;
+}
+QFrame#TagDropZone QScrollBar:vertical {
+    background-color: #3c3f41;
+    width: 12px;
+    border-radius: 6px;
+}
+QFrame#TagDropZone QScrollBar::handle:vertical {
+    background-color: #5d5d5d;
+    border-radius: 6px;
+    min-height: 20px;
+}
+QFrame#TagDropZone QScrollBar::handle:vertical:hover {
+    background-color: #6d6d6d;
+}
+QFrame#TagDropZone QLabel {
+    color: #ffffff;
+    font-weight: bold;
+    font-size: 11px;
 } 

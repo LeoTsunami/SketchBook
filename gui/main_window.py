@@ -26,9 +26,12 @@ from qtpy.QtCore import Qt, QThreadPool, QMetaObject, Q_ARG, Slot, QThread
 from qtpy.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent
 from core.settings import settings
 from core.image_manager import ImageManager
+from core.session_manager import SessionManager
 from gui.image_import_worker import ImageImportWorker
 from gui.image_grid import ImageGrid, ImageThumbnail
-from gui.tag_manager import TagManager, TagChip
+from gui.tag_manager import TagManager, DraggableTagChip
+from gui.slideshow_window import SlideshowWindow
+from gui.session_dialog import SessionDialog
 from qtpy.QtWidgets import QApplication
 import os
 
@@ -52,6 +55,7 @@ class MainWindow(QMainWindow):
         # Initialize managers
         self.image_manager = ImageManager()
         self.thread_pool = QThreadPool()
+        self.session_manager = SessionManager()
         
         # Dev mode flag
         self.dev_mode = settings.get("ui.dev_mode", False)
@@ -91,7 +95,8 @@ class MainWindow(QMainWindow):
         
         # Create tag manager
         self.tag_manager = TagManager()
-        self.tag_manager.tags_changed.connect(self._on_tags_changed)
+        self.tag_manager.filters_changed.connect(self._on_filters_changed)
+        self.tag_manager.tags_modified.connect(self._update_available_tags)
         layout.addWidget(self.tag_manager)
         
         # Create grid controls
@@ -124,6 +129,7 @@ class MainWindow(QMainWindow):
         # Create image grid
         self.image_grid = ImageGrid(self.image_manager)
         self.image_grid.image_clicked.connect(self._on_image_clicked)
+        self.image_grid.session_images_selected.connect(self._on_session_images_selected)
         self.image_grid.set_columns(self.columns_slider.value())
         layout.addWidget(self.image_grid)
         
@@ -139,15 +145,15 @@ class MainWindow(QMainWindow):
         
         self.tag_manager.set_available_tags(sorted(all_tags))
     
-    def _on_tags_changed(self, active_tags: List[str]):
+    def _on_filters_changed(self, filters: dict):
         """
-        Handle changes in active tags.
+        Handle changes in advanced tag filters.
         
         Args:
-            active_tags: List of currently active tags
+            filters: Dictionary with "and" and "or" sets of tags
         """
         # Update image grid with new filter
-        self.image_grid.load_images(active_tags if active_tags else None)
+        self.image_grid.load_images_with_advanced_filter(filters)
     
     def _on_image_clicked(self, image_id: str):
         """
@@ -159,6 +165,44 @@ class MainWindow(QMainWindow):
         # TODO: Implement image selection functionality
         # For now, do nothing when clicking on images
         pass
+    
+    def _on_session_images_selected(self, image_ids: List[str]):
+        """
+        Handle selection of images for drawing session.
+        
+        Args:
+            image_ids: List of selected image IDs
+        """
+        if not image_ids:
+            QMessageBox.warning(self, "No Images Selected", "Please select at least one image for the drawing session.")
+            return
+        
+        # Show session configuration dialog
+        dialog = SessionDialog(self.session_manager, self.image_manager, image_ids, self)
+        dialog.session_started.connect(self._start_drawing_session)
+        dialog.exec_()
+    
+    def _start_drawing_session(self, session):
+        """
+        Start a drawing session.
+        
+        Args:
+            session: Drawing session to start
+        """
+        # Create slideshow window
+        self.slideshow_window = SlideshowWindow(self.session_manager, self.image_manager, self)
+        self.slideshow_window.session_ended.connect(self._on_session_ended)
+        
+        # Start the session
+        self.slideshow_window.start_session(session)
+    
+    def _on_session_ended(self):
+        """Handle session end."""
+        # Update available tags in case new tags were added during session
+        self._update_available_tags()
+        
+        # Show completion message
+        QMessageBox.information(self, "Session Complete", "Drawing session completed!")
     
     def _setup_dev_tools(self):
         """Set up development tools dock widget."""
@@ -569,16 +613,7 @@ class MainWindow(QMainWindow):
         settings.set("ui.theme", theme)
         settings.save()
         apply_global_stylesheet()
-        self.tag_manager._apply_theme()
-        self.image_grid._apply_theme()
-        for i in range(self.image_grid.grid.count()):
-            widget = self.image_grid.grid.itemAt(i).widget()
-            if isinstance(widget, ImageThumbnail):
-                widget._apply_theme()
-        for i in range(self.tag_manager.tag_layout.count()):
-            widget = self.tag_manager.tag_layout.itemAt(i).widget()
-            if isinstance(widget, TagChip):
-                widget._apply_theme()
+        # Styles are now handled by global QSS, no need to call individual _apply_theme methods
     
     def _apply_theme(self):
         """Apply the current theme from settings."""

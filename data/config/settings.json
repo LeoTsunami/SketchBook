@@ -9,7 +9,7 @@
             "maximized": false
         },
         "grid": {
-            "columns": 6,
+            "columns": 4,
             "spacing": 16,
             "card_ratio": "3:4"
         },

@@ -19,7 +19,7 @@ def sample_metadata():
     """Create sample image metadata."""
     return ImageMetadata(
         id="test_image_123",
-        path=Path("test_image.jpg"),
+        path="test_image.jpg",
         original_filename="original.jpg",
         width=1920,
         height=1080,
@@ -46,20 +46,18 @@ def test_update_image(image_db, sample_metadata):
     # Add image
     image_db.add_image(sample_metadata)
     
-    # Update tags and notes
+    # Update tags
     assert image_db.update_image(
         sample_metadata.id,
-        tags=["test", "update"],
-        notes="Test notes"
+        tags={"test", "update"}  # Use set instead of list
     )
     
     # Verify updates
     updated = image_db.get_image(sample_metadata.id)
-    assert updated.tags == ["test", "update"]
-    assert updated.notes == "Test notes"
+    assert updated.tags == {"test", "update"}
     
     # Try updating non-existent image
-    assert not image_db.update_image("nonexistent", tags=["test"])
+    assert not image_db.update_image("nonexistent", tags={"test"})
 
 def test_delete_image(image_db, sample_metadata):
     """Test deleting image metadata."""
@@ -80,7 +78,7 @@ def test_list_images(image_db):
     for i in range(3):
         metadata = ImageMetadata(
             id=f"test_{i}",
-            path=Path(f"test_{i}.jpg"),
+            path=f"test_{i}.jpg",
             original_filename=f"original_{i}.jpg",
             width=1920,
             height=1080,
@@ -100,24 +98,24 @@ def test_search_images(image_db):
     # Add images with different tags
     metadata1 = ImageMetadata(
         id="test_1",
-        path=Path("test_1.jpg"),
+        path="test_1.jpg",
         original_filename="original_1.jpg",
         width=1920,
         height=1080,
         file_size=1024,
         format="JPEG",
-        tags=["nature", "landscape"]
+        tags={"nature", "landscape"}
     )
     
     metadata2 = ImageMetadata(
         id="test_2",
-        path=Path("test_2.jpg"),
+        path="test_2.jpg",
         original_filename="original_2.jpg",
         width=1920,
         height=1080,
         file_size=1024,
         format="JPEG",
-        tags=["nature", "wildlife"]
+        tags={"nature", "wildlife"}
     )
     
     image_db.add_image(metadata1)
@@ -143,7 +141,7 @@ def test_persistence(image_db, sample_metadata, tmp_path):
     
     # Create new instance with same path
     new_db = ImageDatabase()
-    new_db.db_path = image_db.db_path
+    new_db._db_path = image_db._db_path  # Set the same path
     
     # Verify data was loaded
     loaded = new_db.get_image(sample_metadata.id)
@@ -151,7 +149,7 @@ def test_persistence(image_db, sample_metadata, tmp_path):
     assert loaded.path == sample_metadata.path
     
     # Test invalid JSON handling
-    image_db.db_path.write_text("invalid json")
+    image_db._db_path.write_text("invalid json")
     new_db = ImageDatabase()
-    new_db.db_path = image_db.db_path
+    new_db._db_path = image_db._db_path
     assert len(new_db.list_images()) == 0 

@@ -310,4 +310,50 @@ class ImageManager:
         Returns:
             List of matching image metadata
         """
-        return self.db.search_images(tags) 
+        return self.db.search_images(tags)
+    
+    def get_all_tags(self) -> List[str]:
+        """
+        Get a sorted list of all unique tags in the image database.
+        
+        Returns:
+            List of unique tags
+        """
+        tags = set()
+        for metadata in self.db.list_images():
+            tags.update(metadata.tags)
+        return sorted(tags)
+    
+    def add_tags(self, image_id: str, tags: List[str]) -> bool:
+        """
+        Add tags to an image.
+        
+        Args:
+            image_id: ID of the image to add tags to
+            tags: List of tags to add
+            
+        Returns:
+            True if successful, False if image not found
+        """
+        metadata = self.db.get_image(image_id)
+        if not metadata:
+            return False
+        
+        # Add new tags to existing tags
+        metadata.tags.update(tags)
+        
+        # Update the database
+        return self.db.update_image(image_id, tags=metadata.tags)
+    
+    def search_images_advanced(self, and_tags: Set[str] = None, or_tags: Set[str] = None) -> List[ImageMetadata]:
+        """
+        Advanced search with AND and OR tag filtering.
+        
+        Args:
+            and_tags: Set of tags that must ALL be present (AND logic)
+            or_tags: Set of tags where at least ONE must be present (OR logic)
+            
+        Returns:
+            List of matching image metadata
+        """
+        return self.db.search_images_advanced(and_tags, or_tags) 

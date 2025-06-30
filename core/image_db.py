@@ -69,13 +69,18 @@ class ImageDatabase:
     
     def add_image(self, metadata: ImageMetadata):
         """
-        Add or update image metadata.
+        Add image metadata only if it does not already exist.
         
         Args:
             metadata: Image metadata to add
+        Returns:
+            True if added, False if already exists
         """
+        if metadata.id in self._images:
+            return False
         self._images[metadata.id] = metadata
         self._save_db()
+        return True
     
     def get_image(self, image_id: str) -> Optional[ImageMetadata]:
         """
@@ -154,4 +159,39 @@ class ImageDatabase:
             metadata
             for metadata in self._images.values()
             if metadata.tags & tag_set == tag_set
-        ] 
+        ]
+    
+    def search_images_advanced(self, and_tags: Set[str] = None, or_tags: Set[str] = None) -> List[ImageMetadata]:
+        """
+        Advanced search with AND and OR tag filtering.
+        
+        Args:
+            and_tags: Set of tags that must ALL be present (AND logic)
+            or_tags: Set of tags where at least ONE must be present (OR logic)
+            
+        Returns:
+            List of matching image metadata
+        """
+        if not and_tags and not or_tags:
+            return self.list_images()
+        
+        matching_images = []
+        
+        for metadata in self._images.values():
+            image_tags = metadata.tags
+            
+            # Check AND condition
+            and_condition = True
+            if and_tags:
+                and_condition = and_tags.issubset(image_tags)
+            
+            # Check OR condition
+            or_condition = True
+            if or_tags:
+                or_condition = bool(image_tags & or_tags)
+            
+            # Both conditions must be met
+            if and_condition and or_condition:
+                matching_images.append(metadata)
+        
+        return matching_images 

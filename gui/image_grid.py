@@ -9,6 +9,7 @@ from qtpy.QtWidgets import (
     QGridLayout,
     QLabel,
     QVBoxLayout,
+    QHBoxLayout,
     QFrame,
     QScrollBar,
     QGraphicsView,
@@ -674,4 +675,32 @@ class ImageGrid(QScrollArea):
     
     def _use_for_session(self):
         """Emit signal with selected images for drawing session."""
-        self.session_images_selected.emit(list(self.selected_images)) 
+        self.session_images_selected.emit(list(self.selected_images))
+
+    def load_images_with_advanced_filter(self, filters: dict):
+        """
+        Load and display images with advanced AND/OR filtering.
+        
+        Args:
+            filters: Dictionary with "and" and "or" sets of tags
+        """
+        # Extract filter sets
+        and_tags = filters.get("and", set())
+        or_tags = filters.get("or", set())
+        
+        # Clear if filter changed
+        current_filter_key = (frozenset(and_tags), frozenset(or_tags))
+        if self.current_filter != current_filter_key:
+            self.clear()
+        
+        # Store filter
+        self.current_filter = current_filter_key
+        
+        # Get all matching images
+        self.all_images = self.image_manager.search_images_advanced(and_tags, or_tags)
+        
+        # Create initial batch of thumbnails
+        self._load_next_batch()
+        
+        # Trigger initial layout update
+        self.layout_timer.start() 

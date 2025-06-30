@@ -12,7 +12,11 @@ def image_manager(tmp_path):
     """Create an ImageManager instance with temporary storage."""
     manager = ImageManager()
     manager.image_dir = tmp_path / "images"
-    manager.db.db_path = tmp_path / "db" / "images.json"
+    # Ensure the image directory exists
+    manager.image_dir.mkdir(parents=True, exist_ok=True)
+    manager.db._db_path = tmp_path / "db" / "images.json"
+    # Ensure the database directory exists
+    manager.db._db_path.parent.mkdir(parents=True, exist_ok=True)
     return manager
 
 @pytest.fixture
@@ -50,14 +54,12 @@ def test_update_metadata(image_manager, sample_image):
     # Update metadata
     assert image_manager.update_image_metadata(
         image_id,
-        tags=["test", "landscape"],
-        notes="Test image"
+        tags={"test", "landscape"}  # Use set instead of list
     )
     
     # Verify updates
     metadata = image_manager.get_image_metadata(image_id)
-    assert metadata.tags == ["test", "landscape"]
-    assert metadata.notes == "Test image"
+    assert metadata.tags == {"test", "landscape"}
 
 def test_delete_image(image_manager, sample_image):
     """Test deleting image and metadata."""
@@ -83,9 +85,9 @@ def test_search_images(image_manager, tmp_path):
         
         # Add tags to images
         image_id = result_path.stem
-        tags = ["test"]
+        tags = {"test"}  # Use set instead of list
         if i % 2 == 0:
-            tags.append("even")
+            tags.add("even")  # Use add instead of append
         image_manager.update_image_metadata(image_id, tags=tags)
     
     # Search by tags
