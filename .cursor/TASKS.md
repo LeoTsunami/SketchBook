@@ -1,0 +1,251 @@
+# ✅ SKETCHBOOK – TASKS.md
+
+**Purpose**: Track development progress, current tasks, backlog, and milestones.  
+Update this file via prompt:  
+→ `"Update task"`
+
+---
+
+## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
+
+### Phase 1: Basic Structure ✅ (Completed: 2024-03-06)
+- [x] Set up base Python project with multi-file structure
+  - [x] Create directories: `core/`, `gui/`, `data/`, `utils/`
+  - [x] Set up Python virtual environment
+  - [x] Create requirements.txt with initial dependencies:
+    - PySide6/QtPy
+    - Pillow
+    - black (for formatting)
+    - pytest (for testing)
+- [x] Initialize Git and GitHub repository
+  - [x] Configure .gitignore
+  - [x] Set up documentation structure
+  - [x] Create initial README.md
+
+### Phase 2: Core Features Foundation ✅ (Completed: 2024-03-27)
+- [x] Define internal settings format (JSON)
+  - [x] Create settings.json template
+  - [x] Implement settings manager in `core/settings.py`
+- [x] Implement basic file system utilities in `utils/`
+  - [x] File path handling
+  - [x] Directory creation/validation
+- [x] Create first GUI window
+  - [x] Empty Qt window with basic menu structure
+  - [x] Dark/Light mode support with persistence
+  - [x] Theme system implementation
+
+### Phase 3: Image Management Basics ✅ (Completed: 2024-03-27)
+- [x] Implement image import system
+  - [x] File dialog for selection
+  - [x] Drag & drop support
+  - [x] Comprehensive error handling
+  - [x] Progress tracking and user feedback
+- [x] Create image processing utilities
+  - [x] Auto-resize/compress images (1920p max width)
+  - [x] Format standardization
+  - [x] Image optimization
+- [x] Set up local image database structure
+  - [x] Implement Pydantic models for metadata
+  - [x] Create JSON-based storage system
+  - [x] Implement CRUD operations
+  - [x] Add tag-based search functionality
+
+### Phase 4: Image Browser UI ✅ (Completed: 2024-12-19)
+- [x] Implement image grid view
+  - [x] Create scrollable grid layout
+  - [x] Add image thumbnails with labels
+  - [x] Implement dynamic loading for performance
+  - [x] Add image selection functionality
+    - [x] Individual selection
+    - [x] Multiple selection with drag rectangle
+    - [x] Shift/Ctrl modifiers support
+    - [x] Visual selection feedback
+    - [x] Context menu for selected images
+      - [x] Add tags with autocomplete
+      - [x] Delete from library with confirmation
+      - [x] Use selection for drawing session
+- [x] Create tag management UI
+  - [x] Add tag search bar with autocompletion
+  - [x] Show currently active tags
+  - [x] Add/remove tag functionality
+  - [x] Visual feedback for tag operations
+- [x] Implement filtering system
+  - [x] Filter images by selected tags
+  - [x] Real-time update of displayed images
+  - [x] Clear filters option
+
+### Phase 5: Session Management ✅ (Completed: 2024-12-19)
+- [x] Design session presets system
+  - [x] Create session preset data model
+  - [x] Implement preset storage (JSON)
+  - [x] Add preset management UI
+- [x] Implement slideshow player
+  - [x] Create fullscreen slideshow window
+  - [x] Add basic image navigation (next/previous)
+  - [x] Implement image transition effects
+  - [x] Add keyboard shortcuts for navigation
+- [x] Add basic timer functionality
+  - [x] Create timer widget with countdown
+  - [x] Add timer controls (start, pause, reset)
+  - [x] Implement timer presets (30s, 1min, 2min, 5min, etc.)
+  - [x] Add timer completion notification
+- [x] Create session configuration UI
+  - [x] Design session setup dialog
+  - [x] Add image selection for session
+  - [x] Configure timer settings
+  - [x] Add session start/stop controls
+
+### Phase 6: Advanced Features (Current Sprint)
+- [ ] Implement auto-tagging using AI
+  - [ ] Research AI tagging libraries (CLIP, etc.)
+  - [ ] Create AI tagging service
+  - [ ] Add auto-tagging to image import
+  - [ ] Implement manual AI tagging trigger
+- [ ] Add analytics tracking system
+  - [ ] Design analytics data model
+  - [ ] Track session completion rates
+  - [ ] Track drawing time and progress
+  - [ ] Create analytics dashboard
+- [ ] Create export functionality
+  - [ ] Export session data to CSV/JSON
+  - [ ] Export image collections
+  - [ ] Backup/restore functionality
+- [ ] Polish UI/UX
+  - [ ] Improve visual design
+  - [ ] Add animations and transitions
+  - [ ] Optimize performance
+  - [ ] Add accessibility features
+
+---
+
+## 🧠 DISCOVERIES / QUESTIONS
+
+- [x] Research best practices for Qt application architecture
+- [x] Investigate efficient image processing methods with Pillow
+- [x] Plan database schema for extensibility
+- [ ] Document setup process for new developers
+- [ ] Consider adding image format conversion options
+- [ ] Consider implementing batch processing options for large imports
+- [ ] Consider adding image preview functionality
+- [x] Research Qt fullscreen and always-on-top window management
+- [x] Plan session data persistence format
+- [ ] Research AI image recognition libraries for auto-tagging
+- [ ] Plan analytics data structure and storage
+
+---
+
+## 🧱 BACKLOG (Future Sprints)
+
+### Sprint 5: Polish & Optimization
+- [ ] Performance optimization
+- [ ] Memory usage optimization
+- [ ] Error handling improvements
+- [ ] User experience refinements
+
+---
+
+## 🎯 MILESTONES
+
+### v0.1 – Foundation ✅ (Completed: 2024-12-19)
+- [x] Basic project structure
+- [x] Working GUI shell
+- [x] Image import & storage
+- [x] Initial documentation
+
+### v0.2 – Core Features ✅ (Completed: 2024-12-19)
+- [x] Manual image tagging
+- [x] Basic slideshow functionality
+- [x] Simple timing system
+
+### v0.3 – Enhanced Features (Current Goal)
+- [ ] Session templates
+- [ ] Full slideshow controls
+- [ ] Basic analytics
+
+### v1.0 – Complete Artist Tool
+- [ ] Auto-tagging
+- [ ] Advanced analytics
+- [ ] Export capabilities
+- [ ] Polished UI/UX
+
+---
+
+## 📝 Development Guidelines
+
+- Follow PEP 8 style guide
+- Write unit tests for new features
+- Document all functions with Google-style docstrings
+- Keep files under 500 lines
+- Update documentation with changes
+
+---
+
+## 🛠️ GLOBAL RULES (for Cursor)
+
+# Tasks
+
+## ✅ Completed
+- Image Grid Improvements
+  - Added column slider (3-8 columns)
+  - Optimized image display with dynamic row heights
+  - Fixed image scaling and aspect ratio preservation
+  - Implemented dark theme for grid and thumbnails
+  - Removed image labels for cleaner interface
+  - Fixed initial image loading and scroll behavior
+- Bug Fixes
+  - Fixed NameError: name 'ImageThumbnail' is not defined in main_window.py
+  - Added missing imports for ImageThumbnail and TagChip classes
+- UI Improvements
+  - Removed popup dialog when clicking on images (preparing for selection functionality)
+  - Enhanced drag selection: rectangle now appears when starting drag from image thumbnails
+  - Added visual styling to selection rectangle for better visibility
+- Code Refactoring
+  - Split image_grid.py (946 lines) into two files for better maintainability
+  - Created gui/image_thumbnail.py (235 lines) for ImageThumbnail class
+  - Reduced image_grid.py to 754 lines (under 800-line limit)
+- Selection System Improvements (2024-12-19)
+  - Fixed drag selection rectangle visibility when starting drag on thumbnails
+  - Centralized all mouse event handling in ImageGrid (removed from ImageThumbnail)
+  - Improved rubber band positioning and styling for better visibility
+  - Enhanced Ctrl+drag behavior: always removes thumbnails from selection
+  - Fixed image centering in thumbnails for better visual alignment
+- Sprint 2: Image Management & Tagging ✅ (Completed: 2024-12-19)
+  - [x] Implement basic manual tagging UI
+  - [x] Create tag management system
+  - [x] Build image browser interface
+  - [x] Write helper function: `load_images_by_tags()` (implemented as `search_images()`)
+- Sprint 3: Session Management ✅ (Completed: 2024-12-19)
+  - [x] Design session presets system
+    - [x] Create session preset data model (`SessionPreset`)
+    - [x] Implement preset storage (JSON)
+    - [x] Add preset management UI (`SessionDialog`)
+  - [x] Implement slideshow player
+    - [x] Create fullscreen slideshow window (`SlideshowWindow`)
+    - [x] Add basic image navigation (next/previous)
+    - [x] Implement image transition effects
+    - [x] Add keyboard shortcuts for navigation (Space, Left/Right, S, P, Escape)
+  - [x] Add basic timer functionality
+    - [x] Create timer widget with countdown (`SessionTimer`)
+    - [x] Add timer controls (start, pause, reset)
+    - [x] Implement timer presets (30s, 1min, 2min, 5min, etc.)
+    - [x] Add timer completion notification
+  - [x] Create session configuration UI
+    - [x] Design session setup dialog (`SessionDialog`)
+    - [x] Add image selection for session
+    - [x] Configure timer settings
+    - [x] Add session start/stop controls
+  - [x] Session Management System
+    - [x] Create session manager (`SessionManager`)
+    - [x] Implement session lifecycle (create, start, end)
+    - [x] Add session history tracking
+    - [x] Create comprehensive test suite
+
+## 🔄 In Progress
+- Sprint 4: Advanced Features
+  - AI auto-tagging research
+  - Analytics system design
+  - Export functionality planning
+
+## 📋 Backlog
+
+## 🔍 DISCOVERIES / QUESTIONS
