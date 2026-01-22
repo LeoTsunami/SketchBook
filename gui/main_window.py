@@ -21,10 +21,11 @@ from qtpy.QtWidgets import (
     QSlider,
     QLineEdit,
     QPushButton,
-    QTabWidget
+    QTabWidget,
+    QScrollArea
 )
-from qtpy.QtCore import Qt, QThreadPool, QMetaObject, Q_ARG, Slot, QThread
-from qtpy.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent
+from qtpy.QtCore import Qt, QThreadPool, QMetaObject, Q_ARG, Slot, QThread, QSize
+from qtpy.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent, QPixmap, QPixmap
 from core.settings import settings
 from core.image_manager import ImageManager
 from core.session_manager import SessionManager
@@ -115,55 +116,95 @@ class MainWindow(QMainWindow):
         self._update_available_tags()
     
     def _setup_image_browser_tab(self):
-        """Set up the Image Browser tab."""
-        # Create tab widget
-        browser_widget = QWidget()
-        browser_layout = QVBoxLayout(browser_widget)
-        browser_layout.setContentsMargins(10, 10, 10, 10)
-        browser_layout.setSpacing(10)
+        """Set up the Image Browser tab with 3-panel splitter layout."""
+        # Create main splitter (horizontal)
+        main_splitter = QSplitter(Qt.Horizontal)
+        main_splitter.setChildrenCollapsible(False)
+        
+        # === LEFT PANEL: Tag Manager ===
+        left_panel = QWidget()
+        left_layout = QVBoxLayout(left_panel)
+        left_layout.setContentsMargins(10, 10, 10, 10)
+        left_layout.setSpacing(10)
+        left_layout.setAlignment(Qt.AlignTop)  # Align content to top
         
         # Create tag manager
         self.tag_manager = TagManager()
         self.tag_manager.filters_changed.connect(self._on_filters_changed)
         self.tag_manager.tags_modified.connect(self._update_available_tags)
-        browser_layout.addWidget(self.tag_manager)
+        left_layout.addWidget(self.tag_manager)
+        
+        # Add stretch to push content to top
+        left_layout.addStretch()
+        
+        # Add left panel to splitter
+        main_splitter.addWidget(left_panel)
+        
+        # === MIDDLE PANEL: Image Grid ===
+        middle_panel = QWidget()
+        middle_layout = QVBoxLayout(middle_panel)
+        middle_layout.setContentsMargins(10, 10, 10, 10)
+        middle_layout.setSpacing(10)
         
         # Create grid controls
         grid_controls = QHBoxLayout()
-        grid_controls.setContentsMargins(0, 0, 10, 0)  # Reduced margins
+        grid_controls.setContentsMargins(0, 0, 10, 0)
         
         # Add column control slider
         columns_label = QLabel("Columns:")
-        columns_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")  # Smaller, dimmer text
+        columns_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
         self.columns_slider = QSlider(Qt.Horizontal)
-        self.columns_slider.setMinimum(4)  # Changed from 3 to 4
-        self.columns_slider.setMaximum(10)  # Changed from 8 to 10
+        self.columns_slider.setMinimum(4)
+        self.columns_slider.setMaximum(10)
         self.columns_slider.setValue(settings.get("ui.grid.columns", 4))
-        self.columns_slider.setTickPosition(QSlider.NoTicks)  # Removed ticks for cleaner look
-        self.columns_slider.setFixedWidth(100)  # Fixed width for more compact look
+        self.columns_slider.setTickPosition(QSlider.NoTicks)
+        self.columns_slider.setFixedWidth(100)
         self.columns_slider.valueChanged.connect(self._on_columns_changed)
         
         # Add column count label
         self.columns_count = QLabel(str(self.columns_slider.value()))
-        self.columns_count.setStyleSheet("color: #aaaaaa; font-size: 11px;")  # Matching style
+        self.columns_count.setStyleSheet("color: #aaaaaa; font-size: 11px;")
         
         # Add widgets to layout with right alignment
-        grid_controls.addStretch()  # Push everything to the right
+        grid_controls.addStretch()
         grid_controls.addWidget(columns_label)
         grid_controls.addWidget(self.columns_slider)
         grid_controls.addWidget(self.columns_count)
         
-        browser_layout.addLayout(grid_controls)
+        middle_layout.addLayout(grid_controls)
         
         # Create image grid
         self.image_grid = ImageGrid(self.image_manager)
         self.image_grid.image_clicked.connect(self._on_image_clicked)
+        self.image_grid.selection_changed.connect(self._on_image_selection_changed)
         self.image_grid.session_images_selected.connect(self._on_session_images_selected)
         self.image_grid.set_columns(self.columns_slider.value())
-        browser_layout.addWidget(self.image_grid)
+        middle_layout.addWidget(self.image_grid)
+        
+        # Add middle panel to splitter
+        main_splitter.addWidget(middle_panel)
+        
+        # === RIGHT PANEL: Selected Image View ===
+        self.right_panel = QWidget()
+        right_layout = QVBoxLayout(self.right_panel)
+        right_layout.setContentsMargins(10, 10, 10, 10)
+        right_layout.setSpacing(10)
+        
+        # Create selected image view
+        self.selected_image_view = self._create_selected_image_view()
+        right_layout.addWidget(self.selected_image_view)
+        
+        # Add right panel to splitter
+        main_splitter.addWidget(self.right_panel)
+        
+        # Hide right panel by default (only show when image is selected)
+        self.right_panel.setVisible(False)
+        
+        # Set splitter sizes (left: 200px, middle: flexible, right: 0 when hidden)
+        main_splitter.setSizes([200, 800, 0])
         
         # Add tab
-        self.tab_widget.addTab(browser_widget, "Image Browser")
+        self.tab_widget.addTab(main_splitter, "Image Browser")
     
     def _setup_session_tab(self):
         """Set up the Drawing Session configuration tab."""
@@ -280,9 +321,29 @@ class MainWindow(QMainWindow):
         Args:
             image_id: ID of the clicked image
         """
-        # TODO: Implement image selection functionality
-        # For now, do nothing when clicking on images
-        pass
+        # Update selected image view and show panel
+        self._update_selected_image_view(image_id)
+        self._show_selected_image_panel()
+    
+    def _on_image_selection_changed(self, image_ids: List[str]):
+        """
+        Handle image selection changes.
+        
+        Args:
+            image_ids: List of selected image IDs
+        """
+        # If only one image is selected, show it in the right panel
+        if len(image_ids) == 1:
+            self._update_selected_image_view(image_ids[0])
+            self._show_selected_image_panel()
+        elif len(image_ids) > 1:
+            # Multiple images selected - show count or first image
+            self._update_selected_image_view(image_ids[0])
+            self._show_selected_image_panel()
+        else:
+            # No image selected - hide the panel
+            self._hide_selected_image_panel()
+            self._clear_selected_image_view()
     
     def _on_session_images_selected(self, image_ids: List[str]):
         """
@@ -924,6 +985,146 @@ class MainWindow(QMainWindow):
         
         # Start the session
         self._start_drawing_session(session)
+    
+    def _create_selected_image_view(self) -> QWidget:
+        """Create the selected image view widget for the right panel."""
+        view_widget = QWidget()
+        view_layout = QVBoxLayout(view_widget)
+        view_layout.setContentsMargins(0, 0, 0, 0)
+        view_layout.setSpacing(10)
+        
+        # Title
+        title_label = QLabel("Selected Image")
+        title_label.setStyleSheet("font-size: 14px; font-weight: bold; padding: 10px;")
+        view_layout.addWidget(title_label)
+        
+        # Scroll area for image
+        scroll_area = QScrollArea()
+        scroll_area.setWidgetResizable(True)
+        scroll_area.setAlignment(Qt.AlignCenter)
+        scroll_area.setStyleSheet("background-color: #1e1e1e; border: none;")
+        
+        # Image label
+        self.selected_image_label = QLabel()
+        self.selected_image_label.setAlignment(Qt.AlignCenter)
+        self.selected_image_label.setStyleSheet("background-color: #2b2b2b; border: 1px solid #4d4d4d;")
+        self.selected_image_label.setText("No image selected")
+        self.selected_image_label.setMinimumHeight(400)
+        self.selected_image_label.setScaledContents(False)  # We'll handle scaling manually
+        
+        scroll_area.setWidget(self.selected_image_label)
+        view_layout.addWidget(scroll_area)
+        
+        # Image info
+        self.selected_image_info = QTextEdit()
+        self.selected_image_info.setReadOnly(True)
+        self.selected_image_info.setMaximumHeight(150)
+        self.selected_image_info.setPlaceholderText("Image information will appear here...")
+        view_layout.addWidget(self.selected_image_info)
+        
+        return view_widget
+    
+    def _update_selected_image_view(self, image_id: str):
+        """
+        Update the selected image view with the given image.
+        
+        Args:
+            image_id: ID of the image to display
+        """
+        # Get image metadata
+        metadata = self.image_manager.db.get_image(image_id)
+        if not metadata:
+            self._clear_selected_image_view()
+            return
+        
+        # Load and display image
+        image_path = Path(metadata.file_path)
+        if image_path.exists():
+            pixmap = QPixmap(str(image_path))
+            if not pixmap.isNull():
+                # Get scroll area size to calculate available space
+                scroll_area = self.selected_image_label.parent()
+                if scroll_area and hasattr(scroll_area, 'viewport'):
+                    viewport_size = scroll_area.viewport().size()
+                    max_width = viewport_size.width() - 20
+                    max_height = viewport_size.height() - 20
+                else:
+                    # Fallback to label size
+                    label_size = self.selected_image_label.size()
+                    max_width = label_size.width() - 20 if label_size.width() > 0 else pixmap.width()
+                    max_height = label_size.height() - 20 if label_size.height() > 0 else pixmap.height()
+                
+                # Scale pixmap to fit available space while maintaining aspect ratio
+                if max_width > 0 and max_height > 0:
+                    scaled_pixmap = pixmap.scaled(
+                        max_width,
+                        max_height,
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation
+                    )
+                    self.selected_image_label.setPixmap(scaled_pixmap)
+                    # Adjust label size to fit pixmap
+                    self.selected_image_label.resize(scaled_pixmap.size())
+                else:
+                    # Use original pixmap if size calculation fails
+                    self.selected_image_label.setPixmap(pixmap)
+                    self.selected_image_label.resize(pixmap.size())
+            else:
+                self.selected_image_label.setText("Failed to load image")
+                self.selected_image_label.resize(QSize(400, 400))
+        else:
+            self.selected_image_label.setText("Image file not found")
+            self.selected_image_label.resize(QSize(400, 400))
+        
+        # Update image info
+        info_text = f"<b>Filename:</b> {metadata.original_filename}<br>"
+        info_text += f"<b>Path:</b> {metadata.file_path}<br>"
+        info_text += f"<b>Size:</b> {metadata.width} x {metadata.height}<br>"
+        info_text += f"<b>Added:</b> {metadata.added_at}<br>"
+        if metadata.tags:
+            info_text += f"<b>Tags:</b> {', '.join(sorted(metadata.tags))}<br>"
+        else:
+            info_text += "<b>Tags:</b> None<br>"
+        
+        self.selected_image_info.setHtml(info_text)
+    
+    def _clear_selected_image_view(self):
+        """Clear the selected image view."""
+        self.selected_image_label.clear()
+        self.selected_image_label.setText("No image selected")
+        self.selected_image_info.clear()
+        self.selected_image_info.setPlaceholderText("Image information will appear here...")
+    
+    def _show_selected_image_panel(self):
+        """Show the selected image panel."""
+        if hasattr(self, 'right_panel') and not self.right_panel.isVisible():
+            self.right_panel.setVisible(True)
+            # Adjust splitter sizes to show the right panel
+            splitter = self.right_panel.parent()
+            if splitter and isinstance(splitter, QSplitter):
+                current_sizes = splitter.sizes()
+                if len(current_sizes) == 3:
+                    # Calculate new sizes: keep left and middle, add right
+                    total_width = sum(current_sizes)
+                    left_size = current_sizes[0]
+                    middle_size = total_width - left_size - 400  # Reserve 400px for right panel
+                    right_size = 400
+                    splitter.setSizes([left_size, middle_size, right_size])
+    
+    def _hide_selected_image_panel(self):
+        """Hide the selected image panel."""
+        if hasattr(self, 'right_panel') and self.right_panel.isVisible():
+            self.right_panel.setVisible(False)
+            # Adjust splitter sizes to hide the right panel
+            splitter = self.right_panel.parent()
+            if splitter and isinstance(splitter, QSplitter):
+                current_sizes = splitter.sizes()
+                if len(current_sizes) == 3:
+                    # Redistribute space to left and middle panels
+                    total_width = sum(current_sizes)
+                    left_size = current_sizes[0]
+                    middle_size = total_width - left_size
+                    splitter.setSizes([left_size, middle_size, 0])
     
     def _update_session_image_list(self, image_ids: List[str]):
         """Update the session image list with selected images."""
