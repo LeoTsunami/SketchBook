@@ -7,7 +7,6 @@
 ```
 SketchBook/
 ├── core/         # Core business logic
-├── data/         # Data storage and configuration
 ├── docs/         # All documentation files
 ├── gui/          # User interface components
 ├── tests/        # Test files mirroring main structure

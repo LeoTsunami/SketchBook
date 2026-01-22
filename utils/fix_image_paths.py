@@ -14,16 +14,17 @@ from core.image_db import ImageMetadata
 
 def fix_image_paths():
     """Corrige les chemins des images dans la base de données."""
+    from core.user_data import user_data
     image_manager = ImageManager()
-    images_dir = Path("data/images")
+    images_dir = user_data.get_images_dir()
     
     if not images_dir.exists():
-        print("Le dossier data/images n'existe pas.")
+        print(f"Le dossier {images_dir} n'existe pas.")
         return
     
     # Lister toutes les images physiques
     image_files = list(images_dir.glob("*.png")) + list(images_dir.glob("*.jpg")) + list(images_dir.glob("*.jpeg"))
-    print(f"Trouvé {len(image_files)} images dans data/images")
+    print(f"Trouvé {len(image_files)} images dans {images_dir}")
     
     # Créer un mapping des noms de fichiers vers les chemins
     file_mapping = {}
@@ -38,7 +39,7 @@ def fix_image_paths():
     not_found_count = 0
     
     for metadata in all_images:
-        # Vérifier si l'image existe dans data/images
+        # Vérifier si l'image existe dans le dossier images
         if metadata.original_filename in file_mapping:
             # Mettre à jour le chemin
             new_path = file_mapping[metadata.original_filename]

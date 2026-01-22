@@ -857,7 +857,8 @@ class MainWindow(QMainWindow):
         if result == QMessageBox.Yes:
             try:
                 # Delete all image files
-                image_dir = Path(settings.get("images.storage_path", "data/images"))
+                from core.user_data import user_data
+                image_dir = user_data.get_images_dir()
                 if image_dir.exists():
                     for file in image_dir.glob("*"):
                         if file.is_file() and file.suffix.lower() in ImageManager.SUPPORTED_FORMATS:

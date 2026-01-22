@@ -8,6 +8,7 @@ from typing import List, Optional, Tuple, Set
 from PIL import Image
 from core.settings import settings
 from core.image_db import ImageDatabase, ImageMetadata
+from core.user_data import user_data
 from utils.file_utils import ensure_dir, safe_path
 
 class ImageManager:
@@ -18,7 +19,8 @@ class ImageManager:
     
     def __init__(self):
         """Initialize the image manager."""
-        self.image_dir = Path(settings.get("images.storage_path", "data/images")).resolve()
+        # Use user data directory for images
+        self.image_dir = user_data.get_images_dir()
         ensure_dir(self.image_dir)
         self.db = ImageDatabase()
     

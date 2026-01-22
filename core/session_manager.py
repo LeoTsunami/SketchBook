@@ -8,6 +8,7 @@ import json
 from datetime import datetime
 from core.settings import settings
 from core.image_db import ImageMetadata
+from core.user_data import user_data
 
 
 @dataclass
@@ -78,8 +79,9 @@ class SessionManager:
     
     def __init__(self):
         """Initialize the session manager."""
-        self.presets_path = Path(settings.get("sessions.presets_path", "data/config/session_presets.json"))
-        self.sessions_path = Path(settings.get("sessions.history_path", "data/config/session_history.json"))
+        # Use user data directory for session files
+        self.presets_path = user_data.get_session_presets_path()
+        self.sessions_path = user_data.get_session_history_path()
         
         # Ensure directories exist
         self.presets_path.parent.mkdir(parents=True, exist_ok=True)

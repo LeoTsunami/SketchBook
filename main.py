@@ -8,6 +8,7 @@ from pathlib import Path
 from qtpy.QtWidgets import QApplication
 from gui.main_window import MainWindow
 from core.settings import settings
+from core.user_data import user_data
 
 # Force stdout to be unbuffered for immediate print output
 sys.stdout.reconfigure(line_buffering=True)
@@ -16,9 +17,8 @@ sys.stderr.reconfigure(line_buffering=True)
 # Ensure all necessary directories exist
 def setup_directories():
     """Create necessary application directories if they don't exist."""
-    dirs = ['data/images', 'data/sessions', 'data/config']
-    for dir_path in dirs:
-        Path(dir_path).mkdir(parents=True, exist_ok=True)
+    # Use user data manager to ensure directories exist
+    user_data.ensure_directories()
 
 def load_stylesheet(path: str) -> str:
     with open(path, "r", encoding="utf-8") as f:

@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 from core.settings import settings
+from core.user_data import user_data
 from dataclasses import dataclass, asdict, field
 
 @dataclass
@@ -26,7 +27,8 @@ class ImageDatabase:
     
     def __init__(self):
         """Initialize the database."""
-        self._db_path = Path(settings.get("images.db_path", "data/config/images.json")).resolve()
+        # Use user data directory for database
+        self._db_path = user_data.get_images_db_path()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._images = {}
         self._load_db()

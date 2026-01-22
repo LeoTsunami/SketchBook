@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 """
-Script pour importer toutes les images existantes du dossier data/images dans la base de données.
+Script pour importer toutes les images existantes du dossier utilisateur dans la base de données.
 """
 import sys
 from pathlib import Path
@@ -14,11 +14,12 @@ from PIL import Image
 
 def import_existing_images():
     """Importe toutes les images existantes dans la base de données."""
+    from core.user_data import user_data
     image_manager = ImageManager()
-    images_dir = Path("data/images")
+    images_dir = user_data.get_images_dir()
     
     if not images_dir.exists():
-        print("Le dossier data/images n'existe pas.")
+        print(f"Le dossier {images_dir} n'existe pas.")
         return
     
     # Lister toutes les images

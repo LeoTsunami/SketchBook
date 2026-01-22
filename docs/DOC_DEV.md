@@ -148,7 +148,7 @@ The settings are organized in the following structure:
 ```
 
 ### File Locations
-- Default configuration: `data/config/settings.json`
+- Default configuration: `Documents/SketchBook/config/settings.json` (or custom location via user_data)
 - Unit tests: `tests/test_settings.py`
 
 ## File System Utilities (`utils/file_utils.py`)
@@ -161,7 +161,8 @@ The File System Utilities module provides safe and convenient functions for file
 from utils.file_utils import ensure_dir, safe_path, list_files
 
 # Create/ensure directory exists
-data_dir = ensure_dir("data/images")
+from core.user_data import user_data
+data_dir = user_data.get_images_dir()
 
 # Safely join paths (prevents directory traversal)
 safe_file_path = safe_path(data_dir, "user_uploads", "image.jpg")
@@ -261,7 +262,7 @@ The main window (`gui/main_window.py`) implements image import via:
 ### Configuration
 Image processing settings can be customized via the settings system:
 
-- `images.storage_path`: Directory for imported images (default: "data/images")
+- `images.storage_path`: Directory for imported images (default: user data directory + "/images")
 - `images.compression.quality`: JPEG compression quality (default: 85)
 
 ### Image Database
@@ -348,7 +349,7 @@ The database is stored in JSON format with the following structure:
 
 #### Configuration
 Database settings can be customized via the settings system:
-- `images.db_path`: Path to the JSON database file (default: "data/config/images.json")
+- `images.db_path`: Path to the JSON database file (default: user data directory + "/config/images.json")
 
 ## Image Grid Component
 

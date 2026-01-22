@@ -6,18 +6,23 @@ import json
 import os
 from pathlib import Path
 from typing import Any, Dict, Optional, Union
+from core.user_data import user_data
 
 class Settings:
     """Manages application settings with validation and type checking."""
     
-    def __init__(self, config_path: str = "data/config/settings.json"):
+    def __init__(self, config_path: Optional[str] = None):
         """
         Initialize the settings manager.
         
         Args:
-            config_path: Path to the settings file
+            config_path: Path to the settings file (optional, uses user data dir if not provided)
         """
-        self.config_path = Path(config_path)
+        if config_path is None:
+            # Use user data directory
+            self.config_path = user_data.get_settings_path()
+        else:
+            self.config_path = Path(config_path)
         self._settings: Dict[str, Any] = {}
         self._load_settings()
     
@@ -56,7 +61,7 @@ class Settings:
                 }
             },
             "images": {
-                "storage_path": "data/images",
+                "storage_path": str(user_data.get_images_dir()),
                 "max_width": 1920,
                 "formats": ["jpg", "jpeg", "png"],
                 "compression": {
@@ -66,13 +71,13 @@ class Settings:
             },
             "session": {
                 "auto_save": True,
-                "save_path": "data/sessions",
+                "save_path": str(user_data.get_sessions_dir()),
                 "default_duration": 300,
                 "intervals": [30, 60, 120, 300]
             },
             "database": {
                 "type": "json",
-                "path": "data/db.json"
+                "path": str(user_data.get_images_db_path())
             }
         }
     
