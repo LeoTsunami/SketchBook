@@ -316,9 +316,8 @@ class ImageGrid(QScrollArea):
                 self.grid.addWidget(thumbnail, row, col)
                 thumbnail.show()
                 
-                # Update image scaling
-                if thumbnail.scene and thumbnail.pixmap_item:
-                    thumbnail.graphics_view.fitInView(thumbnail.scene.sceneRect(), Qt.KeepAspectRatio)
+                # Update image scaling (handled by resizeEvent in thumbnail)
+                # No need to call fitInView as it causes pixelation
 
     def clear(self):
         """Remove all thumbnails from the grid."""
@@ -482,9 +481,16 @@ class ImageGrid(QScrollArea):
         self.loading_images.add(image_id)
             
         # Get actual thumbnail size for proper scaling
+        # Use the graphics_view size which is the actual image display area
         thumbnail = self.thumbnails[image_id]
-        target_width = thumbnail.width() - 8  # Account for margins
-        target_height = thumbnail.height() - 8
+        target_width = thumbnail.graphics_view.width()
+        target_height = thumbnail.graphics_view.height()
+        
+        # Ensure minimum size for quality
+        if target_width <= 0:
+            target_width = thumbnail.width() - 8
+        if target_height <= 0:
+            target_height = thumbnail.height() - 8
         
         # Create and start worker with actual thumbnail dimensions
         image_path = self.image_manager.image_dir / metadata.path

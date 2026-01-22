@@ -154,7 +154,7 @@ class MainWindow(QMainWindow):
         columns_label = QLabel("Columns:")
         columns_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
         self.columns_slider = QSlider(Qt.Horizontal)
-        self.columns_slider.setMinimum(4)
+        self.columns_slider.setMinimum(3)
         self.columns_slider.setMaximum(10)
         self.columns_slider.setValue(settings.get("ui.grid.columns", 4))
         self.columns_slider.setTickPosition(QSlider.NoTicks)
@@ -200,8 +200,8 @@ class MainWindow(QMainWindow):
         # Hide right panel by default (only show when image is selected)
         self.right_panel.setVisible(False)
         
-        # Set splitter sizes (left: 200px, middle: flexible, right: 0 when hidden)
-        main_splitter.setSizes([200, 800, 0])
+        # Set splitter sizes (left: 150px minimum, middle: flexible, right: 0 when hidden)
+        main_splitter.setSizes([150, 800, 0])
         
         # Add tab
         self.tab_widget.addTab(main_splitter, "Image Browser")

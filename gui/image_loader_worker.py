@@ -43,12 +43,22 @@ class ImageLoaderWorker(QRunnable):
                 raise ValueError(f"Failed to load image: {self.image_path}")
             
             # Get target width and calculate new height based on aspect ratio
-            target_width, _ = self.target_size
+            target_width, target_height = self.target_size
             
             if target_width > 0:
                 # Calculate new height preserving aspect ratio
                 aspect_ratio = image.width() / image.height()
                 new_height = int(target_width / aspect_ratio)
+                
+                # Use device pixel ratio for high-DPI displays (usually 1.0, 1.5, or 2.0)
+                # This ensures crisp rendering on retina/high-DPI screens
+                from qtpy.QtWidgets import QApplication
+                app = QApplication.instance()
+                device_pixel_ratio = app.devicePixelRatio() if app else 1.0
+                
+                # Scale to account for device pixel ratio for better quality
+                scaled_width = int(target_width * max(device_pixel_ratio, 1.5))
+                scaled_height = int(new_height * max(device_pixel_ratio, 1.5))
                 
                 # First create a fast scaled version for immediate display
                 fast_pixmap = QPixmap.fromImage(image.scaled(
@@ -58,13 +68,17 @@ class ImageLoaderWorker(QRunnable):
                     Qt.FastTransformation
                 ))
                 
-                # Then create a high quality version
+                # Create high quality version at higher resolution for crisp display
+                # Using SmoothTransformation for best quality
                 high_quality_pixmap = QPixmap.fromImage(image.scaled(
-                    target_width,
-                    new_height,
+                    scaled_width,
+                    scaled_height,
                     Qt.KeepAspectRatio,
                     Qt.SmoothTransformation
                 ))
+                
+                # Set device pixel ratio on the pixmap for proper scaling
+                high_quality_pixmap.setDevicePixelRatio(device_pixel_ratio)
                 
                 # Store both versions in a tuple
                 result = (fast_pixmap, high_quality_pixmap)

@@ -84,11 +84,15 @@ class ImageThumbnail(QFrame):
             return
             
         try:
+            # Store original pixmap (the pixmap is already scaled to correct size by worker)
+            self.original_pixmap = pixmap
+            
             # Clear previous pixmap item
             if self.pixmap_item:
                 self.scene.removeItem(self.pixmap_item)
             
-            # Create new pixmap item
+            # Use the pixmap directly - it's already scaled to the correct size by ImageLoaderWorker
+            # No need to resize again, which would cause pixelation
             self.pixmap_item = self.scene.addPixmap(pixmap)
             
             # Set scene rect to match pixmap size
@@ -97,14 +101,11 @@ class ImageThumbnail(QFrame):
             # Center the view
             self.graphics_view.setAlignment(Qt.AlignCenter)
             
-            # Fit the view to show the entire image
-            self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
-            
-            # Ensure proper centering by centering the view on the scene
+            # Center the view on the pixmap item (no fitInView to avoid pixelation)
             self.graphics_view.centerOn(self.pixmap_item)
             
-            # Schedule another fit after a short delay to ensure proper scaling
-            QTimer.singleShot(50, lambda: self._ensure_proper_centering())
+            # Reset transform to ensure no scaling artifacts
+            self.graphics_view.resetTransform()
             
         except Exception as e:
             self.set_error(str(e))
@@ -113,12 +114,10 @@ class ImageThumbnail(QFrame):
         """Ensure the image is properly centered in the view."""
         if not self.scene or not self.pixmap_item:
             return
-            
-        # Fit the view to show the entire image
-        self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
         
-        # Center the view on the pixmap item
+        # Just center the view - no need to rescale as pixmap is already correct size
         self.graphics_view.centerOn(self.pixmap_item)
+        self.graphics_view.resetTransform()
     
     def _apply_high_quality_resize(self):
         """Apply high quality resize after the initial fast resize."""
@@ -159,12 +158,10 @@ class ImageThumbnail(QFrame):
         """Handle resize events to adjust image scaling."""
         super().resizeEvent(event)
         
+        # Just center the view - the image will be reloaded at new size if needed
         if self.scene and self.pixmap_item:
-            # Fit the view to show the entire image
-            self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
-            
-            # Ensure proper centering after resize
             self.graphics_view.centerOn(self.pixmap_item)
+            self.graphics_view.resetTransform()
     
     def set_selected(self, selected: bool):
         """Set the selection state of the thumbnail."""
