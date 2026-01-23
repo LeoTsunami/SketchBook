@@ -26,7 +26,7 @@ from qtpy.QtWidgets import (
     QSpinBox
 )
 from qtpy.QtCore import Qt, QThreadPool, QMetaObject, Q_ARG, Slot, QThread
-from qtpy.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent
+from qtpy.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent, QPixmap
 from core.settings import settings
 from core.image_manager import ImageManager
 from gui.image_import_worker import ImageImportWorker
@@ -122,6 +122,21 @@ class MainWindow(QMainWindow):
         tag_manager_layout.setSpacing(10)
         tag_manager_layout.setAlignment(Qt.AlignTop)
         
+        # Logo at the top
+        logo_path = Path(__file__).parent / "ressources" / "icones" / "SketchBook_logo.png"
+        if logo_path.exists():
+            logo_label = QLabel()
+            pixmap = QPixmap(str(logo_path))
+            # Scale logo to fit width (max 120px) while maintaining aspect ratio
+            if pixmap.width() > 120:
+                scaled_pixmap = pixmap.scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+                logo_label.setPixmap(scaled_pixmap)
+            else:
+                logo_label.setPixmap(pixmap)
+            logo_label.setAlignment(Qt.AlignCenter)
+            logo_label.setStyleSheet("background-color: transparent;")
+            tag_manager_layout.addWidget(logo_label)
+        
         # Create tag manager
         self.tag_manager = TagManager()
         self.tag_manager.filters_changed.connect(self._on_filters_changed)
@@ -160,7 +175,7 @@ class MainWindow(QMainWindow):
         self.course_duration_spin.setRange(10, 300)  # 10 to 300 minutes
         self.course_duration_spin.setSingleStep(10)  # Step of 10 minutes
         self.course_duration_spin.setSuffix(" minutes")
-        self.course_duration_spin.setValue(60)  # Default 60 minutes
+        self.course_duration_spin.setValue(30)  # Default 30 minutes
         bottom_layout.addWidget(self.course_duration_spin)
         
         # Constant interval duration (shown when "Constant interval" is selected)
@@ -173,6 +188,15 @@ class MainWindow(QMainWindow):
         self.interval_duration_combo.addItems(["30 seconds", "1 minute", "3 minutes", "5 minutes", "10 minutes", "20 minutes"])
         self.interval_duration_combo.setVisible(False)
         bottom_layout.addWidget(self.interval_duration_combo)
+        
+        # Window Mode combobox
+        window_mode_label = QLabel("Window Mode:")
+        window_mode_label.setStyleSheet("font-size: 11px;")
+        bottom_layout.addWidget(window_mode_label)
+        
+        self.window_mode_combo = QComboBox()
+        self.window_mode_combo.addItems(["FullScreen", "Window always on top"])
+        bottom_layout.addWidget(self.window_mode_combo)
         
         # Add stretch to push button to bottom
         bottom_layout.addStretch()
