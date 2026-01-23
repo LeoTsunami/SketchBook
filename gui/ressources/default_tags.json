@@ -1,0 +1,22 @@
+{
+  "Camera_Angle": [
+    "front view",
+    "back view",
+    "side view",
+    "3/4"
+  ],
+  "Type": {
+    "Human": [
+      "Male",
+      "Female",
+      "Clothed",
+      "naked"
+    ],
+    "Animal": [
+      "quadriped",
+      "birds",
+      "biped",
+      "fish"
+    ]
+  }
+}

@@ -23,7 +23,9 @@ from qtpy.QtWidgets import (
     QPushButton,
     QScrollArea,
     QComboBox,
-    QSpinBox
+    QSpinBox,
+    QTreeWidget,
+    QTreeWidgetItem
 )
 from qtpy.QtCore import Qt, QThreadPool, QMetaObject, Q_ARG, Slot, QThread
 from qtpy.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent, QPixmap
@@ -33,7 +35,39 @@ from gui.image_import_worker import ImageImportWorker
 from gui.image_grid import ImageGrid, ImageThumbnail
 from gui.tag_manager import TagManager, DraggableTagChip
 from qtpy.QtWidgets import QApplication
+from qtpy.QtGui import QDrag
 import os
+import json
+
+
+class DraggableTreeWidget(QTreeWidget):
+    """Tree widget that supports dragging tags to drop zones."""
+    
+    def startDrag(self, supportedActions):
+        """Start drag operation from tree widget."""
+        item = self.currentItem()
+        if not item or not (item.flags() & Qt.ItemIsDragEnabled):
+            return
+        
+        tag_text = item.text(0)
+        
+        # Create drag
+        drag = QDrag(self)
+        mime_data = QMimeData()
+        mime_data.setText(tag_text)
+        drag.setMimeData(mime_data)
+        
+        # Create drag pixmap
+        pixmap = QPixmap(100, 20)
+        pixmap.fill(Qt.transparent)
+        painter = QPainter(pixmap)
+        painter.setPen(Qt.white)
+        painter.drawText(pixmap.rect(), Qt.AlignCenter, tag_text)
+        painter.end()
+        drag.setPixmap(pixmap)
+        
+        # Execute drag
+        drag.exec_(Qt.MoveAction)
 
 def apply_global_stylesheet():
     app = QApplication.instance()
@@ -145,6 +179,32 @@ class MainWindow(QMainWindow):
         
         left_splitter.addWidget(tag_manager_panel)
         
+        # Middle part: Tags tree widget
+        tags_tree_panel = QWidget()
+        tags_tree_layout = QVBoxLayout(tags_tree_panel)
+        tags_tree_layout.setContentsMargins(10, 10, 10, 10)
+        tags_tree_layout.setSpacing(5)
+        
+        # Title
+        tags_tree_title = QLabel("Tags Library")
+        tags_tree_title.setStyleSheet("font-size: 12px; font-weight: bold;")
+        tags_tree_layout.addWidget(tags_tree_title)
+        
+        # Tree widget for tags (with custom drag support)
+        self.tags_tree = DraggableTreeWidget()
+        self.tags_tree.setHeaderLabel("Tags")
+        self.tags_tree.setRootIsDecorated(True)
+        self.tags_tree.setDragEnabled(True)
+        self.tags_tree.setDragDropMode(QTreeWidget.DragOnly)
+        # Enable drag for items
+        self.tags_tree.itemDoubleClicked.connect(self._on_tree_item_double_clicked)
+        tags_tree_layout.addWidget(self.tags_tree)
+        
+        # Load tags into tree
+        self._load_tags_into_tree()
+        
+        left_splitter.addWidget(tags_tree_panel)
+        
         # Bottom part: Session parameters
         bottom_panel = QWidget()
         bottom_layout = QVBoxLayout(bottom_panel)
@@ -228,8 +288,8 @@ class MainWindow(QMainWindow):
         
         left_splitter.addWidget(bottom_panel)
         
-        # Set splitter sizes (top: flexible, bottom: fixed for session controls)
-        left_splitter.setSizes([400, 200])
+        # Set splitter sizes (top: flexible, middle: flexible, bottom: fixed for session controls)
+        left_splitter.setSizes([300, 200, 200])
         
         # Add left splitter to main splitter
         main_splitter.addWidget(left_splitter)
@@ -385,6 +445,110 @@ class MainWindow(QMainWindow):
             )
         
         # TODO: Implement actual session start logic
+    
+    def _load_tags_into_tree(self):
+        """Load tags from JSON and user tags into the tree widget."""
+        self.tags_tree.clear()
+        
+        # Load default tags from JSON
+        default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
+        if default_tags_path.exists():
+            try:
+                import json
+                with open(default_tags_path, "r", encoding="utf-8") as f:
+                    default_tags = json.load(f)
+                
+                # Add default tags section
+                default_root = QTreeWidgetItem(self.tags_tree)
+                default_root.setText(0, "Default Tags")
+                default_root.setExpanded(True)
+                
+                # Process each category
+                for category, tags in default_tags.items():
+                    category_item = QTreeWidgetItem(default_root)
+                    category_item.setText(0, category)
+                    category_item.setExpanded(True)
+                    
+                    # Check if tags is a list or dict
+                    if isinstance(tags, list):
+                        # Simple list of tags
+                        for tag in tags:
+                            tag_item = QTreeWidgetItem(category_item)
+                            tag_item.setText(0, tag)
+                            tag_item.setFlags(tag_item.flags() | Qt.ItemIsDragEnabled)
+                    elif isinstance(tags, dict):
+                        # Nested structure (e.g., Type: {Human: [...], Animal: [...]})
+                        for sub_category, sub_tags in tags.items():
+                            # Sub-category can be both a category and a tag
+                            sub_category_item = QTreeWidgetItem(category_item)
+                            sub_category_item.setText(0, sub_category)
+                            sub_category_item.setExpanded(True)
+                            # Make sub-category draggable as a tag
+                            sub_category_item.setFlags(sub_category_item.flags() | Qt.ItemIsDragEnabled)
+                            
+                            # Add tags under sub-category
+                            for tag in sub_tags:
+                                tag_item = QTreeWidgetItem(sub_category_item)
+                                tag_item.setText(0, tag)
+                                tag_item.setFlags(tag_item.flags() | Qt.ItemIsDragEnabled)
+            except Exception as e:
+                print(f"Error loading default tags: {str(e)}")
+        
+        # Add user tags section
+        user_root = QTreeWidgetItem(self.tags_tree)
+        user_root.setText(0, "User Tags")
+        user_root.setExpanded(True)
+        
+        # Get user tags from database
+        user_tags = set()
+        for metadata in self.image_manager.db.list_images():
+            user_tags.update(metadata.tags)
+        
+        # Filter out default tags
+        default_tag_set = set()
+        if default_tags_path.exists():
+            try:
+                import json
+                with open(default_tags_path, "r", encoding="utf-8") as f:
+                    default_tags_data = json.load(f)
+                
+                def extract_tags(data, tag_set):
+                    """Recursively extract all tags from nested structure."""
+                    if isinstance(data, list):
+                        tag_set.update(data)
+                    elif isinstance(data, dict):
+                        for key, value in data.items():
+                            tag_set.add(key)  # Category name is also a tag
+                            extract_tags(value, tag_set)
+                
+                extract_tags(default_tags_data, default_tag_set)
+            except Exception:
+                pass
+        
+        # Add user tags that are not in default tags
+        user_only_tags = sorted(user_tags - default_tag_set)
+        for tag in user_only_tags:
+            tag_item = QTreeWidgetItem(user_root)
+            tag_item.setText(0, tag)
+            tag_item.setFlags(tag_item.flags() | Qt.ItemIsDragEnabled)
+        
+        if not user_only_tags:
+            no_tags_item = QTreeWidgetItem(user_root)
+            no_tags_item.setText(0, "(No user tags yet)")
+            no_tags_item.setFlags(no_tags_item.flags() & ~Qt.ItemIsEnabled)
+    
+    def _on_tree_item_double_clicked(self, item: QTreeWidgetItem, column: int):
+        """
+        Handle double-click on tree item to add tag to AND zone.
+        
+        Args:
+            item: The clicked tree item
+            column: Column index (always 0 for single column)
+        """
+        # Only add if item is draggable (i.e., it's a tag, not a category header)
+        if item.flags() & Qt.ItemIsDragEnabled:
+            tag_text = item.text(0)
+            self.tag_manager.add_tag_to_and(tag_text)
     
     def _setup_dev_tools(self):
         """Set up development tools dock widget."""
