@@ -14,6 +14,7 @@ from core.user_data import user_data
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 
+
 # Ensure all necessary directories exist
 def setup_directories():
     """Create necessary application directories if they don't exist."""

@@ -121,24 +121,36 @@ class MainWindow(QMainWindow):
         main_splitter = QSplitter(Qt.Horizontal)
         main_splitter.setChildrenCollapsible(False)
         
-        # === LEFT PANEL: Tag Manager ===
-        left_panel = QWidget()
-        left_layout = QVBoxLayout(left_panel)
-        left_layout.setContentsMargins(10, 10, 10, 10)
-        left_layout.setSpacing(10)
-        left_layout.setAlignment(Qt.AlignTop)  # Align content to top
+        # === LEFT PANEL: Vertical Splitter with Tag Manager ===
+        left_splitter = QSplitter(Qt.Vertical)
+        left_splitter.setChildrenCollapsible(False)
+        
+        # Top part: Tag Manager (search bar + drop zones)
+        tag_manager_panel = QWidget()
+        tag_manager_layout = QVBoxLayout(tag_manager_panel)
+        tag_manager_layout.setContentsMargins(10, 10, 10, 10)
+        tag_manager_layout.setSpacing(10)
+        tag_manager_layout.setAlignment(Qt.AlignTop)
         
         # Create tag manager
         self.tag_manager = TagManager()
         self.tag_manager.filters_changed.connect(self._on_filters_changed)
         self.tag_manager.tags_modified.connect(self._update_available_tags)
-        left_layout.addWidget(self.tag_manager)
+        tag_manager_layout.addWidget(self.tag_manager, 1)  # Stretch factor = 1 to expand
         
-        # Add stretch to push content to top
-        left_layout.addStretch()
+        left_splitter.addWidget(tag_manager_panel)
         
-        # Add left panel to splitter
-        main_splitter.addWidget(left_panel)
+        # Bottom part: Reserved for future use (empty for now)
+        bottom_panel = QWidget()
+        bottom_layout = QVBoxLayout(bottom_panel)
+        bottom_layout.setContentsMargins(10, 10, 10, 10)
+        left_splitter.addWidget(bottom_panel)
+        
+        # Set splitter sizes (top: flexible, bottom: minimal)
+        left_splitter.setSizes([400, 100])
+        
+        # Add left splitter to main splitter
+        main_splitter.addWidget(left_splitter)
         
         # === MIDDLE PANEL: Image Grid ===
         middle_panel = QWidget()

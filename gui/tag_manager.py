@@ -13,7 +13,8 @@ from qtpy.QtWidgets import (
     QFrame,
     QScrollArea,
     QGroupBox,
-    QGridLayout
+    QGridLayout,
+    QSizePolicy
 )
 from qtpy.QtCore import Qt, Signal, QStringListModel, QMimeData, QPoint
 from qtpy.QtGui import QFont, QFontMetrics, QDrag, QPixmap, QPainter, QColor
@@ -101,8 +102,35 @@ class DraggableTagChip(QFrame):
         self.drag_start_pos = None
         super().mouseReleaseEvent(event)
 
+class DropScrollArea(QScrollArea):
+    """ScrollArea that delegates drop events to its parent TagDropZone."""
+    
+    def dragEnterEvent(self, event):
+        """Delegate drag enter to parent."""
+        parent = self.parent()
+        if isinstance(parent, TagDropZone):
+            parent.dragEnterEvent(event)
+        else:
+            super().dragEnterEvent(event)
+    
+    def dragLeaveEvent(self, event):
+        """Delegate drag leave to parent."""
+        parent = self.parent()
+        if isinstance(parent, TagDropZone):
+            parent.dragLeaveEvent(event)
+        else:
+            super().dragLeaveEvent(event)
+    
+    def dropEvent(self, event):
+        """Delegate drop to parent."""
+        parent = self.parent()
+        if isinstance(parent, TagDropZone):
+            parent.dropEvent(event)
+        else:
+            super().dropEvent(event)
+
 class TagDropZone(QFrame):
-    """Zone where tags can be dropped for AND or OR filtering (compact, horizontal)."""
+    """Zone where tags can be dropped for AND or OR filtering (scrollable, vertical)."""
     tag_dropped = Signal(str)  # Emits tag text when dropped
     tags_modified = Signal()   # Emits when tags are added/removed
 
@@ -114,25 +142,44 @@ class TagDropZone(QFrame):
         
         # Set object name for QSS styling
         self.setObjectName("TagDropZone")
+        
+        # Allow vertical expansion
+        size_policy = QSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
+        size_policy.setHorizontalStretch(1)
+        size_policy.setVerticalStretch(1)
+        self.setSizePolicy(size_policy)
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(2)
+        layout.setSpacing(2)  # Reduced spacing to give more room to tags
 
-        # Title
+        # Title (reduced height)
         title_label = QLabel(title)
         title_label.setAlignment(Qt.AlignCenter)
+        title_label.setMaximumHeight(18)  # Reduced height for label
+        title_label.setStyleSheet("padding: 2px;")  # Minimal padding
         layout.addWidget(title_label)
 
-        # Tag area (horizontal, compact)
+        # Scrollable tag area (expands to fill available space)
+        self.scroll_area = DropScrollArea(self)
+        self.scroll_area.setWidgetResizable(True)
+        self.scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        self.scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.scroll_area.setFrameShape(QFrame.NoFrame)
+        self.scroll_area.setAcceptDrops(True)  # Allow drops on scroll area
+        
+        # Tag container widget (inside scroll area)
         self.tag_container = QWidget()
-        self.tag_layout = QHBoxLayout(self.tag_container)
+        self.tag_layout = QVBoxLayout(self.tag_container)
         self.tag_layout.setContentsMargins(2, 2, 2, 2)
         self.tag_layout.setSpacing(4)
-        self.tag_layout.setAlignment(Qt.AlignLeft)
-        layout.addWidget(self.tag_container)
+        self.tag_layout.setAlignment(Qt.AlignTop)
+        self.tag_layout.addStretch()  # Push tags to top
+        
+        self.scroll_area.setWidget(self.tag_container)
+        # Add scroll area with stretch to fill available space
+        layout.addWidget(self.scroll_area, 1)  # Stretch factor = 1 to expand
 
-        self.setMaximumHeight(54)  # Compact height
         # Styles are now handled by global QSS
     
     def dragEnterEvent(self, event):
@@ -143,6 +190,10 @@ class TagDropZone(QFrame):
             self.setProperty("dragOver", True)
             self.style().unpolish(self)
             self.style().polish(self)
+            # Also update scroll area visual state
+            self.scroll_area.setProperty("dragOver", True)
+            self.scroll_area.style().unpolish(self.scroll_area)
+            self.scroll_area.style().polish(self.scroll_area)
     
     def dragLeaveEvent(self, event):
         """Handle drag leave event."""
@@ -150,6 +201,10 @@ class TagDropZone(QFrame):
         self.setProperty("dragOver", False)
         self.style().unpolish(self)
         self.style().polish(self)
+        # Also update scroll area visual state
+        self.scroll_area.setProperty("dragOver", False)
+        self.scroll_area.style().unpolish(self.scroll_area)
+        self.scroll_area.style().polish(self.scroll_area)
     
     def dropEvent(self, event):
         """Handle drop event."""
@@ -161,6 +216,10 @@ class TagDropZone(QFrame):
         self.setProperty("dragOver", False)
         self.style().unpolish(self)
         self.style().polish(self)
+        # Also update scroll area visual state
+        self.scroll_area.setProperty("dragOver", False)
+        self.scroll_area.style().unpolish(self.scroll_area)
+        self.scroll_area.style().polish(self.scroll_area)
     
     def add_tag(self, tag: str):
         """Add a tag to this zone."""
@@ -169,7 +228,8 @@ class TagDropZone(QFrame):
             chip = DraggableTagChip(tag, self.tag_container)
             chip.removed.connect(self._on_chip_removed)
             chip.dragged.connect(self._on_tag_dragged)
-            self.tag_layout.addWidget(chip)
+            # Insert before the stretch at the end
+            self.tag_layout.insertWidget(self.tag_layout.count() - 1, chip)
             self.tags_modified.emit()
     
     def _on_chip_removed(self, tag: str):
@@ -203,8 +263,8 @@ class TagDropZone(QFrame):
     def clear_tags(self):
         """Clear all tags from this zone."""
         self.tags.clear()
-        # Remove all chip widgets
-        while self.tag_layout.count():
+        # Remove all chip widgets (but keep the stretch at the end)
+        while self.tag_layout.count() > 1:  # Keep the stretch (last item)
             item = self.tag_layout.takeAt(0)
             if item.widget():
                 item.widget().deleteLater()
@@ -255,7 +315,7 @@ class AdvancedTagManager(QWidget):
         
         layout.addLayout(search_layout)
         
-        # Filter zones (horizontal, compact)
+        # Filter zones (horizontal, expand to fill available space)
         zones_layout = QHBoxLayout()
         zones_layout.setSpacing(8)
         
@@ -263,15 +323,16 @@ class AdvancedTagManager(QWidget):
         self.and_zone = TagDropZone("AND (tous requis)")
         self.and_zone.tag_dropped.connect(self._on_filter_changed)
         self.and_zone.tags_modified.connect(self._on_tags_modified)
-        zones_layout.addWidget(self.and_zone)
+        zones_layout.addWidget(self.and_zone, 1)  # Stretch factor = 1 to expand
         
         # OR zone
         self.or_zone = TagDropZone("OR (au moins un)")
         self.or_zone.tag_dropped.connect(self._on_filter_changed)
         self.or_zone.tags_modified.connect(self._on_tags_modified)
-        zones_layout.addWidget(self.or_zone)
+        zones_layout.addWidget(self.or_zone, 1)  # Stretch factor = 1 to expand
         
-        layout.addLayout(zones_layout)
+        # Add zones layout with stretch to fill available space
+        layout.addLayout(zones_layout, 1)  # Stretch factor = 1 to expand
         
         # Set up completer
         self.completer = QCompleter()
