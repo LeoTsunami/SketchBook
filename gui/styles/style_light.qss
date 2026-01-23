@@ -1,6 +1,10 @@
 QMainWindow {
     background-color: #ffffff;
     color: #000000;
+    font-family: "Kalam";
+}
+QLabel#welcome_text {
+    color: #000000;
 }
 QMenuBar {
     background-color: #f0f0f0;

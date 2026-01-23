@@ -25,17 +25,18 @@ from qtpy.QtWidgets import (
     QComboBox,
     QSpinBox,
     QTreeWidget,
-    QTreeWidgetItem
+    QTreeWidgetItem,
+    QDialog
 )
-from qtpy.QtCore import Qt, QThreadPool, QMetaObject, Q_ARG, Slot, QThread
-from qtpy.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent, QPixmap
+from qtpy.QtCore import Qt, QThreadPool, QMetaObject, Q_ARG, Slot, QThread, QMimeData
+from qtpy.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent, QPixmap, QDrag, QPainter
 from core.settings import settings
 from core.image_manager import ImageManager
 from gui.image_import_worker import ImageImportWorker
 from gui.image_grid import ImageGrid, ImageThumbnail
 from gui.tag_manager import TagManager, DraggableTagChip
+from gui.session_settings_dialog import SessionSettingsDialog
 from qtpy.QtWidgets import QApplication
-from qtpy.QtGui import QDrag
 import os
 import json
 
@@ -156,9 +157,15 @@ class MainWindow(QMainWindow):
         tag_manager_layout.setSpacing(10)
         tag_manager_layout.setAlignment(Qt.AlignTop)
         
-        # Logo at the top
+        # Logo and text at the top
         logo_path = Path(__file__).parent / "ressources" / "icones" / "SketchBook_logo.png"
         if logo_path.exists():
+            logo_container = QWidget()
+            logo_container_layout = QHBoxLayout(logo_container)
+            logo_container_layout.setContentsMargins(0, 0, 0, 0)
+            logo_container_layout.setSpacing(10)
+            
+            # Logo
             logo_label = QLabel()
             pixmap = QPixmap(str(logo_path))
             # Scale logo to fit width (max 120px) while maintaining aspect ratio
@@ -169,7 +176,16 @@ class MainWindow(QMainWindow):
                 logo_label.setPixmap(pixmap)
             logo_label.setAlignment(Qt.AlignCenter)
             logo_label.setStyleSheet("background-color: transparent;")
-            tag_manager_layout.addWidget(logo_label)
+            logo_container_layout.addWidget(logo_label)
+            
+            # Text next to logo (on two lines with Caveat font)
+            welcome_text = QLabel("What do you want\nto draw today?")
+            welcome_text.setObjectName("welcome_text")
+            welcome_text.setStyleSheet("font-family: 'Caveat'; font-size: 24px; font-weight: bold; background-color: transparent;")
+            welcome_text.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+            logo_container_layout.addWidget(welcome_text)
+            
+            tag_manager_layout.addWidget(logo_container)
         
         # Create tag manager
         self.tag_manager = TagManager()
@@ -205,7 +221,7 @@ class MainWindow(QMainWindow):
         
         left_splitter.addWidget(tags_tree_panel)
         
-        # Bottom part: Session parameters
+        # Bottom part: Session settings button
         bottom_panel = QWidget()
         bottom_layout = QVBoxLayout(bottom_panel)
         bottom_layout.setContentsMargins(10, 10, 10, 10)
@@ -216,54 +232,12 @@ class MainWindow(QMainWindow):
         self.session_images_count_label.setStyleSheet("font-size: 12px; font-weight: bold;")
         bottom_layout.addWidget(self.session_images_count_label)
         
-        # Session type combobox
-        session_type_label = QLabel("Session Type:")
-        session_type_label.setStyleSheet("font-size: 11px;")
-        bottom_layout.addWidget(session_type_label)
-        
-        self.session_type_combo = QComboBox()
-        self.session_type_combo.addItems(["Course", "Constant interval"])
-        self.session_type_combo.currentTextChanged.connect(self._on_session_type_changed)
-        bottom_layout.addWidget(self.session_type_combo)
-        
-        # Course duration (shown when "Course" is selected)
-        self.course_duration_label = QLabel("Course Duration:")
-        self.course_duration_label.setStyleSheet("font-size: 11px;")
-        bottom_layout.addWidget(self.course_duration_label)
-        
-        self.course_duration_spin = QSpinBox()
-        self.course_duration_spin.setRange(10, 300)  # 10 to 300 minutes
-        self.course_duration_spin.setSingleStep(10)  # Step of 10 minutes
-        self.course_duration_spin.setSuffix(" minutes")
-        self.course_duration_spin.setValue(30)  # Default 30 minutes
-        bottom_layout.addWidget(self.course_duration_spin)
-        
-        # Constant interval duration (shown when "Constant interval" is selected)
-        self.interval_duration_label = QLabel("Image Duration:")
-        self.interval_duration_label.setStyleSheet("font-size: 11px;")
-        self.interval_duration_label.setVisible(False)
-        bottom_layout.addWidget(self.interval_duration_label)
-        
-        self.interval_duration_combo = QComboBox()
-        self.interval_duration_combo.addItems(["30 seconds", "1 minute", "3 minutes", "5 minutes", "10 minutes", "20 minutes"])
-        self.interval_duration_combo.setVisible(False)
-        bottom_layout.addWidget(self.interval_duration_combo)
-        
-        # Window Mode combobox
-        window_mode_label = QLabel("Window Mode:")
-        window_mode_label.setStyleSheet("font-size: 11px;")
-        bottom_layout.addWidget(window_mode_label)
-        
-        self.window_mode_combo = QComboBox()
-        self.window_mode_combo.addItems(["FullScreen", "Window always on top"])
-        bottom_layout.addWidget(self.window_mode_combo)
-        
         # Add stretch to push button to bottom
         bottom_layout.addStretch()
         
-        # Start Session button
-        self.start_session_btn = QPushButton("Start Session")
-        self.start_session_btn.setStyleSheet("""
+        # Session Settings button
+        self.session_settings_btn = QPushButton("Session Settings")
+        self.session_settings_btn.setStyleSheet("""
             QPushButton {
                 background-color: #4CAF50;
                 color: white;
@@ -280,16 +254,13 @@ class MainWindow(QMainWindow):
                 background-color: #3d8b40;
             }
         """)
-        self.start_session_btn.clicked.connect(self._on_start_session_clicked)
-        bottom_layout.addWidget(self.start_session_btn)
-        
-        # Initialize session type UI (default to "Course")
-        self._on_session_type_changed("Course")
+        self.session_settings_btn.clicked.connect(self._on_session_settings_clicked)
+        bottom_layout.addWidget(self.session_settings_btn)
         
         left_splitter.addWidget(bottom_panel)
         
-        # Set splitter sizes (top: flexible, middle: flexible, bottom: fixed for session controls)
-        left_splitter.setSizes([300, 200, 200])
+        # Set splitter sizes (top: flexible, middle: flexible, bottom: minimal for session button)
+        left_splitter.setSizes([300, 200, 100])
         
         # Add left splitter to main splitter
         main_splitter.addWidget(left_splitter)
@@ -380,30 +351,8 @@ class MainWindow(QMainWindow):
         count = len(filtered_images)
         self.session_images_count_label.setText(f"Images: {count}")
     
-    def _on_session_type_changed(self, session_type: str):
-        """
-        Handle session type change.
-        
-        Args:
-            session_type: "Course" or "Constant interval"
-        """
-        if session_type == "Course":
-            # Show course duration controls
-            self.course_duration_label.setVisible(True)
-            self.course_duration_spin.setVisible(True)
-            # Hide interval duration controls
-            self.interval_duration_label.setVisible(False)
-            self.interval_duration_combo.setVisible(False)
-        else:  # Constant interval
-            # Hide course duration controls
-            self.course_duration_label.setVisible(False)
-            self.course_duration_spin.setVisible(False)
-            # Show interval duration controls
-            self.interval_duration_label.setVisible(True)
-            self.interval_duration_combo.setVisible(True)
-    
-    def _on_start_session_clicked(self):
-        """Handle Start Session button click."""
+    def _on_session_settings_clicked(self):
+        """Handle Session Settings button click."""
         # Get current filters
         filters = self.tag_manager.get_filters()
         
@@ -413,38 +362,41 @@ class MainWindow(QMainWindow):
             or_tags=filters.get("or", set())
         )
         
-        if not filtered_images:
-            QMessageBox.warning(
-                self,
-                "No Images Available",
-                "No images match the current tag filters. Please adjust your filters."
-            )
-            return
+        image_count = len(filtered_images)
         
-        # Get session type
-        session_type = self.session_type_combo.currentText()
+        # Create and show session settings dialog
+        dialog = SessionSettingsDialog(self.image_manager, image_count, self)
         
-        # Get session parameters based on type
-        if session_type == "Course":
-            course_duration_minutes = self.course_duration_spin.value()
-            QMessageBox.information(
-                self,
-                "Session Configuration",
-                f"Starting Course session:\n"
-                f"- Duration: {course_duration_minutes} minutes\n"
-                f"- Images: {len(filtered_images)}"
-            )
-        else:  # Constant interval
-            interval_text = self.interval_duration_combo.currentText()
-            QMessageBox.information(
-                self,
-                "Session Configuration",
-                f"Starting Constant interval session:\n"
-                f"- Interval: {interval_text}\n"
-                f"- Images: {len(filtered_images)}"
-            )
-        
-        # TODO: Implement actual session start logic
+        if dialog.exec_() == QDialog.Accepted and dialog.session_started:
+            # Get session settings from dialog
+            settings = dialog.get_session_settings()
+            
+            # Get session type
+            session_type = settings["session_type"]
+            
+            # Get session parameters based on type
+            if session_type == "Course":
+                course_duration_minutes = settings["course_duration_minutes"]
+                QMessageBox.information(
+                    self,
+                    "Session Configuration",
+                    f"Starting Course session:\n"
+                    f"- Duration: {course_duration_minutes} minutes\n"
+                    f"- Images: {image_count}\n"
+                    f"- Window Mode: {settings['window_mode']}"
+                )
+            else:  # Constant interval
+                interval_text = settings["interval_duration"]
+                QMessageBox.information(
+                    self,
+                    "Session Configuration",
+                    f"Starting Constant interval session:\n"
+                    f"- Interval: {interval_text}\n"
+                    f"- Images: {image_count}\n"
+                    f"- Window Mode: {settings['window_mode']}"
+                )
+            
+            # TODO: Implement actual session start logic
     
     def _load_tags_into_tree(self):
         """Load tags from JSON and user tags into the tree widget."""
