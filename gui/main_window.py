@@ -21,19 +21,17 @@ from qtpy.QtWidgets import (
     QSlider,
     QLineEdit,
     QPushButton,
-    QTabWidget,
-    QScrollArea
+    QScrollArea,
+    QComboBox,
+    QSpinBox
 )
-from qtpy.QtCore import Qt, QThreadPool, QMetaObject, Q_ARG, Slot, QThread, QSize
-from qtpy.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent, QPixmap, QPixmap
+from qtpy.QtCore import Qt, QThreadPool, QMetaObject, Q_ARG, Slot, QThread
+from qtpy.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent
 from core.settings import settings
 from core.image_manager import ImageManager
-from core.session_manager import SessionManager
 from gui.image_import_worker import ImageImportWorker
 from gui.image_grid import ImageGrid, ImageThumbnail
 from gui.tag_manager import TagManager, DraggableTagChip
-from gui.slideshow_window import SlideshowWindow
-from gui.session_dialog import SessionDialog
 from qtpy.QtWidgets import QApplication
 import os
 
@@ -57,7 +55,6 @@ class MainWindow(QMainWindow):
         # Initialize managers
         self.image_manager = ImageManager()
         self.thread_pool = QThreadPool()
-        self.session_manager = SessionManager()
         
         # Dev mode flag
         self.dev_mode = settings.get("ui.dev_mode", False)
@@ -98,25 +95,18 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
         
-        # Create tab widget
-        self.tab_widget = QTabWidget()
-        self.tab_widget.setDocumentMode(True)  # Modern tab style
-        
-        # Center the tab bar buttons
-        self._center_tab_bar()
-        
-        # Create tabs
-        self._setup_image_browser_tab()
-        self._setup_session_tab()
-        
-        # Add tab widget to layout (content takes full size)
-        layout.addWidget(self.tab_widget)
+        # Set up the main image browser layout
+        self._setup_image_browser()
         
         # Update available tags
         self._update_available_tags()
+        
+        # Update session images count with initial filters
+        initial_filters = self.tag_manager.get_filters()
+        self._update_session_images_count(initial_filters)
     
-    def _setup_image_browser_tab(self):
-        """Set up the Image Browser tab with 3-panel splitter layout."""
+    def _setup_image_browser(self):
+        """Set up the Image Browser with 2-panel splitter layout."""
         # Create main splitter (horizontal)
         main_splitter = QSplitter(Qt.Horizontal)
         main_splitter.setChildrenCollapsible(False)
@@ -140,14 +130,82 @@ class MainWindow(QMainWindow):
         
         left_splitter.addWidget(tag_manager_panel)
         
-        # Bottom part: Reserved for future use (empty for now)
+        # Bottom part: Session parameters
         bottom_panel = QWidget()
         bottom_layout = QVBoxLayout(bottom_panel)
         bottom_layout.setContentsMargins(10, 10, 10, 10)
+        bottom_layout.setSpacing(10)
+        
+        # Label for number of images
+        self.session_images_count_label = QLabel("Images: 0")
+        self.session_images_count_label.setStyleSheet("font-size: 12px; font-weight: bold;")
+        bottom_layout.addWidget(self.session_images_count_label)
+        
+        # Session type combobox
+        session_type_label = QLabel("Session Type:")
+        session_type_label.setStyleSheet("font-size: 11px;")
+        bottom_layout.addWidget(session_type_label)
+        
+        self.session_type_combo = QComboBox()
+        self.session_type_combo.addItems(["Course", "Constant interval"])
+        self.session_type_combo.currentTextChanged.connect(self._on_session_type_changed)
+        bottom_layout.addWidget(self.session_type_combo)
+        
+        # Course duration (shown when "Course" is selected)
+        self.course_duration_label = QLabel("Course Duration:")
+        self.course_duration_label.setStyleSheet("font-size: 11px;")
+        bottom_layout.addWidget(self.course_duration_label)
+        
+        self.course_duration_spin = QSpinBox()
+        self.course_duration_spin.setRange(10, 300)  # 10 to 300 minutes
+        self.course_duration_spin.setSingleStep(10)  # Step of 10 minutes
+        self.course_duration_spin.setSuffix(" minutes")
+        self.course_duration_spin.setValue(60)  # Default 60 minutes
+        bottom_layout.addWidget(self.course_duration_spin)
+        
+        # Constant interval duration (shown when "Constant interval" is selected)
+        self.interval_duration_label = QLabel("Image Duration:")
+        self.interval_duration_label.setStyleSheet("font-size: 11px;")
+        self.interval_duration_label.setVisible(False)
+        bottom_layout.addWidget(self.interval_duration_label)
+        
+        self.interval_duration_combo = QComboBox()
+        self.interval_duration_combo.addItems(["30 seconds", "1 minute", "3 minutes", "5 minutes", "10 minutes", "20 minutes"])
+        self.interval_duration_combo.setVisible(False)
+        bottom_layout.addWidget(self.interval_duration_combo)
+        
+        # Add stretch to push button to bottom
+        bottom_layout.addStretch()
+        
+        # Start Session button
+        self.start_session_btn = QPushButton("Start Session")
+        self.start_session_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-size: 14px;
+                font-weight: bold;
+                padding: 10px;
+                border: none;
+                border-radius: 4px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:pressed {
+                background-color: #3d8b40;
+            }
+        """)
+        self.start_session_btn.clicked.connect(self._on_start_session_clicked)
+        bottom_layout.addWidget(self.start_session_btn)
+        
+        # Initialize session type UI (default to "Course")
+        self._on_session_type_changed("Course")
+        
         left_splitter.addWidget(bottom_panel)
         
-        # Set splitter sizes (top: flexible, bottom: minimal)
-        left_splitter.setSizes([400, 100])
+        # Set splitter sizes (top: flexible, bottom: fixed for session controls)
+        left_splitter.setSizes([400, 200])
         
         # Add left splitter to main splitter
         main_splitter.addWidget(left_splitter)
@@ -187,125 +245,18 @@ class MainWindow(QMainWindow):
         
         # Create image grid
         self.image_grid = ImageGrid(self.image_manager)
-        self.image_grid.image_clicked.connect(self._on_image_clicked)
-        self.image_grid.selection_changed.connect(self._on_image_selection_changed)
-        self.image_grid.session_images_selected.connect(self._on_session_images_selected)
         self.image_grid.set_columns(self.columns_slider.value())
         middle_layout.addWidget(self.image_grid)
         
         # Add middle panel to splitter
         main_splitter.addWidget(middle_panel)
         
-        # === RIGHT PANEL: Selected Image View ===
-        self.right_panel = QWidget()
-        right_layout = QVBoxLayout(self.right_panel)
-        right_layout.setContentsMargins(10, 10, 10, 10)
-        right_layout.setSpacing(10)
+        # Set splitter sizes (left: 150px minimum, middle: flexible)
+        main_splitter.setSizes([150, 800])
         
-        # Create selected image view
-        self.selected_image_view = self._create_selected_image_view()
-        right_layout.addWidget(self.selected_image_view)
-        
-        # Add right panel to splitter
-        main_splitter.addWidget(self.right_panel)
-        
-        # Hide right panel by default (only show when image is selected)
-        self.right_panel.setVisible(False)
-        
-        # Set splitter sizes (left: 150px minimum, middle: flexible, right: 0 when hidden)
-        main_splitter.setSizes([150, 800, 0])
-        
-        # Add tab
-        self.tab_widget.addTab(main_splitter, "Image Browser")
-    
-    def _setup_session_tab(self):
-        """Set up the Drawing Session configuration tab."""
-        # Create tab widget
-        session_widget = QWidget()
-        session_layout = QVBoxLayout(session_widget)
-        session_layout.setContentsMargins(20, 20, 20, 20)
-        session_layout.setSpacing(15)
-        
-        # Import SessionDialog components for reuse
-        from qtpy.QtWidgets import (
-            QComboBox,
-            QSpinBox,
-            QCheckBox,
-            QGroupBox,
-            QFormLayout,
-            QTextEdit,
-            QListWidget,
-            QListWidgetItem
-        )
-        
-        # Session preset selection
-        preset_group = QGroupBox("Session Preset")
-        preset_layout = QFormLayout(preset_group)
-        
-        self.session_preset_combo = QComboBox()
-        self.session_preset_combo.currentTextChanged.connect(self._on_session_preset_changed)
-        preset_layout.addRow("Preset:", self.session_preset_combo)
-        
-        self.session_preset_description = QTextEdit()
-        self.session_preset_description.setMaximumHeight(80)
-        self.session_preset_description.setReadOnly(True)
-        preset_layout.addRow("Description:", self.session_preset_description)
-        
-        session_layout.addWidget(preset_group)
-        
-        # Session settings
-        settings_group = QGroupBox("Session Settings")
-        settings_layout = QFormLayout(settings_group)
-        
-        self.session_duration_spin = QSpinBox()
-        self.session_duration_spin.setRange(10, 3600)  # 10 seconds to 1 hour
-        self.session_duration_spin.setSuffix(" seconds")
-        self.session_duration_spin.setValue(120)
-        settings_layout.addRow("Duration:", self.session_duration_spin)
-        
-        self.session_image_count_spin = QSpinBox()
-        self.session_image_count_spin.setRange(1, 50)
-        self.session_image_count_spin.setValue(5)
-        settings_layout.addRow("Images per session:", self.session_image_count_spin)
-        
-        self.session_auto_advance_check = QCheckBox("Auto-advance to next image")
-        self.session_auto_advance_check.setChecked(True)
-        settings_layout.addRow("", self.session_auto_advance_check)
-        
-        self.session_loop_check = QCheckBox("Loop session")
-        self.session_loop_check.setChecked(False)
-        settings_layout.addRow("", self.session_loop_check)
-        
-        session_layout.addWidget(settings_group)
-        
-        # Selected images section
-        images_group = QGroupBox("Selected Images")
-        images_layout = QVBoxLayout(images_group)
-        
-        self.session_image_list = QListWidget()
-        self.session_image_list.setMaximumHeight(200)
-        images_layout.addWidget(self.session_image_list)
-        
-        # Add button to select images from browser
-        select_images_btn = QPushButton("Select Images from Browser")
-        select_images_btn.clicked.connect(self._on_select_images_for_session)
-        images_layout.addWidget(select_images_btn)
-        
-        session_layout.addWidget(images_group)
-        
-        # Start session button
-        start_session_btn = QPushButton("Start Drawing Session")
-        start_session_btn.setMinimumHeight(40)
-        start_session_btn.clicked.connect(self._on_start_session_from_tab)
-        session_layout.addWidget(start_session_btn)
-        
-        session_layout.addStretch()
-        
-        # Add tab
-        self.tab_widget.addTab(session_widget, "Drawing Session")
-        
-        # Load presets
-        self._load_session_presets()
+        # Add main splitter to layout
+        layout = self.centralWidget().layout()
+        layout.addWidget(main_splitter)
     
     def _update_available_tags(self):
         """Update the list of available tags in the tag manager."""
@@ -325,76 +276,91 @@ class MainWindow(QMainWindow):
         """
         # Update image grid with new filter
         self.image_grid.load_images_with_advanced_filter(filters)
+        
+        # Update session images count
+        self._update_session_images_count(filters)
     
-    def _on_image_clicked(self, image_id: str):
+    def _update_session_images_count(self, filters: dict):
         """
-        Handle image click events.
+        Update the label showing the number of images available for session.
         
         Args:
-            image_id: ID of the clicked image
+            filters: Dictionary with "and" and "or" sets of tags
         """
-        # Update selected image view and show panel
-        self._update_selected_image_view(image_id)
-        self._show_selected_image_panel()
+        # Get filtered images
+        filtered_images = self.image_manager.db.search_images_advanced(
+            and_tags=filters.get("and", set()),
+            or_tags=filters.get("or", set())
+        )
+        
+        count = len(filtered_images)
+        self.session_images_count_label.setText(f"Images: {count}")
     
-    def _on_image_selection_changed(self, image_ids: List[str]):
+    def _on_session_type_changed(self, session_type: str):
         """
-        Handle image selection changes.
+        Handle session type change.
         
         Args:
-            image_ids: List of selected image IDs
+            session_type: "Course" or "Constant interval"
         """
-        # If only one image is selected, show it in the right panel
-        if len(image_ids) == 1:
-            self._update_selected_image_view(image_ids[0])
-            self._show_selected_image_panel()
-        elif len(image_ids) > 1:
-            # Multiple images selected - show count or first image
-            self._update_selected_image_view(image_ids[0])
-            self._show_selected_image_panel()
-        else:
-            # No image selected - hide the panel
-            self._hide_selected_image_panel()
-            self._clear_selected_image_view()
+        if session_type == "Course":
+            # Show course duration controls
+            self.course_duration_label.setVisible(True)
+            self.course_duration_spin.setVisible(True)
+            # Hide interval duration controls
+            self.interval_duration_label.setVisible(False)
+            self.interval_duration_combo.setVisible(False)
+        else:  # Constant interval
+            # Hide course duration controls
+            self.course_duration_label.setVisible(False)
+            self.course_duration_spin.setVisible(False)
+            # Show interval duration controls
+            self.interval_duration_label.setVisible(True)
+            self.interval_duration_combo.setVisible(True)
     
-    def _on_session_images_selected(self, image_ids: List[str]):
-        """
-        Handle selection of images for drawing session.
+    def _on_start_session_clicked(self):
+        """Handle Start Session button click."""
+        # Get current filters
+        filters = self.tag_manager.get_filters()
         
-        Args:
-            image_ids: List of selected image IDs
-        """
-        if not image_ids:
-            QMessageBox.warning(self, "No Images Selected", "Please select at least one image for the drawing session.")
+        # Get filtered images
+        filtered_images = self.image_manager.db.search_images_advanced(
+            and_tags=filters.get("and", set()),
+            or_tags=filters.get("or", set())
+        )
+        
+        if not filtered_images:
+            QMessageBox.warning(
+                self,
+                "No Images Available",
+                "No images match the current tag filters. Please adjust your filters."
+            )
             return
         
-        # Update session tab with selected images
-        self._update_session_image_list(image_ids)
+        # Get session type
+        session_type = self.session_type_combo.currentText()
         
-        # Switch to Drawing Session tab
-        self.tab_widget.setCurrentIndex(1)
-    
-    def _start_drawing_session(self, session):
-        """
-        Start a drawing session.
+        # Get session parameters based on type
+        if session_type == "Course":
+            course_duration_minutes = self.course_duration_spin.value()
+            QMessageBox.information(
+                self,
+                "Session Configuration",
+                f"Starting Course session:\n"
+                f"- Duration: {course_duration_minutes} minutes\n"
+                f"- Images: {len(filtered_images)}"
+            )
+        else:  # Constant interval
+            interval_text = self.interval_duration_combo.currentText()
+            QMessageBox.information(
+                self,
+                "Session Configuration",
+                f"Starting Constant interval session:\n"
+                f"- Interval: {interval_text}\n"
+                f"- Images: {len(filtered_images)}"
+            )
         
-        Args:
-            session: Drawing session to start
-        """
-        # Create slideshow window
-        self.slideshow_window = SlideshowWindow(self.session_manager, self.image_manager, self)
-        self.slideshow_window.session_ended.connect(self._on_session_ended)
-        
-        # Start the session
-        self.slideshow_window.start_session(session)
-    
-    def _on_session_ended(self):
-        """Handle session end."""
-        # Update available tags in case new tags were added during session
-        self._update_available_tags()
-        
-        # Show completion message
-        QMessageBox.information(self, "Session Complete", "Drawing session completed!")
+        # TODO: Implement actual session start logic
     
     def _setup_dev_tools(self):
         """Set up development tools dock widget."""
@@ -810,22 +776,6 @@ class MainWindow(QMainWindow):
     def _apply_theme(self):
         """Apply the current theme from settings."""
         apply_global_stylesheet()
-        # Re-center tab bar after theme application
-        self._center_tab_bar()
-    
-    def _center_tab_bar(self):
-        """Center the tab bar buttons."""
-        # Get the tab bar
-        tab_bar = self.tab_widget.tabBar()
-        if tab_bar:
-            # Set expanding to False so tabs don't stretch
-            tab_bar.setExpanding(False)
-            # Use a layout to center the tabs
-            # This is done by setting the tab bar's minimum width and using alignment
-            # Actually, we need to access the tab bar's parent and use a layout
-            # But since QTabBar is internal, we'll use a workaround with stylesheet
-            # The stylesheet approach with margins might work better
-            pass
     
     def _toggle_dev_mode(self, enabled: bool):
         """
@@ -901,255 +851,3 @@ class MainWindow(QMainWindow):
         self.image_grid.set_columns(value)
         settings.set("ui.grid.columns", value)
     
-    def _load_session_presets(self):
-        """Load available presets into the session tab combo box."""
-        presets = self.session_manager.get_presets()
-        
-        self.session_preset_combo.clear()
-        for preset_name in presets.keys():
-            self.session_preset_combo.addItem(preset_name)
-        
-        # Select first preset if available
-        if self.session_preset_combo.count() > 0:
-            self.session_preset_combo.setCurrentIndex(0)
-            self._on_session_preset_changed(self.session_preset_combo.currentText())
-    
-    def _on_session_preset_changed(self, preset_name: str):
-        """Handle preset selection change in session tab."""
-        if not preset_name:
-            return
-        
-        presets = self.session_manager.get_presets()
-        preset = presets.get(preset_name)
-        
-        if preset:
-            # Update description
-            self.session_preset_description.setText(preset.description)
-            
-            # Update settings
-            self.session_duration_spin.setValue(preset.duration_seconds)
-            self.session_image_count_spin.setValue(preset.image_count)
-            self.session_auto_advance_check.setChecked(preset.auto_advance)
-            self.session_loop_check.setChecked(preset.loop_session)
-    
-    def _on_select_images_for_session(self):
-        """Switch to Image Browser tab to select images for session."""
-        # Switch to Image Browser tab
-        self.tab_widget.setCurrentIndex(0)
-        
-        # Show message to user
-        QMessageBox.information(
-            self,
-            "Select Images",
-            "Please select images from the Image Browser tab, then return to the Drawing Session tab to start your session."
-        )
-    
-    def _on_start_session_from_tab(self):
-        """Start drawing session from the session tab."""
-        # Get selected images from the list
-        selected_image_ids = []
-        for i in range(self.session_image_list.count()):
-            item = self.session_image_list.item(i)
-            image_id = item.data(Qt.UserRole)
-            if image_id:
-                selected_image_ids.append(image_id)
-        
-        if not selected_image_ids:
-            QMessageBox.warning(
-                self,
-                "No Images Selected",
-                "Please select images from the Image Browser tab first."
-            )
-            return
-        
-        # Get current preset or create custom one
-        preset_name = self.session_preset_combo.currentText()
-        presets = self.session_manager.get_presets()
-        
-        if preset_name in presets:
-            # Use existing preset but update with current settings
-            from core.session_manager import SessionPreset
-            preset = SessionPreset(
-                name=preset_name,
-                description=presets[preset_name].description,
-                duration_seconds=self.session_duration_spin.value(),
-                image_count=self.session_image_count_spin.value(),
-                auto_advance=self.session_auto_advance_check.isChecked(),
-                loop_session=self.session_loop_check.isChecked(),
-                tags=presets[preset_name].tags
-            )
-        else:
-            # Create custom preset
-            from core.session_manager import SessionPreset
-            preset = SessionPreset(
-                name="Custom Session",
-                description="Custom drawing session",
-                duration_seconds=self.session_duration_spin.value(),
-                image_count=self.session_image_count_spin.value(),
-                auto_advance=self.session_auto_advance_check.isChecked(),
-                loop_session=self.session_loop_check.isChecked()
-            )
-        
-        # Limit images to selected count
-        session_images = selected_image_ids[:self.session_image_count_spin.value()]
-        
-        # Create session
-        session = self.session_manager.create_session(preset, session_images)
-        
-        # Start the session
-        self._start_drawing_session(session)
-    
-    def _create_selected_image_view(self) -> QWidget:
-        """Create the selected image view widget for the right panel."""
-        view_widget = QWidget()
-        view_layout = QVBoxLayout(view_widget)
-        view_layout.setContentsMargins(0, 0, 0, 0)
-        view_layout.setSpacing(10)
-        
-        # Title
-        title_label = QLabel("Selected Image")
-        title_label.setStyleSheet("font-size: 14px; font-weight: bold; padding: 10px;")
-        view_layout.addWidget(title_label)
-        
-        # Scroll area for image
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setAlignment(Qt.AlignCenter)
-        scroll_area.setStyleSheet("background-color: #1e1e1e; border: none;")
-        
-        # Image label
-        self.selected_image_label = QLabel()
-        self.selected_image_label.setAlignment(Qt.AlignCenter)
-        self.selected_image_label.setStyleSheet("background-color: #2b2b2b; border: 1px solid #4d4d4d;")
-        self.selected_image_label.setText("No image selected")
-        self.selected_image_label.setMinimumHeight(400)
-        self.selected_image_label.setScaledContents(False)  # We'll handle scaling manually
-        
-        scroll_area.setWidget(self.selected_image_label)
-        view_layout.addWidget(scroll_area)
-        
-        # Image info
-        self.selected_image_info = QTextEdit()
-        self.selected_image_info.setReadOnly(True)
-        self.selected_image_info.setMaximumHeight(150)
-        self.selected_image_info.setPlaceholderText("Image information will appear here...")
-        view_layout.addWidget(self.selected_image_info)
-        
-        return view_widget
-    
-    def _update_selected_image_view(self, image_id: str):
-        """
-        Update the selected image view with the given image.
-        
-        Args:
-            image_id: ID of the image to display
-        """
-        # Get image metadata
-        metadata = self.image_manager.db.get_image(image_id)
-        if not metadata:
-            self._clear_selected_image_view()
-            return
-        
-        # Load and display image
-        image_path = Path(metadata.file_path)
-        if image_path.exists():
-            pixmap = QPixmap(str(image_path))
-            if not pixmap.isNull():
-                # Get scroll area size to calculate available space
-                scroll_area = self.selected_image_label.parent()
-                if scroll_area and hasattr(scroll_area, 'viewport'):
-                    viewport_size = scroll_area.viewport().size()
-                    max_width = viewport_size.width() - 20
-                    max_height = viewport_size.height() - 20
-                else:
-                    # Fallback to label size
-                    label_size = self.selected_image_label.size()
-                    max_width = label_size.width() - 20 if label_size.width() > 0 else pixmap.width()
-                    max_height = label_size.height() - 20 if label_size.height() > 0 else pixmap.height()
-                
-                # Scale pixmap to fit available space while maintaining aspect ratio
-                if max_width > 0 and max_height > 0:
-                    scaled_pixmap = pixmap.scaled(
-                        max_width,
-                        max_height,
-                        Qt.KeepAspectRatio,
-                        Qt.SmoothTransformation
-                    )
-                    self.selected_image_label.setPixmap(scaled_pixmap)
-                    # Adjust label size to fit pixmap
-                    self.selected_image_label.resize(scaled_pixmap.size())
-                else:
-                    # Use original pixmap if size calculation fails
-                    self.selected_image_label.setPixmap(pixmap)
-                    self.selected_image_label.resize(pixmap.size())
-            else:
-                self.selected_image_label.setText("Failed to load image")
-                self.selected_image_label.resize(QSize(400, 400))
-        else:
-            self.selected_image_label.setText("Image file not found")
-            self.selected_image_label.resize(QSize(400, 400))
-        
-        # Update image info
-        info_text = f"<b>Filename:</b> {metadata.original_filename}<br>"
-        info_text += f"<b>Path:</b> {metadata.file_path}<br>"
-        info_text += f"<b>Size:</b> {metadata.width} x {metadata.height}<br>"
-        info_text += f"<b>Added:</b> {metadata.added_at}<br>"
-        if metadata.tags:
-            info_text += f"<b>Tags:</b> {', '.join(sorted(metadata.tags))}<br>"
-        else:
-            info_text += "<b>Tags:</b> None<br>"
-        
-        self.selected_image_info.setHtml(info_text)
-    
-    def _clear_selected_image_view(self):
-        """Clear the selected image view."""
-        self.selected_image_label.clear()
-        self.selected_image_label.setText("No image selected")
-        self.selected_image_info.clear()
-        self.selected_image_info.setPlaceholderText("Image information will appear here...")
-    
-    def _show_selected_image_panel(self):
-        """Show the selected image panel."""
-        if hasattr(self, 'right_panel') and not self.right_panel.isVisible():
-            self.right_panel.setVisible(True)
-            # Adjust splitter sizes to show the right panel
-            splitter = self.right_panel.parent()
-            if splitter and isinstance(splitter, QSplitter):
-                current_sizes = splitter.sizes()
-                if len(current_sizes) == 3:
-                    # Calculate new sizes: keep left and middle, add right
-                    total_width = sum(current_sizes)
-                    left_size = current_sizes[0]
-                    middle_size = total_width - left_size - 400  # Reserve 400px for right panel
-                    right_size = 400
-                    splitter.setSizes([left_size, middle_size, right_size])
-    
-    def _hide_selected_image_panel(self):
-        """Hide the selected image panel."""
-        if hasattr(self, 'right_panel') and self.right_panel.isVisible():
-            self.right_panel.setVisible(False)
-            # Adjust splitter sizes to hide the right panel
-            splitter = self.right_panel.parent()
-            if splitter and isinstance(splitter, QSplitter):
-                current_sizes = splitter.sizes()
-                if len(current_sizes) == 3:
-                    # Redistribute space to left and middle panels
-                    total_width = sum(current_sizes)
-                    left_size = current_sizes[0]
-                    middle_size = total_width - left_size
-                    splitter.setSizes([left_size, middle_size, 0])
-    
-    def _update_session_image_list(self, image_ids: List[str]):
-        """Update the session image list with selected images."""
-        self.session_image_list.clear()
-        
-        for image_id in image_ids:
-            metadata = self.image_manager.get_image_metadata(image_id)
-            if metadata:
-                display_name = metadata.original_filename
-                if metadata.tags:
-                    display_name += f" ({', '.join(metadata.tags)})"
-                
-                item = QListWidgetItem(display_name)
-                item.setData(Qt.UserRole, image_id)
-                self.session_image_list.addItem(item) 
