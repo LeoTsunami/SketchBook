@@ -71,6 +71,48 @@ def test_status_bar(main_window):
     assert status_bar is not None
     assert status_bar.currentMessage() == "Ready"
 
+
+def test_tag_grid_state_on_filter(main_window):
+    """Test category button state based on filters."""
+    main_window._load_tags_into_grid()
+    assert main_window._category_buttons
+    category = next(iter(main_window._category_buttons.keys()))
+    button = main_window._category_buttons[category]
+    container = main_window._subcategory_containers[category]
+
+    assert not container.isVisible()
+
+    main_window._on_filters_changed({"and": {category}, "or": set()})
+    assert container.isVisible()
+
+    main_window._on_filters_changed({"and": set(), "or": set()})
+    assert not container.isVisible()
+
+
+def test_get_default_tags_with_nested_data(main_window, tmp_path):
+    """Test loading nested default tags from JSON."""
+    tags_path = tmp_path / "default_tags.json"
+    tags_path.write_text(
+        """
+        {
+          "Objects": [
+            "Small",
+            {"Vehicle": ["Car", "Bike"]}
+          ],
+          "Camera": ["Wide"]
+        }
+        """,
+        encoding="utf-8",
+    )
+    tags = main_window._get_default_tags_from_path(tags_path)
+    assert "Objects" in tags
+    assert "Small" in tags
+    assert "Vehicle" in tags
+    assert "Car" in tags
+    assert "Bike" in tags
+    assert "Camera" in tags
+    assert "Wide" in tags
+
 def test_about_dialog(main_window, qtbot):
     """Test about dialog."""
     # Find and trigger about action

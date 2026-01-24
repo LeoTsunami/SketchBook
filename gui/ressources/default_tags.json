@@ -16,14 +16,11 @@
     "Terrestrial",
     "Aquatic"
   ],
-  "Building": [
-    "House",
+  "Landscape": [
     "Castle",
-    "City"
-  ],
-  "Nature": [
-    "Tree",
-    "Rock",
+    "City",
+    "Forest",
+    "Desert",
     "Mountain",
     "Sea",
     "Countryside"
@@ -31,7 +28,7 @@
   "Objects": [
     "Little",
     "Big",
-    "Transport",
-    "House"
+    "Vehicle",
+    "Weapon"
   ]
 }

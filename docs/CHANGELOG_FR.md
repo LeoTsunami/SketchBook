@@ -8,6 +8,11 @@
 - Ajout des catégories dans l'autocomplétion de recherche
 - Synchronisation des tags par défaut avec l'arbre des tags
 - Marquage du libellé de catégorie "User Tags" comme non ajoutable
+- Validation des tags existants avec animation de tremblement en cas d'erreur
+- Support des dictionnaires de tags imbriqués dans le JSON par défaut
+- Réduction des catégories tant que leur tag n'est pas sélectionné
+- Remplacement de l'arbre par une grille de boutons catégories/sous-tags
+- Grille de tags scrollable et sous-tags sur une seule colonne
 → Résultat : Les tags et catégories par défaut sont cohérents et recherchables dès le départ
 ---
 

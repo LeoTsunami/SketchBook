@@ -8,6 +8,11 @@
 - Included category names in search autocomplete
 - Synced default tags with the tag tree
 - Marked the "User Tags" category label as non-addable
+- Enforced existing-tag validation with shake feedback on invalid input
+- Supported nested tag dictionaries in default tags JSON
+- Collapsed tag categories until their tag is selected
+- Replaced tag tree with category/subtag button grid
+- Made the tag grid scrollable and switched sub-tags to single-column layout
 → Result: Default tags and categories are now consistent and searchable from the start
 ---
 

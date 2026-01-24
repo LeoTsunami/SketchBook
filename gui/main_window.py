@@ -2,7 +2,7 @@
 Main window of the SketchBook application.
 """
 from pathlib import Path
-from typing import List, Set
+from typing import Dict, List, Set
 from qtpy.QtWidgets import (
     QMainWindow,
     QMenuBar,
@@ -26,15 +26,37 @@ from qtpy.QtWidgets import (
     QSpinBox,
     QTreeWidget,
     QTreeWidgetItem,
-    QDialog
+    QDialog,
+    QGridLayout,
+    QFrame
 )
-from qtpy.QtCore import Qt, QThreadPool, QMetaObject, Q_ARG, Slot, QThread, QMimeData
-from qtpy.QtGui import QAction, QActionGroup, QDragEnterEvent, QDropEvent, QPixmap, QDrag, QPainter
+from qtpy.QtCore import (
+    Qt,
+    QThreadPool,
+    QMetaObject,
+    Q_ARG,
+    Slot,
+    QThread,
+    QMimeData,
+    QSize,
+)
+from qtpy.QtGui import (
+    QAction,
+    QActionGroup,
+    QDragEnterEvent,
+    QDropEvent,
+    QPixmap,
+    QDrag,
+    QPainter,
+    QIcon,
+    QImage,
+)
 from core.settings import settings
 from core.image_manager import ImageManager
 from gui.image_import_worker import ImageImportWorker
 from gui.image_grid import ImageGrid, ImageThumbnail
-from gui.tag_manager import TagManager, DraggableTagChip
+from gui.tag_manager import TagManager
+from gui.tag_widgets import DraggableTagChip
 from gui.session_settings_dialog import SessionSettingsDialog
 from qtpy.QtWidgets import QApplication
 import os
@@ -96,6 +118,10 @@ class MainWindow(QMainWindow):
         
         # Progress bar reference
         self.status_progress_bar = None
+        self._category_buttons: Dict[str, QPushButton] = {}
+        self._subcategory_buttons: Dict[str, Dict[str, QPushButton]] = {}
+        self._subcategory_containers: Dict[str, QWidget] = {}
+        self._user_tag_buttons: Dict[str, QPushButton] = {}
         
         # Window setup
         self.setWindowTitle("SketchBook")
@@ -195,7 +221,7 @@ class MainWindow(QMainWindow):
         
         left_splitter.addWidget(tag_manager_panel)
         
-        # Middle part: Tags tree widget
+        # Middle part: Tags grid
         tags_tree_panel = QWidget()
         tags_tree_layout = QVBoxLayout(tags_tree_panel)
         tags_tree_layout.setContentsMargins(10, 10, 10, 10)
@@ -206,18 +232,22 @@ class MainWindow(QMainWindow):
         tags_tree_title.setStyleSheet("font-size: 12px; font-weight: bold;")
         tags_tree_layout.addWidget(tags_tree_title)
         
-        # Tree widget for tags (with custom drag support)
-        self.tags_tree = DraggableTreeWidget()
-        self.tags_tree.setHeaderLabel("Tags")
-        self.tags_tree.setRootIsDecorated(True)
-        self.tags_tree.setDragEnabled(True)
-        self.tags_tree.setDragDropMode(QTreeWidget.DragOnly)
-        # Enable drag for items
-        self.tags_tree.itemDoubleClicked.connect(self._on_tree_item_double_clicked)
-        tags_tree_layout.addWidget(self.tags_tree)
+        # Scrollable grid widget for tags
+        self.tags_grid_container = QWidget()
+        self.tags_grid_layout = QGridLayout(self.tags_grid_container)
+        self.tags_grid_layout.setContentsMargins(0, 0, 0, 0)
+        self.tags_grid_layout.setSpacing(10)
+
+        self.tags_scroll_area = QScrollArea()
+        self.tags_scroll_area.setWidgetResizable(True)
+        self.tags_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.tags_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.tags_scroll_area.setFrameShape(QFrame.NoFrame)
+        self.tags_scroll_area.setWidget(self.tags_grid_container)
+        tags_tree_layout.addWidget(self.tags_scroll_area)
         
-        # Load tags into tree
-        self._load_tags_into_tree()
+        # Load tags into grid
+        self._load_tags_into_grid()
         
         left_splitter.addWidget(tags_tree_panel)
         
@@ -313,14 +343,16 @@ class MainWindow(QMainWindow):
         layout = self.centralWidget().layout()
         layout.addWidget(main_splitter)
     
-    def _get_default_tags(self) -> Set[str]:
+    def _get_default_tags_from_path(self, default_tags_path: Path) -> Set[str]:
         """
-        Load default tags from JSON and include category names.
+        Load default tags from a JSON file and include category names.
+
+        Args:
+            default_tags_path: Path to the default tags JSON file.
 
         Returns:
             set: Default tags including category names.
         """
-        default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
         if not default_tags_path.exists():
             return set()
 
@@ -336,14 +368,27 @@ class MainWindow(QMainWindow):
         def extract_tags(data) -> None:
             """Recursively extract all tags from nested structure."""
             if isinstance(data, list):
-                tag_set.update(data)
+                for item in data:
+                    extract_tags(item)
             elif isinstance(data, dict):
                 for key, value in data.items():
                     tag_set.add(key)
                     extract_tags(value)
+            elif isinstance(data, str):
+                tag_set.add(data)
 
         extract_tags(default_tags_data)
         return tag_set
+
+    def _get_default_tags(self) -> Set[str]:
+        """
+        Load default tags from JSON and include category names.
+
+        Returns:
+            set: Default tags including category names.
+        """
+        default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
+        return self._get_default_tags_from_path(default_tags_path)
 
     def _update_available_tags(self):
         """Update the list of available tags in the tag manager."""
@@ -366,6 +411,7 @@ class MainWindow(QMainWindow):
         
         # Update session images count
         self._update_session_images_count(filters)
+        self._sync_tag_grid_state(filters)
     
     def _update_session_images_count(self, filters: dict):
         """
@@ -430,9 +476,16 @@ class MainWindow(QMainWindow):
             
             # TODO: Implement actual session start logic
     
-    def _load_tags_into_tree(self):
-        """Load tags from JSON and user tags into the tree widget."""
-        self.tags_tree.clear()
+    def _load_tags_into_grid(self):
+        """Load tags from JSON into the tags grid."""
+        while self.tags_grid_layout.count():
+            item = self.tags_grid_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
+        self._category_buttons = {}
+        self._subcategory_buttons = {}
+        self._subcategory_containers = {}
+        self._user_tag_buttons = {}
         
         # Load default tags from JSON
         default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
@@ -442,63 +495,170 @@ class MainWindow(QMainWindow):
                 with open(default_tags_path, "r", encoding="utf-8") as f:
                     default_tags = json.load(f)
                 
+                def collect_subtags(data, collected: List[str]) -> None:
+                    """Recursively collect subtags from nested structures."""
+                    if isinstance(data, list):
+                        for item in data:
+                            collect_subtags(item, collected)
+                    elif isinstance(data, dict):
+                        for key, value in data.items():
+                            collected.append(key)
+                            collect_subtags(value, collected)
+                    elif isinstance(data, str):
+                        collected.append(data)
+
                 # Process each category at root level
-                for category, tags in default_tags.items():
-                    category_item = QTreeWidgetItem(self.tags_tree)
-                    category_item.setText(0, category)
-                    category_item.setExpanded(True)
-                    category_item.setFlags(category_item.flags() | Qt.ItemIsDragEnabled)
-                    
-                    # Check if tags is a list or dict
-                    if isinstance(tags, list):
-                        # Simple list of tags
-                        for tag in tags:
-                            tag_item = QTreeWidgetItem(category_item)
-                            tag_item.setText(0, tag)
-                            tag_item.setFlags(tag_item.flags() | Qt.ItemIsDragEnabled)
-                    elif isinstance(tags, dict):
-                        # Nested structure (e.g., Type: {Human: [...], Animal: [...]})
-                        for sub_category, sub_tags in tags.items():
-                            # Sub-category can be both a category and a tag
-                            sub_category_item = QTreeWidgetItem(category_item)
-                            sub_category_item.setText(0, sub_category)
-                            sub_category_item.setExpanded(True)
-                            # Make sub-category draggable as a tag
-                            sub_category_item.setFlags(sub_category_item.flags() | Qt.ItemIsDragEnabled)
-                            
-                            # Add tags under sub-category
-                            for tag in sub_tags:
-                                tag_item = QTreeWidgetItem(sub_category_item)
-                                tag_item.setText(0, tag)
-                                tag_item.setFlags(tag_item.flags() | Qt.ItemIsDragEnabled)
+                for column, (category, tags) in enumerate(default_tags.items()):
+                    column_widget = QWidget()
+                    column_layout = QVBoxLayout(column_widget)
+                    column_layout.setContentsMargins(0, 0, 0, 0)
+                    column_layout.setSpacing(6)
+
+                    category_button = self._build_tag_button(category)
+                    category_button.clicked.connect(
+                        lambda _, name=category: self._on_tag_button_clicked(name)
+                    )
+                    column_layout.addWidget(category_button)
+                    self._category_buttons[category] = category_button
+
+                    subtags: List[str] = []
+                    collect_subtags(tags, subtags)
+                    subtag_container = QWidget()
+                    subtag_layout = QVBoxLayout(subtag_container)
+                    subtag_layout.setContentsMargins(0, 0, 0, 0)
+                    subtag_layout.setSpacing(6)
+
+                    subtag_buttons: Dict[str, QPushButton] = {}
+                    for index, tag in enumerate(dict.fromkeys(subtags)):
+                        tag_button = self._build_tag_button(tag)
+                        tag_button.clicked.connect(
+                            lambda _, name=tag: self._on_tag_button_clicked(name)
+                        )
+                        subtag_layout.addWidget(tag_button)
+                        subtag_buttons[tag] = tag_button
+
+                    subtag_container.setVisible(False)
+                    column_layout.addWidget(subtag_container)
+                    column_layout.addStretch()
+
+                    self._subcategory_buttons[category] = subtag_buttons
+                    self._subcategory_containers[category] = subtag_container
+
+                    self.tags_grid_layout.addWidget(column_widget, 0, column)
+
             except Exception as e:
                 print(f"Error loading default tags: {str(e)}")
         
-        # Add user tags section
-        user_root = QTreeWidgetItem(self.tags_tree)
-        user_root.setText(0, "User Tags")
-        user_root.setExpanded(True)
-        user_root.setFlags(user_root.flags() & ~Qt.ItemIsDragEnabled)
-        
-        # Get user tags from database
-        user_tags = set()
-        for metadata in self.image_manager.db.list_images():
-            user_tags.update(metadata.tags)
-        
-        # Filter out default tags
-        default_tag_set = self._get_default_tags()
-        
-        # Add user tags that are not in default tags (draggable tags)
-        user_only_tags = sorted(user_tags - default_tag_set)
-        for tag in user_only_tags:
-            tag_item = QTreeWidgetItem(user_root)
-            tag_item.setText(0, tag)
-            tag_item.setFlags(tag_item.flags() | Qt.ItemIsDragEnabled)
-        
-        if not user_only_tags:
-            no_tags_item = QTreeWidgetItem(user_root)
-            no_tags_item.setText(0, "(No user tags yet)")
-            no_tags_item.setFlags(no_tags_item.flags() & ~Qt.ItemIsEnabled)
+    def _find_tag_icon(self, tag: str) -> QIcon:
+        """
+        Resolve a tag icon based on the tag name.
+
+        Args:
+            tag: Tag name.
+
+        Returns:
+            QIcon: Icon for the tag or an empty icon if not found.
+        """
+        icons_dir = Path(__file__).parent / "ressources" / "icones" / "tags"
+        if not icons_dir.exists():
+            return QIcon()
+
+        tag_lower = tag.lower()
+        file_map = {path.stem.lower(): path for path in icons_dir.glob("*.png")}
+        if tag_lower in file_map:
+            return QIcon(str(file_map[tag_lower]))
+
+        fallback_map = {
+            "hands": "hand",
+            "feet": "foot",
+            "objects": "object",
+        }
+        fallback = fallback_map.get(tag_lower)
+        if fallback and fallback in file_map:
+            return QIcon(str(file_map[fallback]))
+
+        return QIcon()
+
+    def _invert_icon(self, icon: QIcon) -> QIcon:
+        """
+        Invert icon colors for better visibility.
+
+        Args:
+            icon: Original icon.
+
+        Returns:
+            QIcon: Inverted icon.
+        """
+        if icon.isNull():
+            return icon
+        pixmap = icon.pixmap(QSize(28, 28))
+        image = pixmap.toImage()
+        image.invertPixels(QImage.InvertRgb)
+        return QIcon(QPixmap.fromImage(image))
+
+    def _build_tag_button(self, tag: str) -> QPushButton:
+        """
+        Build a tag button with icon and label.
+
+        Args:
+            tag: Tag name.
+
+        Returns:
+            QPushButton: Configured tag button.
+        """
+        button = QPushButton(tag)
+        icon = self._find_tag_icon(tag)
+        if not icon.isNull():
+            button.setIcon(self._invert_icon(icon))
+            button.setIconSize(QSize(28, 28))
+        button.setCheckable(False)
+        button.setStyleSheet(
+            "QPushButton { text-align: left; padding: 2px 4px; }"
+        )
+        return button
+
+    def _on_tag_button_clicked(self, tag: str) -> None:
+        """
+        Toggle tag in filters from tag buttons.
+
+        Args:
+            tag: Tag name to toggle.
+        """
+        self.tag_manager.toggle_tag(tag)
+
+    def _sync_tag_grid_state(self, filters: dict) -> None:
+        """
+        Sync tag grid button states with active filters.
+
+        Args:
+            filters: Dictionary with "and" and "or" sets of tags.
+        """
+        active_tags = set(filters.get("and", set())) | set(filters.get("or", set()))
+        for category, button in self._category_buttons.items():
+            is_active = category in active_tags
+            self._set_button_active(button, is_active)
+            container = self._subcategory_containers.get(category)
+            if container:
+                container.setVisible(is_active)
+            for tag, tag_button in self._subcategory_buttons.get(category, {}).items():
+                self._set_button_active(tag_button, tag in active_tags)
+        # User tags are intentionally omitted from the grid for now.
+
+    def _set_button_active(self, button: QPushButton, active: bool) -> None:
+        """
+        Apply active styling to a tag button.
+
+        Args:
+            button: Button to update.
+            active: Whether the button is active.
+        """
+        base_style = "QPushButton { text-align: left; padding: 2px 4px; }"
+        if active:
+            button.setStyleSheet(
+                base_style + " QPushButton { background-color: #8ec5ff; }"
+            )
+        else:
+            button.setStyleSheet(base_style)
     
     def _on_tree_item_double_clicked(self, item: QTreeWidgetItem, column: int):
         """

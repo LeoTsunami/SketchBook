@@ -52,6 +52,7 @@ You can search your image collection using tags:
 3. The gallery will update to show only matching images
 
 The search bar includes default tags and their category names, so you can start filtering even before adding custom tags.
+Only existing tags are accepted. If you enter an unknown tag, the search bar briefly turns red and shakes.
 
 ### Tips for Using Tags
 - Use descriptive tags that help categorize your images (e.g., "landscape", "portrait", "reference")
@@ -60,4 +61,6 @@ The search bar includes default tags and their category names, so you can start 
 - Tags are case-sensitive 
 
 ### Tags Library Notes
-The "User Tags" category label is not draggable, but the user tags under it are.
+Categories stay collapsed by default and only expand when you add the category tag to your filters.
+Categories are displayed as buttons on the first row, with sub-tag buttons revealed below when active.
+Sub-tags appear one per line under their category.
