@@ -13,6 +13,7 @@ Update this file via prompt:
 - [x] Collapse tag categories until selected (2026-01-23)
 - [x] Replace tag tree with button grid (2026-01-23)
 - [x] Make tag grid scrollable and single-column subtags (2026-01-23)
+- [x] Switch to OR category and AND subtag filters (2026-01-23)
 
 ### Phase 1: Basic Structure ✅ (Completed: 2024-03-06)
 - [x] Set up base Python project with multi-file structure

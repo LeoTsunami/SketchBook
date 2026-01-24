@@ -13,6 +13,7 @@
 - Réduction des catégories tant que leur tag n'est pas sélectionné
 - Remplacement de l'arbre par une grille de boutons catégories/sous-tags
 - Grille de tags scrollable et sous-tags sur une seule colonne
+- Filtrage OR par catégorie et AND sur les sous-tags
 → Résultat : Les tags et catégories par défaut sont cohérents et recherchables dès le départ
 ---
 

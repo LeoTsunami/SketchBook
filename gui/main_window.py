@@ -55,7 +55,6 @@ from core.settings import settings
 from core.image_manager import ImageManager
 from gui.image_import_worker import ImageImportWorker
 from gui.image_grid import ImageGrid, ImageThumbnail
-from gui.tag_manager import TagManager
 from gui.tag_widgets import DraggableTagChip
 from gui.session_settings_dialog import SessionSettingsDialog
 from qtpy.QtWidgets import QApplication
@@ -122,6 +121,9 @@ class MainWindow(QMainWindow):
         self._subcategory_buttons: Dict[str, Dict[str, QPushButton]] = {}
         self._subcategory_containers: Dict[str, QWidget] = {}
         self._user_tag_buttons: Dict[str, QPushButton] = {}
+        self._active_categories: Set[str] = set()
+        self._active_subtags: Dict[str, Set[str]] = {}
+        self._subtag_to_category: Dict[str, str] = {}
         
         # Window setup
         self.setWindowTitle("SketchBook")
@@ -159,12 +161,8 @@ class MainWindow(QMainWindow):
         # Set up the main image browser layout
         self._setup_image_browser()
         
-        # Update available tags
-        self._update_available_tags()
-        
         # Update session images count with initial filters
-        initial_filters = self.tag_manager.get_filters()
-        self._update_session_images_count(initial_filters)
+        self._apply_category_filters()
     
     def _setup_image_browser(self):
         """Set up the Image Browser with 2-panel splitter layout."""
@@ -213,11 +211,7 @@ class MainWindow(QMainWindow):
             
             tag_manager_layout.addWidget(logo_container)
         
-        # Create tag manager
-        self.tag_manager = TagManager()
-        self.tag_manager.filters_changed.connect(self._on_filters_changed)
-        self.tag_manager.tags_modified.connect(self._update_available_tags)
-        tag_manager_layout.addWidget(self.tag_manager, 1)  # Stretch factor = 1 to expand
+        tag_manager_layout.addStretch()
         
         left_splitter.addWidget(tag_manager_panel)
         
@@ -390,55 +384,34 @@ class MainWindow(QMainWindow):
         default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
         return self._get_default_tags_from_path(default_tags_path)
 
-    def _update_available_tags(self):
-        """Update the list of available tags in the tag manager."""
-        # Collect all unique tags from defaults and database
-        all_tags = set(self._get_default_tags())
-        for metadata in self.image_manager.db.list_images():
-            all_tags.update(metadata.tags)
+    def _apply_category_filters(self) -> None:
+        """Apply category/subtag filters to the image grid."""
+        filtered_images = self._filter_images_by_category()
+        filter_key = (
+            frozenset(self._active_categories),
+            frozenset(
+                (category, frozenset(tags))
+                for category, tags in self._active_subtags.items()
+            ),
+        )
+        self.image_grid.load_images_from_list(filtered_images, filter_key)
+        self._update_session_images_count(filtered_images)
+        self._sync_tag_grid_state()
 
-        self.tag_manager.set_available_tags(sorted(all_tags))
-    
-    def _on_filters_changed(self, filters: dict):
-        """
-        Handle changes in advanced tag filters.
-        
-        Args:
-            filters: Dictionary with "and" and "or" sets of tags
-        """
-        # Update image grid with new filter
-        self.image_grid.load_images_with_advanced_filter(filters)
-        
-        # Update session images count
-        self._update_session_images_count(filters)
-        self._sync_tag_grid_state(filters)
-    
-    def _update_session_images_count(self, filters: dict):
+    def _update_session_images_count(self, filtered_images: List) -> None:
         """
         Update the label showing the number of images available for session.
         
         Args:
-            filters: Dictionary with "and" and "or" sets of tags
+            filtered_images: Filtered images list.
         """
-        # Get filtered images
-        filtered_images = self.image_manager.db.search_images_advanced(
-            and_tags=filters.get("and", set()),
-            or_tags=filters.get("or", set())
-        )
-        
         count = len(filtered_images)
         self.session_images_count_label.setText(f"Images: {count}")
     
     def _on_session_settings_clicked(self):
         """Handle Session Settings button click."""
-        # Get current filters
-        filters = self.tag_manager.get_filters()
-        
         # Get filtered images
-        filtered_images = self.image_manager.db.search_images_advanced(
-            and_tags=filters.get("and", set()),
-            or_tags=filters.get("or", set())
-        )
+        filtered_images = self._filter_images_by_category()
         
         image_count = len(filtered_images)
         
@@ -486,6 +459,7 @@ class MainWindow(QMainWindow):
         self._subcategory_buttons = {}
         self._subcategory_containers = {}
         self._user_tag_buttons = {}
+        self._subtag_to_category = {}
         
         # Load default tags from JSON
         default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
@@ -536,6 +510,7 @@ class MainWindow(QMainWindow):
                         )
                         subtag_layout.addWidget(tag_button)
                         subtag_buttons[tag] = tag_button
+                        self._subtag_to_category[tag] = category
 
                     subtag_container.setVisible(False)
                     column_layout.addWidget(subtag_container)
@@ -624,16 +599,33 @@ class MainWindow(QMainWindow):
         Args:
             tag: Tag name to toggle.
         """
-        self.tag_manager.toggle_tag(tag)
+        if tag in self._category_buttons:
+            if tag in self._active_categories:
+                self._active_categories.remove(tag)
+                self._active_subtags.pop(tag, None)
+            else:
+                self._active_categories.add(tag)
+                self._active_subtags.setdefault(tag, set())
+        else:
+            category = self._subtag_to_category.get(tag)
+            if not category:
+                return
+            if category not in self._active_categories:
+                self._active_categories.add(category)
+            category_tags = self._active_subtags.setdefault(category, set())
+            if tag in category_tags:
+                category_tags.remove(tag)
+            else:
+                category_tags.add(tag)
+        self._apply_category_filters()
 
-    def _sync_tag_grid_state(self, filters: dict) -> None:
+    def _sync_tag_grid_state(self) -> None:
         """
         Sync tag grid button states with active filters.
-
-        Args:
-            filters: Dictionary with "and" and "or" sets of tags.
         """
-        active_tags = set(filters.get("and", set())) | set(filters.get("or", set()))
+        active_tags = set(self._active_categories)
+        for tags in self._active_subtags.values():
+            active_tags.update(tags)
         for category, button in self._category_buttons.items():
             is_active = category in active_tags
             self._set_button_active(button, is_active)
@@ -643,6 +635,29 @@ class MainWindow(QMainWindow):
             for tag, tag_button in self._subcategory_buttons.get(category, {}).items():
                 self._set_button_active(tag_button, tag in active_tags)
         # User tags are intentionally omitted from the grid for now.
+
+    def _filter_images_by_category(self) -> List:
+        """
+        Filter images by category (OR) and sub-tags (AND within category).
+
+        Returns:
+            List: Filtered image metadata list.
+        """
+        all_images = self.image_manager.db.list_images()
+        if not self._active_categories:
+            return all_images
+
+        filtered_images = []
+        for metadata in all_images:
+            image_tags = set(metadata.tags)
+            for category in self._active_categories:
+                if category not in image_tags:
+                    continue
+                required = self._active_subtags.get(category, set())
+                if required.issubset(image_tags):
+                    filtered_images.append(metadata)
+                    break
+        return filtered_images
 
     def _set_button_active(self, button: QPushButton, active: bool) -> None:
         """
@@ -660,18 +675,7 @@ class MainWindow(QMainWindow):
         else:
             button.setStyleSheet(base_style)
     
-    def _on_tree_item_double_clicked(self, item: QTreeWidgetItem, column: int):
-        """
-        Handle double-click on tree item to add tag to AND zone.
-        
-        Args:
-            item: The clicked tree item
-            column: Column index (always 0 for single column)
-        """
-        # Only add if item is draggable (i.e., it's a tag, not a category header)
-        if item.flags() & Qt.ItemIsDragEnabled:
-            tag_text = item.text(0)
-            self.tag_manager.add_tag_to_and(tag_text)
+    # Tree-based tag handling removed in favor of button grid.
     
     def _setup_dev_tools(self):
         """Set up development tools dock widget."""

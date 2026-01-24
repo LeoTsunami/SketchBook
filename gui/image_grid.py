@@ -710,3 +710,20 @@ class ImageGrid(QScrollArea):
         
         # Trigger initial layout update
         self.layout_timer.start() 
+
+    def load_images_from_list(self, images: List[ImageMetadata], filter_key) -> None:
+        """
+        Load and display a provided list of images.
+
+        Args:
+            images: List of image metadata to display.
+            filter_key: Key used to detect filter changes.
+        """
+        if self.current_filter != filter_key:
+            self.clear()
+
+        self.current_filter = filter_key
+        self.all_images = images
+
+        self._load_next_batch()
+        self.layout_timer.start()

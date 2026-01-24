@@ -212,9 +212,9 @@ Theme settings are persisted in the application settings.
 
 ### Default Tags and Autocomplete
 
-Base tags are defined in `gui/ressources/default_tags.json`. Category names are treated as tags, and the search bar autocomplete is populated from both default tags and user tags stored in the database. Nested dictionaries inside lists are supported (e.g., `{ "Vehicle": ["Car"] }`).
+Base tags are defined in `gui/ressources/default_tags.json`. Category names are treated as tags and nested dictionaries inside lists are supported (e.g., `{ "Vehicle": ["Car"] }`).
 Category buttons are displayed in a grid inside a scroll area. Sub-tag buttons appear one per line below a category when its tag is active.
-The search bar only accepts tags that already exist in the available tag set. Invalid input triggers a short shake animation and a red highlight.
+Filtering logic: categories act as a global OR, and sub-tags act as AND within their category.
 
 ### File Locations
 - Implementation: `gui/main_window.py`

@@ -82,11 +82,63 @@ def test_tag_grid_state_on_filter(main_window):
 
     assert not container.isVisible()
 
-    main_window._on_filters_changed({"and": {category}, "or": set()})
+    main_window._on_tag_button_clicked(category)
     assert container.isVisible()
 
-    main_window._on_filters_changed({"and": set(), "or": set()})
+    main_window._on_tag_button_clicked(category)
     assert not container.isVisible()
+
+
+def test_filter_images_by_category(main_window, monkeypatch):
+    """Test OR categories with AND subtags."""
+    from core.image_db import ImageMetadata
+    from datetime import datetime
+
+    images = [
+        ImageMetadata(
+            id="img1",
+            path="a.jpg",
+            original_filename="a.jpg",
+            import_date=datetime.now(),
+            width=100,
+            height=100,
+            file_size=1,
+            format="JPEG",
+            tags=["Human", "Male", "Portrait"],
+            notes="",
+        ),
+        ImageMetadata(
+            id="img2",
+            path="b.jpg",
+            original_filename="b.jpg",
+            import_date=datetime.now(),
+            width=100,
+            height=100,
+            file_size=1,
+            format="JPEG",
+            tags=["Animal", "Bird"],
+            notes="",
+        ),
+        ImageMetadata(
+            id="img3",
+            path="c.jpg",
+            original_filename="c.jpg",
+            import_date=datetime.now(),
+            width=100,
+            height=100,
+            file_size=1,
+            format="JPEG",
+            tags=["Human", "Female"],
+            notes="",
+        ),
+    ]
+
+    monkeypatch.setattr(main_window.image_manager.db, "list_images", lambda: images)
+
+    main_window._active_categories = {"Human", "Animal"}
+    main_window._active_subtags = {"Human": {"Male", "Portrait"}, "Animal": {"Bird"}}
+    result_ids = {image.id for image in main_window._filter_images_by_category()}
+    assert result_ids == {"img1", "img2"}
 
 
 def test_get_default_tags_with_nested_data(main_window, tmp_path):

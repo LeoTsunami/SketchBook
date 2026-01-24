@@ -13,6 +13,7 @@
 - Collapsed tag categories until their tag is selected
 - Replaced tag tree with category/subtag button grid
 - Made the tag grid scrollable and switched sub-tags to single-column layout
+- Switched tag filtering to OR by category and AND within sub-tags
 → Result: Default tags and categories are now consistent and searchable from the start
 ---
 

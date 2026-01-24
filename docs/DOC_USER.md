@@ -44,15 +44,14 @@ You can add tags and notes to your images to help organize and find them later:
    - Add or remove tags
    - Write notes about the image
 
-### Searching Images
-You can search your image collection using tags:
+### Filtering Images
+You can filter your image collection using the tag buttons:
 
-1. Click the search icon in the toolbar
-2. Enter one or more tags to search for
-3. The gallery will update to show only matching images
+1. Click one or more category buttons (e.g., "Human", "Animal")
+2. Optionally click sub-tags under each category (e.g., "Male", "Portrait")
+3. The gallery updates automatically
 
-The search bar includes default tags and their category names, so you can start filtering even before adding custom tags.
-Only existing tags are accepted. If you enter an unknown tag, the search bar briefly turns red and shakes.
+Categories act as a global OR (Human OR Animal). Sub-tags act as AND within their category (Human + Male + Portrait).
 
 ### Tips for Using Tags
 - Use descriptive tags that help categorize your images (e.g., "landscape", "portrait", "reference")
