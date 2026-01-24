@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-01-23
+### ✅ Tasks:
+- Default tag dictionary update
+
+- Replaced base tag categories and tag lists
+- Included category names in search autocomplete
+- Synced default tags with the tag tree
+- Marked the "User Tags" category label as non-addable
+→ Result: Default tags and categories are now consistent and searchable from the start
+---
+
 ## 2024-03-06
 ### ✅ Tasks:
 - Project Setup and Basic Structure

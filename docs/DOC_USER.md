@@ -51,8 +51,13 @@ You can search your image collection using tags:
 2. Enter one or more tags to search for
 3. The gallery will update to show only matching images
 
+The search bar includes default tags and their category names, so you can start filtering even before adding custom tags.
+
 ### Tips for Using Tags
 - Use descriptive tags that help categorize your images (e.g., "landscape", "portrait", "reference")
 - Be consistent with your tag naming
 - You can add multiple tags to a single image
 - Tags are case-sensitive 
+
+### Tags Library Notes
+The "User Tags" category label is not draggable, but the user tags under it are.

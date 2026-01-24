@@ -1,22 +1,37 @@
 {
-  "Camera_Angle": [
-    "front view",
-    "back view",
-    "side view",
-    "3/4"
+  "Human": [
+    "Portrait",
+    "Hands",
+    "Feet",
+    "Male",
+    "Female",
+    "Clothed",
+    "Naked"
   ],
-  "Type": {
-    "Human": [
-      "Male",
-      "Female",
-      "Clothed",
-      "naked"
-    ],
-    "Animal": [
-      "quadriped",
-      "birds",
-      "biped",
-      "fish"
-    ]
-  }
+  "Animal": [
+    "Quadriped",
+    "Biped",
+    "Insect",
+    "Bird",
+    "Terrestrial",
+    "Aquatic"
+  ],
+  "Building": [
+    "House",
+    "Castle",
+    "City"
+  ],
+  "Nature": [
+    "Tree",
+    "Rock",
+    "Mountain",
+    "Sea",
+    "Countryside"
+  ],
+  "Objects": [
+    "Little",
+    "Big",
+    "Transport",
+    "House"
+  ]
 }

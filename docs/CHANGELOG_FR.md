@@ -1,5 +1,16 @@
 # Journal des modifications
 
+## 2026-01-23
+### ✅ Tâches :
+- Mise à jour du dictionnaire de tags par défaut
+
+- Remplacement des catégories et listes de tags de base
+- Ajout des catégories dans l'autocomplétion de recherche
+- Synchronisation des tags par défaut avec l'arbre des tags
+- Marquage du libellé de catégorie "User Tags" comme non ajoutable
+→ Résultat : Les tags et catégories par défaut sont cohérents et recherchables dès le départ
+---
+
 ## 2024-03-06
 ### ✅ Tâches :
 - Configuration initiale du projet et structure de base

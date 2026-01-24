@@ -8,6 +8,8 @@ Update this file via prompt:
 
 ## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
 
+- [x] Update default tag dictionary and search autocomplete (2026-01-23)
+
 ### Phase 1: Basic Structure ✅ (Completed: 2024-03-06)
 - [x] Set up base Python project with multi-file structure
   - [x] Create directories: `core/`, `gui/`, `data/`, `utils/`

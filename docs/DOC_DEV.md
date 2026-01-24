@@ -210,6 +210,10 @@ window._set_theme("dark")  # or "light"
 
 Theme settings are persisted in the application settings.
 
+### Default Tags and Autocomplete
+
+Base tags are defined in `gui/ressources/default_tags.json`. Category names are treated as tags, and the search bar autocomplete is populated from both default tags and user tags stored in the database.
+
 ### File Locations
 - Implementation: `gui/main_window.py`
 - Unit tests: `tests/test_main_window.py`

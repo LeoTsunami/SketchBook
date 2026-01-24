@@ -2,7 +2,7 @@
 Main window of the SketchBook application.
 """
 from pathlib import Path
-from typing import List
+from typing import List, Set
 from qtpy.QtWidgets import (
     QMainWindow,
     QMenuBar,
@@ -313,13 +313,45 @@ class MainWindow(QMainWindow):
         layout = self.centralWidget().layout()
         layout.addWidget(main_splitter)
     
+    def _get_default_tags(self) -> Set[str]:
+        """
+        Load default tags from JSON and include category names.
+
+        Returns:
+            set: Default tags including category names.
+        """
+        default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
+        if not default_tags_path.exists():
+            return set()
+
+        try:
+            with open(default_tags_path, "r", encoding="utf-8") as f:
+                default_tags_data = json.load(f)
+        except Exception as exc:
+            print(f"Error loading default tags: {str(exc)}")
+            return set()
+
+        tag_set: Set[str] = set()
+
+        def extract_tags(data) -> None:
+            """Recursively extract all tags from nested structure."""
+            if isinstance(data, list):
+                tag_set.update(data)
+            elif isinstance(data, dict):
+                for key, value in data.items():
+                    tag_set.add(key)
+                    extract_tags(value)
+
+        extract_tags(default_tags_data)
+        return tag_set
+
     def _update_available_tags(self):
         """Update the list of available tags in the tag manager."""
-        # Collect all unique tags from the database
-        all_tags = set()
+        # Collect all unique tags from defaults and database
+        all_tags = set(self._get_default_tags())
         for metadata in self.image_manager.db.list_images():
             all_tags.update(metadata.tags)
-        
+
         self.tag_manager.set_available_tags(sorted(all_tags))
     
     def _on_filters_changed(self, filters: dict):
@@ -410,16 +442,12 @@ class MainWindow(QMainWindow):
                 with open(default_tags_path, "r", encoding="utf-8") as f:
                     default_tags = json.load(f)
                 
-                # Add default tags section
-                default_root = QTreeWidgetItem(self.tags_tree)
-                default_root.setText(0, "Default Tags")
-                default_root.setExpanded(True)
-                
-                # Process each category
+                # Process each category at root level
                 for category, tags in default_tags.items():
-                    category_item = QTreeWidgetItem(default_root)
+                    category_item = QTreeWidgetItem(self.tags_tree)
                     category_item.setText(0, category)
                     category_item.setExpanded(True)
+                    category_item.setFlags(category_item.flags() | Qt.ItemIsDragEnabled)
                     
                     # Check if tags is a list or dict
                     if isinstance(tags, list):
@@ -450,6 +478,7 @@ class MainWindow(QMainWindow):
         user_root = QTreeWidgetItem(self.tags_tree)
         user_root.setText(0, "User Tags")
         user_root.setExpanded(True)
+        user_root.setFlags(user_root.flags() & ~Qt.ItemIsDragEnabled)
         
         # Get user tags from database
         user_tags = set()
@@ -457,27 +486,9 @@ class MainWindow(QMainWindow):
             user_tags.update(metadata.tags)
         
         # Filter out default tags
-        default_tag_set = set()
-        if default_tags_path.exists():
-            try:
-                import json
-                with open(default_tags_path, "r", encoding="utf-8") as f:
-                    default_tags_data = json.load(f)
-                
-                def extract_tags(data, tag_set):
-                    """Recursively extract all tags from nested structure."""
-                    if isinstance(data, list):
-                        tag_set.update(data)
-                    elif isinstance(data, dict):
-                        for key, value in data.items():
-                            tag_set.add(key)  # Category name is also a tag
-                            extract_tags(value, tag_set)
-                
-                extract_tags(default_tags_data, default_tag_set)
-            except Exception:
-                pass
+        default_tag_set = self._get_default_tags()
         
-        # Add user tags that are not in default tags
+        # Add user tags that are not in default tags (draggable tags)
         user_only_tags = sorted(user_tags - default_tag_set)
         for tag in user_only_tags:
             tag_item = QTreeWidgetItem(user_root)
