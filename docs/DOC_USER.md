@@ -61,5 +61,4 @@ Categories act as a global OR (Human OR Animal). Sub-tags act as AND within thei
 
 ### Tags Library Notes
 Categories stay collapsed by default and only expand when you add the category tag to your filters.
-Categories are displayed as buttons on the first row, with sub-tag buttons revealed below when active.
-Sub-tags appear one per line under their category.
+Categories are displayed as buttons in the first column, with sub-tag buttons revealed horizontally to the right when active.

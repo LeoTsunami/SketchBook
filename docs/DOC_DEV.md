@@ -213,7 +213,7 @@ Theme settings are persisted in the application settings.
 ### Default Tags and Autocomplete
 
 Base tags are defined in `gui/ressources/default_tags.json`. Category names are treated as tags and nested dictionaries inside lists are supported (e.g., `{ "Vehicle": ["Car"] }`).
-Category buttons are displayed in a grid inside a scroll area. Sub-tag buttons appear one per line below a category when its tag is active.
+Category buttons are displayed in the first column of a grid inside a scroll area. Sub-tag buttons appear horizontally to the right of their category when active.
 Filtering logic: categories act as a global OR, and sub-tags act as AND within their category.
 
 ### File Locations

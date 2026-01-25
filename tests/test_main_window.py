@@ -78,15 +78,24 @@ def test_tag_grid_state_on_filter(main_window):
     assert main_window._category_buttons
     category = next(iter(main_window._category_buttons.keys()))
     button = main_window._category_buttons[category]
-    container = main_window._subcategory_containers[category]
+    subtag_buttons = main_window._subcategory_buttons.get(category, {})
 
-    assert not container.isVisible()
+    # Check subtags are initially hidden
+    if subtag_buttons:
+        first_subtag = next(iter(subtag_buttons.values()))
+        assert not first_subtag.isVisible()
 
     main_window._on_tag_button_clicked(category)
-    assert container.isVisible()
+    # Check subtags are visible when category is active
+    if subtag_buttons:
+        first_subtag = next(iter(subtag_buttons.values()))
+        assert first_subtag.isVisible()
 
     main_window._on_tag_button_clicked(category)
-    assert not container.isVisible()
+    # Check subtags are hidden when category is inactive
+    if subtag_buttons:
+        first_subtag = next(iter(subtag_buttons.values()))
+        assert not first_subtag.isVisible()
 
 
 def test_filter_images_by_category(main_window, monkeypatch):

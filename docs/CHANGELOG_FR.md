@@ -14,7 +14,8 @@
 - Remplacement de l'arbre par une grille de boutons catégories/sous-tags
 - Grille de tags scrollable et sous-tags sur une seule colonne
 - Filtrage OR par catégorie et AND sur les sous-tags
-→ Résultat : Les tags et catégories par défaut sont cohérents et recherchables dès le départ
+- Réorganisation de la grille : catégories en première colonne, sous-tags horizontalement à droite
+ → Résultat : Les tags et catégories par défaut sont cohérents et recherchables dès le départ
 ---
 
 ## 2024-03-06

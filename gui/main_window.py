@@ -28,7 +28,8 @@ from qtpy.QtWidgets import (
     QTreeWidgetItem,
     QDialog,
     QGridLayout,
-    QFrame
+    QFrame,
+    QSizePolicy
 )
 from qtpy.QtCore import (
     Qt,
@@ -119,7 +120,6 @@ class MainWindow(QMainWindow):
         self.status_progress_bar = None
         self._category_buttons: Dict[str, QPushButton] = {}
         self._subcategory_buttons: Dict[str, Dict[str, QPushButton]] = {}
-        self._subcategory_containers: Dict[str, QWidget] = {}
         self._user_tag_buttons: Dict[str, QPushButton] = {}
         self._active_categories: Set[str] = set()
         self._active_subtags: Dict[str, Set[str]] = {}
@@ -457,7 +457,6 @@ class MainWindow(QMainWindow):
                 item.widget().deleteLater()
         self._category_buttons = {}
         self._subcategory_buttons = {}
-        self._subcategory_containers = {}
         self._user_tag_buttons = {}
         self._subtag_to_category = {}
         
@@ -482,44 +481,77 @@ class MainWindow(QMainWindow):
                         collected.append(data)
 
                 # Process each category at root level
-                for column, (category, tags) in enumerate(default_tags.items()):
-                    column_widget = QWidget()
-                    column_layout = QVBoxLayout(column_widget)
-                    column_layout.setContentsMargins(0, 0, 0, 0)
-                    column_layout.setSpacing(6)
-
+                # Each category takes 2 rows, plus 1 row for separator (except last)
+                categories_list = list(default_tags.items())
+                
+                # Calculate maximum number of columns needed for separators
+                max_cols = 1  # At least column 0 for categories
+                for category, tags in categories_list:
+                    subtags: List[str] = []
+                    collect_subtags(tags, subtags)
+                    unique_subtags = list(dict.fromkeys(subtags))
+                    max_cols = max(max_cols, len(unique_subtags) + 1)
+                
+                for category_idx, (category, tags) in enumerate(categories_list):
+                    # Each category takes 2 rows, separator takes 1 row
+                    row = category_idx * 3
+                    # Category button in first column, spanning 2 rows
                     category_button = self._build_tag_button(category)
+                    # Set size policy to prevent vertical expansion
+                    category_button.setSizePolicy(
+                        QSizePolicy.Preferred, QSizePolicy.Maximum
+                    )
                     category_button.clicked.connect(
                         lambda _, name=category: self._on_tag_button_clicked(name)
                     )
-                    column_layout.addWidget(category_button)
+                    self.tags_grid_layout.addWidget(category_button, row, 0, 2, 1)
                     self._category_buttons[category] = category_button
 
+                    # Collect subtags
                     subtags: List[str] = []
                     collect_subtags(tags, subtags)
-                    subtag_container = QWidget()
-                    subtag_layout = QVBoxLayout(subtag_container)
-                    subtag_layout.setContentsMargins(0, 0, 0, 0)
-                    subtag_layout.setSpacing(6)
-
+                    unique_subtags = list(dict.fromkeys(subtags))
+                    
+                    # Split subtags into two rows
+                    mid_point = (len(unique_subtags) + 1) // 2
+                    first_row_tags = unique_subtags[:mid_point]
+                    second_row_tags = unique_subtags[mid_point:]
+                    
                     subtag_buttons: Dict[str, QPushButton] = {}
-                    for index, tag in enumerate(dict.fromkeys(subtags)):
+                    # First row of subtags
+                    for col, tag in enumerate(first_row_tags, start=1):
                         tag_button = self._build_tag_button(tag)
                         tag_button.clicked.connect(
                             lambda _, name=tag: self._on_tag_button_clicked(name)
                         )
-                        subtag_layout.addWidget(tag_button)
+                        self.tags_grid_layout.addWidget(tag_button, row, col)
                         subtag_buttons[tag] = tag_button
                         self._subtag_to_category[tag] = category
-
-                    subtag_container.setVisible(False)
-                    column_layout.addWidget(subtag_container)
-                    column_layout.addStretch()
+                        # Hide subtag buttons initially
+                        tag_button.setVisible(False)
+                    
+                    # Second row of subtags
+                    for col, tag in enumerate(second_row_tags, start=1):
+                        tag_button = self._build_tag_button(tag)
+                        tag_button.clicked.connect(
+                            lambda _, name=tag: self._on_tag_button_clicked(name)
+                        )
+                        self.tags_grid_layout.addWidget(tag_button, row + 1, col)
+                        subtag_buttons[tag] = tag_button
+                        self._subtag_to_category[tag] = category
+                        # Hide subtag buttons initially
+                        tag_button.setVisible(False)
 
                     self._subcategory_buttons[category] = subtag_buttons
-                    self._subcategory_containers[category] = subtag_container
-
-                    self.tags_grid_layout.addWidget(column_widget, 0, column)
+                    
+                    # Add horizontal separator after each category (except the last one)
+                    if category_idx < len(categories_list) - 1:
+                        separator = QFrame()
+                        separator.setFrameShape(QFrame.Shape.HLine)
+                        separator.setFrameShadow(QFrame.Shadow.Sunken)
+                        separator.setStyleSheet("QFrame { color: #666; }")
+                        # Span separator across all columns
+                        self.tags_grid_layout.addWidget(separator, row + 2, 0, 1, max_cols)
 
             except Exception as e:
                 print(f"Error loading default tags: {str(e)}")
@@ -627,12 +659,11 @@ class MainWindow(QMainWindow):
         for tags in self._active_subtags.values():
             active_tags.update(tags)
         for category, button in self._category_buttons.items():
-            is_active = category in active_tags
+            is_active = category in self._active_categories
             self._set_button_active(button, is_active)
-            container = self._subcategory_containers.get(category)
-            if container:
-                container.setVisible(is_active)
+            # Show/hide subtags based on category activation
             for tag, tag_button in self._subcategory_buttons.get(category, {}).items():
+                tag_button.setVisible(is_active)
                 self._set_button_active(tag_button, tag in active_tags)
         # User tags are intentionally omitted from the grid for now.
 
