@@ -595,19 +595,22 @@ class MainWindow(QMainWindow):
                 # Process each category at root level
                 categories_list = list(default_tags.items())
                 
-                # Calculate maximum number of columns needed for separators
-                # Max 3 subtags per row + 1 column for categories = 4 columns total
-                max_cols = 4
+                # Calculate maximum number of columns needed
+                # Max 3 subtags per row (subtags start at column 0)
+                max_cols = 3
                 max_tags_per_row = 3
                 
                 # First pass: calculate number of rows needed for each category
+                # Each category takes 1 row for the category button/label + rows for subtags
                 category_row_counts: List[int] = []
                 for category, tags in categories_list:
                     subtags: List[str] = []
                     collect_subtags(tags, subtags)
                     unique_subtags = list(dict.fromkeys(subtags))
-                    # Calculate number of rows needed (max 3 tags per row)
-                    num_rows = max(1, (len(unique_subtags) + max_tags_per_row - 1) // max_tags_per_row)
+                    # Calculate number of rows needed for subtags (max 3 tags per row)
+                    subtag_rows = max(1, (len(unique_subtags) + max_tags_per_row - 1) // max_tags_per_row) if unique_subtags else 0
+                    # Total rows: 1 for category + subtag rows
+                    num_rows = 1 + subtag_rows
                     category_row_counts.append(num_rows)
                 
                 # Calculate starting row for each category
@@ -625,14 +628,15 @@ class MainWindow(QMainWindow):
                     # Special handling for "Miscellaneous:" and "Camera-Angle:" - they're labels, not buttons
                     is_label_category = category in ["Miscellaneous:", "Camera-Angle:"]
                     
+                    # Category button/label at the top, spanning all columns
                     if is_label_category:
                         # Create label instead of button for label categories
                         category_label = QLabel(category)
                         category_label.setStyleSheet("font-weight: bold; font-size: 12px; padding: 4px; background-color: transparent;")
                         category_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                        self.tags_grid_layout.addWidget(category_label, row, 0, num_rows, 1)
+                        self.tags_grid_layout.addWidget(category_label, row, 0, 1, max_cols)
                     else:
-                        # Category button in first column, spanning all rows for this category
+                        # Category button at the top, spanning all columns
                         category_button = self._build_tag_button(category)
                         # Set size policy to prevent vertical expansion
                         category_button.setSizePolicy(
@@ -641,7 +645,7 @@ class MainWindow(QMainWindow):
                         category_button.clicked.connect(
                             lambda _, name=category: self._on_tag_button_clicked(name)
                         )
-                        self.tags_grid_layout.addWidget(category_button, row, 0, num_rows, 1)
+                        self.tags_grid_layout.addWidget(category_button, row, 0, 1, max_cols)
                         self._category_buttons[category] = category_button
 
                     # Collect subtags
@@ -649,6 +653,7 @@ class MainWindow(QMainWindow):
                     collect_subtags(tags, subtags)
                     unique_subtags = list(dict.fromkeys(subtags))
                     
+                    # Place subtags below the category, starting from row+1, column 0
                     # Split subtags into groups of 3 per row (max 3 per line)
                     subtag_buttons: Dict[str, QPushButton] = {}
                     
@@ -657,9 +662,9 @@ class MainWindow(QMainWindow):
                         tag_button.clicked.connect(
                             lambda _, name=tag: self._on_tag_button_clicked(name)
                         )
-                        # Calculate row and column: first 3 tags on row 0, next 3 on row 1, etc.
-                        tag_row = row + (idx // max_tags_per_row)
-                        tag_col = (idx % max_tags_per_row) + 1
+                        # Calculate row and column: first 3 tags on row row+1, next 3 on row row+2, etc.
+                        tag_row = row + 1 + (idx // max_tags_per_row)
+                        tag_col = idx % max_tags_per_row
                         self.tags_grid_layout.addWidget(tag_button, tag_row, tag_col)
                         subtag_buttons[tag] = tag_button
                         self._subtag_to_category[tag] = category

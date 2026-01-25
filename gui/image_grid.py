@@ -94,6 +94,7 @@ class ImageGrid(QScrollArea):
         self.selected_images = set()  # Store selected image IDs
         self.selection_start = None  # For drag selection
         self.is_selecting = False
+        self.last_selected_image = None  # Store last selected image for range selection
         
         # Create widget to hold the grid
         self.content = QWidget()
@@ -573,6 +574,7 @@ class ImageGrid(QScrollArea):
                 if not (event.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier)):
                     # Clear selection if clicking empty space without modifiers
                     self.selected_images.clear()
+                    self.last_selected_image = None
                     self._update_selection()
             
             # Always show rubber band for drag selection
@@ -582,6 +584,17 @@ class ImageGrid(QScrollArea):
             self.rubber_band.raise_()  # Ensure it's on top
         
         super().mousePressEvent(event)
+    
+    def _log_debug(self, message: str) -> None:
+        """Log debug message to developer log if available."""
+        parent = self.parent()
+        while parent:
+            if hasattr(parent, 'add_log_message'):
+                parent.add_log_message(message, "INFO")
+                return
+            parent = parent.parent()
+        # Fallback to print if no log available
+        print(f"[DEBUG] {message}")
     
     def mouseMoveEvent(self, event):
         if self.is_selecting:
@@ -600,17 +613,77 @@ class ImageGrid(QScrollArea):
                 # Single click - handle thumbnail selection
                 if hasattr(self, 'clicked_on_thumbnail') and self.clicked_on_thumbnail:
                     if event.modifiers() == Qt.ShiftModifier:
-                        # Add to selection
-                        self.selected_images.add(self.clicked_on_thumbnail)
+                        # Range selection: select all images between last selected and clicked
+                        self._log_debug(f"Shift+click detected")
+                        self._log_debug(f"last_selected_image: {self.last_selected_image}")
+                        self._log_debug(f"clicked_on_thumbnail: {self.clicked_on_thumbnail}")
+                        self._log_debug(f"all_images count: {len(self.all_images)}")
+                        
+                        if self.last_selected_image:
+                            # Find indices of last selected and clicked images
+                            start_idx = None
+                            end_idx = None
+                            
+                            # Find start index
+                            self._log_debug(f"Searching for start image: {self.last_selected_image}")
+                            for i, img in enumerate(self.all_images):
+                                if img.id == self.last_selected_image:
+                                    start_idx = i
+                                    self._log_debug(f"Found start at index: {start_idx}")
+                                    break
+                            
+                            # Find end index
+                            self._log_debug(f"Searching for end image: {self.clicked_on_thumbnail}")
+                            for i, img in enumerate(self.all_images):
+                                if img.id == self.clicked_on_thumbnail:
+                                    end_idx = i
+                                    self._log_debug(f"Found end at index: {end_idx}")
+                                    break
+                            
+                            self._log_debug(f"start_idx: {start_idx}, end_idx: {end_idx}")
+                            
+                            # If both indices found, select range
+                            if start_idx is not None and end_idx is not None:
+                                start_idx, end_idx = min(start_idx, end_idx), max(start_idx, end_idx)
+                                self._log_debug(f"Selecting range from {start_idx} to {end_idx} (inclusive)")
+                                selected_count = 0
+                                for i in range(start_idx, end_idx + 1):
+                                    if i < len(self.all_images):
+                                        self.selected_images.add(self.all_images[i].id)
+                                        selected_count += 1
+                                self._log_debug(f"Selected {selected_count} images")
+                            elif start_idx is not None:
+                                # Only start found, select from start to end of list
+                                self._log_debug(f"Only start found, selecting from {start_idx} to end")
+                                for i in range(start_idx, len(self.all_images)):
+                                    self.selected_images.add(self.all_images[i].id)
+                            elif end_idx is not None:
+                                # Only end found, select from start of list to end
+                                self._log_debug(f"Only end found, selecting from start to {end_idx}")
+                                for i in range(end_idx + 1):
+                                    self.selected_images.add(self.all_images[i].id)
+                            else:
+                                # Neither found, just add clicked image
+                                self._log_debug(f"Neither image found, just adding clicked image")
+                                self.selected_images.add(self.clicked_on_thumbnail)
+                        else:
+                            # No previous selection, just add clicked image
+                            self._log_debug(f"No previous selection, just adding clicked image")
+                            self.selected_images.add(self.clicked_on_thumbnail)
+                        self.last_selected_image = self.clicked_on_thumbnail
+                        self._log_debug(f"Updated last_selected_image to: {self.last_selected_image}")
+                        self._log_debug(f"Total selected images: {len(self.selected_images)}")
                     elif event.modifiers() == Qt.ControlModifier:
                         # Toggle selection
                         if self.clicked_on_thumbnail in self.selected_images:
                             self.selected_images.remove(self.clicked_on_thumbnail)
                         else:
                             self.selected_images.add(self.clicked_on_thumbnail)
+                        self.last_selected_image = self.clicked_on_thumbnail
                     else:
                         # New selection
                         self.selected_images = {self.clicked_on_thumbnail}
+                        self.last_selected_image = self.clicked_on_thumbnail
                     
                     self._update_selection()
                     # Emit clicked signal for single click
@@ -618,6 +691,7 @@ class ImageGrid(QScrollArea):
             else:
                 # Drag selection - get thumbnails in selection rectangle
                 selection_rect = QRect(self.selection_start, event.pos()).normalized()
+                last_dragged_image = None
                 for i in range(self.grid.count()):
                     widget = self.grid.itemAt(i).widget()
                     if isinstance(widget, ImageThumbnail):
@@ -630,6 +704,11 @@ class ImageGrid(QScrollArea):
                             else:
                                 # Normal drag adds to selection
                                 self.selected_images.add(widget.image_id)
+                                last_dragged_image = widget.image_id
+                
+                # Update last selected image for range selection
+                if last_dragged_image:
+                    self.last_selected_image = last_dragged_image
                 
                 self._update_selection()
             
