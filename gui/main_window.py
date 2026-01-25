@@ -29,7 +29,8 @@ from qtpy.QtWidgets import (
     QDialog,
     QGridLayout,
     QFrame,
-    QSizePolicy
+    QSizePolicy,
+    QCompleter
 )
 from qtpy.QtCore import (
     Qt,
@@ -40,6 +41,7 @@ from qtpy.QtCore import (
     QThread,
     QMimeData,
     QSize,
+    QStringListModel,
 )
 from qtpy.QtGui import (
     QAction,
@@ -192,9 +194,9 @@ class MainWindow(QMainWindow):
             # Logo
             logo_label = QLabel()
             pixmap = QPixmap(str(logo_path))
-            # Scale logo to fit width (max 120px) while maintaining aspect ratio
-            if pixmap.width() > 120:
-                scaled_pixmap = pixmap.scaled(120, 120, Qt.KeepAspectRatio, Qt.SmoothTransformation)
+            # Scale logo to fit width (max 100px) while maintaining aspect ratio
+            if pixmap.width() > 100:
+                scaled_pixmap = pixmap.scaled(100, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
                 logo_label.setPixmap(scaled_pixmap)
             else:
                 logo_label.setPixmap(pixmap)
@@ -231,6 +233,8 @@ class MainWindow(QMainWindow):
         self.tags_grid_layout = QGridLayout(self.tags_grid_container)
         self.tags_grid_layout.setContentsMargins(0, 0, 0, 0)
         self.tags_grid_layout.setSpacing(10)
+        # Align content to top
+        self.tags_grid_layout.setAlignment(Qt.AlignTop)
 
         self.tags_scroll_area = QScrollArea()
         self.tags_scroll_area.setWidgetResizable(True)
@@ -245,16 +249,60 @@ class MainWindow(QMainWindow):
         
         left_splitter.addWidget(tags_tree_panel)
         
+        # Search and filter panel: Search bar and AND/OR zones
+        search_filter_panel = QWidget()
+        search_filter_layout = QVBoxLayout(search_filter_panel)
+        search_filter_layout.setContentsMargins(10, 10, 10, 10)
+        search_filter_layout.setSpacing(10)
+        
+        # Title
+        search_filter_title = QLabel("Search & Filters")
+        search_filter_title.setStyleSheet("font-size: 12px; font-weight: bold;")
+        search_filter_layout.addWidget(search_filter_title)
+        
+        # Search bar
+        search_layout = QHBoxLayout()
+        
+        self.tag_search_input = QLineEdit()
+        self.tag_search_input.setPlaceholderText("Search tags")
+        self.tag_search_input.returnPressed.connect(self._on_tag_search_return)
+        search_layout.addWidget(self.tag_search_input)
+        
+        # Set up tag search completer (only user tags)
+        self._update_tag_search_completer()
+        
+        clear_btn = QPushButton("Clear All")
+        clear_btn.clicked.connect(self._clear_all_tag_filters)
+        search_layout.addWidget(clear_btn)
+        
+        search_filter_layout.addLayout(search_layout)
+        
+        # Filter zones (AND/OR)
+        zones_layout = QHBoxLayout()
+        zones_layout.setSpacing(8)
+        
+        from gui.tag_widgets import TagDropZone
+        self.and_zone = TagDropZone("AND (all required)")
+        self.and_zone.tag_dropped.connect(self._on_tag_filter_changed)
+        self.and_zone.tags_modified.connect(self._on_tag_filter_changed)
+        zones_layout.addWidget(self.and_zone, 1)
+        
+        self.or_zone = TagDropZone("OR (at least one)")
+        self.or_zone.tag_dropped.connect(self._on_tag_filter_changed)
+        self.or_zone.tags_modified.connect(self._on_tag_filter_changed)
+        zones_layout.addWidget(self.or_zone, 1)
+        
+        search_filter_layout.addLayout(zones_layout)
+        
+        # Hide Search & Filters panel for now (full Tags Library mode)
+        search_filter_panel.setVisible(False)
+        left_splitter.addWidget(search_filter_panel)
+        
         # Bottom part: Session settings button
         bottom_panel = QWidget()
         bottom_layout = QVBoxLayout(bottom_panel)
         bottom_layout.setContentsMargins(10, 10, 10, 10)
         bottom_layout.setSpacing(10)
-        
-        # Label for number of images
-        self.session_images_count_label = QLabel("Images: 0")
-        self.session_images_count_label.setStyleSheet("font-size: 12px; font-weight: bold;")
-        bottom_layout.addWidget(self.session_images_count_label)
         
         # Add stretch to push button to bottom
         bottom_layout.addStretch()
@@ -283,8 +331,15 @@ class MainWindow(QMainWindow):
         
         left_splitter.addWidget(bottom_panel)
         
-        # Set splitter sizes (top: flexible, middle: flexible, bottom: minimal for session button)
-        left_splitter.setSizes([300, 200, 100])
+        # Set splitter sizes (top: minimal, Tags Library: maximum, bottom: minimal)
+        # Tags Library (index 1) gets maximum space, others get minimum
+        # Note: search_filter_panel (index 2) is hidden but still in splitter
+        left_splitter.setSizes([100, 1000, 0, 100])
+        # Set stretch factors: Tags Library gets priority
+        left_splitter.setStretchFactor(0, 1)   # Top (logo/welcome)
+        left_splitter.setStretchFactor(1, 10)  # Tags Library (maximum)
+        left_splitter.setStretchFactor(2, 0)   # Search & Filters (hidden)
+        left_splitter.setStretchFactor(3, 1)   # Bottom (Session Settings)
         
         # Add left splitter to main splitter
         main_splitter.addWidget(left_splitter)
@@ -299,7 +354,13 @@ class MainWindow(QMainWindow):
         grid_controls = QHBoxLayout()
         grid_controls.setContentsMargins(0, 0, 10, 0)
         
-        # Add column control slider
+        # Label for number of images (left side)
+        self.session_images_count_label = QLabel("Images: 0")
+        self.session_images_count_label.setStyleSheet("font-size: 12px; font-weight: bold;")
+        grid_controls.addWidget(self.session_images_count_label)
+        
+        # Add column control slider (right side)
+        grid_controls.addStretch()
         columns_label = QLabel("Columns:")
         columns_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
         self.columns_slider = QSlider(Qt.Horizontal)
@@ -314,8 +375,6 @@ class MainWindow(QMainWindow):
         self.columns_count = QLabel(str(self.columns_slider.value()))
         self.columns_count.setStyleSheet("color: #aaaaaa; font-size: 11px;")
         
-        # Add widgets to layout with right alignment
-        grid_controls.addStretch()
         grid_controls.addWidget(columns_label)
         grid_controls.addWidget(self.columns_slider)
         grid_controls.addWidget(self.columns_count)
@@ -383,10 +442,26 @@ class MainWindow(QMainWindow):
         """
         default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
         return self._get_default_tags_from_path(default_tags_path)
+    
+    def _get_user_tags(self) -> Set[str]:
+        """
+        Get all user-defined tags (tags that are not in default tags).
+
+        Returns:
+            set: User-defined tags.
+        """
+        default_tags = self._get_default_tags()
+        all_tags = set()
+        for metadata in self.image_manager.db.list_images():
+            all_tags.update(metadata.tags)
+        # Return only tags that are not in default tags
+        return all_tags - default_tags
 
     def _apply_category_filters(self) -> None:
         """Apply category/subtag filters to the image grid."""
         filtered_images = self._filter_images_by_category()
+        # Also apply AND/OR filters if they exist
+        filtered_images = self._apply_and_or_filters(filtered_images)
         filter_key = (
             frozenset(self._active_categories),
             frozenset(
@@ -397,6 +472,43 @@ class MainWindow(QMainWindow):
         self.image_grid.load_images_from_list(filtered_images, filter_key)
         self._update_session_images_count(filtered_images)
         self._sync_tag_grid_state()
+    
+    def _apply_and_or_filters(self, images: List) -> List:
+        """
+        Apply AND/OR filters to the image list (only on user tags).
+        This is a filtering layer on top of category filters.
+        
+        Args:
+            images: List of image metadata to filter.
+            
+        Returns:
+            List: Filtered image metadata list.
+        """
+        and_tags = self.and_zone.get_tags()
+        or_tags = self.or_zone.get_tags()
+        
+        if not and_tags and not or_tags:
+            return images
+        
+        # Get default tags to filter them out
+        default_tags = self._get_default_tags()
+        
+        filtered_images = []
+        for metadata in images:
+            # Extract only user tags from image (exclude default tags)
+            image_user_tags = set(metadata.tags) - default_tags
+            
+            # AND: all tags must be present in user tags
+            if and_tags and not and_tags.issubset(image_user_tags):
+                continue
+            
+            # OR: at least one tag must be present in user tags
+            if or_tags and not or_tags.intersection(image_user_tags):
+                continue
+            
+            filtered_images.append(metadata)
+        
+        return filtered_images
 
     def _update_session_images_count(self, filtered_images: List) -> None:
         """
@@ -481,66 +593,78 @@ class MainWindow(QMainWindow):
                         collected.append(data)
 
                 # Process each category at root level
-                # Each category takes 2 rows, plus 1 row for separator (except last)
                 categories_list = list(default_tags.items())
                 
                 # Calculate maximum number of columns needed for separators
-                max_cols = 1  # At least column 0 for categories
+                # Max 3 subtags per row + 1 column for categories = 4 columns total
+                max_cols = 4
+                max_tags_per_row = 3
+                
+                # First pass: calculate number of rows needed for each category
+                category_row_counts: List[int] = []
                 for category, tags in categories_list:
                     subtags: List[str] = []
                     collect_subtags(tags, subtags)
                     unique_subtags = list(dict.fromkeys(subtags))
-                    max_cols = max(max_cols, len(unique_subtags) + 1)
+                    # Calculate number of rows needed (max 3 tags per row)
+                    num_rows = max(1, (len(unique_subtags) + max_tags_per_row - 1) // max_tags_per_row)
+                    category_row_counts.append(num_rows)
                 
+                # Calculate starting row for each category
+                current_row = 0
+                category_start_rows: List[int] = []
+                for num_rows in category_row_counts:
+                    category_start_rows.append(current_row)
+                    current_row += num_rows + 1  # +1 for separator (except last)
+                
+                # Second pass: create UI elements
                 for category_idx, (category, tags) in enumerate(categories_list):
-                    # Each category takes 2 rows, separator takes 1 row
-                    row = category_idx * 3
-                    # Category button in first column, spanning 2 rows
-                    category_button = self._build_tag_button(category)
-                    # Set size policy to prevent vertical expansion
-                    category_button.setSizePolicy(
-                        QSizePolicy.Preferred, QSizePolicy.Maximum
-                    )
-                    category_button.clicked.connect(
-                        lambda _, name=category: self._on_tag_button_clicked(name)
-                    )
-                    self.tags_grid_layout.addWidget(category_button, row, 0, 2, 1)
-                    self._category_buttons[category] = category_button
+                    row = category_start_rows[category_idx]
+                    num_rows = category_row_counts[category_idx]
+                    
+                    # Special handling for "Miscellaneous:" and "Camera-Angle:" - they're labels, not buttons
+                    is_label_category = category in ["Miscellaneous:", "Camera-Angle:"]
+                    
+                    if is_label_category:
+                        # Create label instead of button for label categories
+                        category_label = QLabel(category)
+                        category_label.setStyleSheet("font-weight: bold; font-size: 12px; padding: 4px; background-color: transparent;")
+                        category_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                        self.tags_grid_layout.addWidget(category_label, row, 0, num_rows, 1)
+                    else:
+                        # Category button in first column, spanning all rows for this category
+                        category_button = self._build_tag_button(category)
+                        # Set size policy to prevent vertical expansion
+                        category_button.setSizePolicy(
+                            QSizePolicy.Preferred, QSizePolicy.Maximum
+                        )
+                        category_button.clicked.connect(
+                            lambda _, name=category: self._on_tag_button_clicked(name)
+                        )
+                        self.tags_grid_layout.addWidget(category_button, row, 0, num_rows, 1)
+                        self._category_buttons[category] = category_button
 
                     # Collect subtags
                     subtags: List[str] = []
                     collect_subtags(tags, subtags)
                     unique_subtags = list(dict.fromkeys(subtags))
                     
-                    # Split subtags into two rows
-                    mid_point = (len(unique_subtags) + 1) // 2
-                    first_row_tags = unique_subtags[:mid_point]
-                    second_row_tags = unique_subtags[mid_point:]
-                    
+                    # Split subtags into groups of 3 per row (max 3 per line)
                     subtag_buttons: Dict[str, QPushButton] = {}
-                    # First row of subtags
-                    for col, tag in enumerate(first_row_tags, start=1):
-                        tag_button = self._build_tag_button(tag)
-                        tag_button.clicked.connect(
-                            lambda _, name=tag: self._on_tag_button_clicked(name)
-                        )
-                        self.tags_grid_layout.addWidget(tag_button, row, col)
-                        subtag_buttons[tag] = tag_button
-                        self._subtag_to_category[tag] = category
-                        # Hide subtag buttons initially
-                        tag_button.setVisible(False)
                     
-                    # Second row of subtags
-                    for col, tag in enumerate(second_row_tags, start=1):
+                    for idx, tag in enumerate(unique_subtags):
                         tag_button = self._build_tag_button(tag)
                         tag_button.clicked.connect(
                             lambda _, name=tag: self._on_tag_button_clicked(name)
                         )
-                        self.tags_grid_layout.addWidget(tag_button, row + 1, col)
+                        # Calculate row and column: first 3 tags on row 0, next 3 on row 1, etc.
+                        tag_row = row + (idx // max_tags_per_row)
+                        tag_col = (idx % max_tags_per_row) + 1
+                        self.tags_grid_layout.addWidget(tag_button, tag_row, tag_col)
                         subtag_buttons[tag] = tag_button
                         self._subtag_to_category[tag] = category
-                        # Hide subtag buttons initially
-                        tag_button.setVisible(False)
+                        # Hide subtag buttons initially (except for label categories like Miscellaneous and Camera-Angle)
+                        tag_button.setVisible(is_label_category)
 
                     self._subcategory_buttons[category] = subtag_buttons
                     
@@ -550,11 +674,26 @@ class MainWindow(QMainWindow):
                         separator.setFrameShape(QFrame.Shape.HLine)
                         separator.setFrameShadow(QFrame.Shadow.Sunken)
                         separator.setStyleSheet("QFrame { color: #666; }")
-                        # Span separator across all columns
-                        self.tags_grid_layout.addWidget(separator, row + 2, 0, 1, max_cols)
+                        # Place separator after all rows for this category
+                        separator_row = row + num_rows
+                        self.tags_grid_layout.addWidget(separator, separator_row, 0, 1, max_cols)
 
             except Exception as e:
                 print(f"Error loading default tags: {str(e)}")
+            
+            # Add spacer at the bottom to push all content to the top
+            # Find the maximum row used in the grid
+            max_row = 0
+            for i in range(self.tags_grid_layout.count()):
+                item = self.tags_grid_layout.itemAt(i)
+                if item:
+                    row, col, row_span, col_span = self.tags_grid_layout.getItemPosition(i)
+                    max_row = max(max_row, row + row_span - 1)
+            
+            # Add vertical spacer at the bottom row to push content up
+            # Set stretch for the row after the last used row
+            if max_row >= 0:
+                self.tags_grid_layout.setRowStretch(max_row + 1, 1)
         
     def _find_tag_icon(self, tag: str) -> QIcon:
         """
@@ -631,6 +770,9 @@ class MainWindow(QMainWindow):
         Args:
             tag: Tag name to toggle.
         """
+        # Label categories are not real tags and should never be added to active categories
+        label_categories = ["Miscellaneous:", "Camera-Angle:"]
+        
         if tag in self._category_buttons:
             if tag in self._active_categories:
                 self._active_categories.remove(tag)
@@ -642,13 +784,97 @@ class MainWindow(QMainWindow):
             category = self._subtag_to_category.get(tag)
             if not category:
                 return
-            if category not in self._active_categories:
-                self._active_categories.add(category)
-            category_tags = self._active_subtags.setdefault(category, set())
-            if tag in category_tags:
-                category_tags.remove(tag)
+            
+            # For label categories, don't add them to active_categories
+            # Just manage their sub-tags directly
+            if category in label_categories:
+                category_tags = self._active_subtags.setdefault(category, set())
+                if tag in category_tags:
+                    category_tags.remove(tag)
+                    # If no more tags in this label category, remove it from active_subtags
+                    if not category_tags:
+                        self._active_subtags.pop(category, None)
+                else:
+                    category_tags.add(tag)
             else:
-                category_tags.add(tag)
+                # For regular categories, add category to active_categories if needed
+                if category not in self._active_categories:
+                    self._active_categories.add(category)
+                category_tags = self._active_subtags.setdefault(category, set())
+                if tag in category_tags:
+                    category_tags.remove(tag)
+                else:
+                    category_tags.add(tag)
+        self._apply_category_filters()
+    
+    def _on_tag_search_return(self) -> None:
+        """Handle tag search input return key press (only for user tags)."""
+        text = self.tag_search_input.text().strip()
+        if not text:
+            return
+        
+        # Resolve tag (case-insensitive) - only in user tags
+        user_tags = self._get_user_tags()
+        resolved_tag = None
+        text_lower = text.lower()
+        for tag in user_tags:
+            if tag.lower() == text_lower:
+                resolved_tag = tag
+                break
+        
+        if not resolved_tag:
+            # Invalid tag - could add feedback animation here
+            self.tag_search_input.clear()
+            return
+        
+        # Add to AND zone by default
+        self.and_zone.add_tag(resolved_tag)
+        self.tag_search_input.clear()
+        self._apply_category_filters()
+    
+    def _on_tag_filter_changed(self, tag: str = None) -> None:
+        """
+        Handle tag filter change from AND/OR zones.
+        
+        Args:
+            tag: Tag that was added/removed (optional, for tag_dropped signal).
+        """
+        self._apply_category_filters()
+    
+    def _clear_all_tag_filters(self) -> None:
+        """Clear all tag filters (category, AND, and OR)."""
+        self._active_categories.clear()
+        self._active_subtags.clear()
+        self.and_zone.clear_tags()
+        self.or_zone.clear_tags()
+        self._apply_category_filters()
+    
+    def _update_tag_search_completer(self) -> None:
+        """Update the tag search completer with current user tags."""
+        user_tags = list(self._get_user_tags())
+        completer = QCompleter()
+        completer.setModel(QStringListModel(user_tags))
+        completer.setCaseSensitivity(Qt.CaseInsensitive)
+        completer.setFilterMode(Qt.MatchContains)
+        self.tag_search_input.setCompleter(completer)
+        self.tag_search_completer = completer
+    
+    def reload_default_tags(self) -> None:
+        """
+        Reload default tags from JSON file and refresh the tag grid.
+        Useful when default_tags.json is modified.
+        """
+        # Clear current filters to avoid inconsistencies
+        self._active_categories.clear()
+        self._active_subtags.clear()
+        
+        # Reload tags into grid
+        self._load_tags_into_grid()
+        
+        # Update completer with new user tags
+        self._update_tag_search_completer()
+        
+        # Reapply filters (will be empty, so shows all images)
         self._apply_category_filters()
 
     def _sync_tag_grid_state(self) -> None:
@@ -665,6 +891,15 @@ class MainWindow(QMainWindow):
             for tag, tag_button in self._subcategory_buttons.get(category, {}).items():
                 tag_button.setVisible(is_active)
                 self._set_button_active(tag_button, tag in active_tags)
+        
+        # Handle label categories separately - always visible, not clickable categories
+        label_categories = ["Miscellaneous:", "Camera-Angle:"]
+        for label_category in label_categories:
+            if label_category in self._subcategory_buttons:
+                for tag, tag_button in self._subcategory_buttons[label_category].items():
+                    tag_button.setVisible(True)
+                    self._set_button_active(tag_button, tag in active_tags)
+        
         # User tags are intentionally omitted from the grid for now.
 
     def _filter_images_by_category(self) -> List:
@@ -675,19 +910,43 @@ class MainWindow(QMainWindow):
             List: Filtered image metadata list.
         """
         all_images = self.image_manager.db.list_images()
-        if not self._active_categories:
+        
+        # Label categories are not real tags, they're just organizational labels
+        label_categories = ["Miscellaneous:", "Camera-Angle:"]
+        
+        # Check if there are any active filters (regular categories or label category sub-tags)
+        has_active_filters = bool(self._active_categories)
+        if not has_active_filters:
+            # Check if there are active sub-tags in label categories
+            for label_cat in label_categories:
+                if self._active_subtags.get(label_cat):
+                    has_active_filters = True
+                    break
+        
+        if not has_active_filters:
             return all_images
-
+        
         filtered_images = []
         for metadata in all_images:
             image_tags = set(metadata.tags)
+            
+            # Check regular categories first
             for category in self._active_categories:
+                # For regular categories, check if category tag exists and sub-tags match
                 if category not in image_tags:
                     continue
                 required = self._active_subtags.get(category, set())
                 if required.issubset(image_tags):
                     filtered_images.append(metadata)
                     break
+            else:
+                # If no regular category matched, check label categories
+                for label_cat in label_categories:
+                    required = self._active_subtags.get(label_cat, set())
+                    if required and required.issubset(image_tags):
+                        filtered_images.append(metadata)
+                        break
+        
         return filtered_images
 
     def _set_button_active(self, button: QPushButton, active: bool) -> None:
@@ -1083,6 +1342,11 @@ class MainWindow(QMainWindow):
         self.purge_action.triggered.connect(self._purge_library)
         self.purge_action.setVisible(self.dev_mode)
         tools_menu.addAction(self.purge_action)
+        
+        # - Reload default tags
+        reload_tags_action = QAction("&Reload Default Tags", self)
+        reload_tags_action.triggered.connect(self.reload_default_tags)
+        tools_menu.addAction(reload_tags_action)
         
         # Help menu
         help_menu = self.menuBar().addMenu("&Help")

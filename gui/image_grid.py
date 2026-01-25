@@ -19,7 +19,8 @@ from qtpy.QtWidgets import (
     QDialog,
     QLineEdit,
     QPushButton,
-    QMessageBox
+    QMessageBox,
+    QApplication
 )
 from qtpy.QtCore import Qt, QSize, Signal, QTimer, QThreadPool, QRect, QPoint
 from qtpy.QtGui import QPixmap, QImage, QResizeEvent
@@ -721,9 +722,18 @@ class ImageGrid(QScrollArea):
         """
         if self.current_filter != filter_key:
             self.clear()
+            # Force grid layout update after clear to remove empty slots
+            self.grid.update()
+            self.content.update()
+            # Process events to ensure clear is complete
+            QApplication.processEvents()
 
         self.current_filter = filter_key
         self.all_images = images
 
         self._load_next_batch()
         self.layout_timer.start()
+        
+        # Force immediate layout update to ensure thumbnails are positioned correctly
+        self.grid.update()
+        self.content.update()

@@ -9,7 +9,7 @@
     "Naked"
   ],
   "Animal": [
-    "Quadriped",
+    "Quadruped",
     "Biped",
     "Insect",
     "Bird",
@@ -29,6 +29,13 @@
     "Little",
     "Big",
     "Vehicle",
-    "Weapon"
-  ]
+    "Weapon",
+    "Robot"
+  ],
+  "Camera-Angle:": [
+    "Wide-Angle",
+    "Close-Up",
+    "Full-Body"],
+  "Miscellaneous:": 
+  []
 }
