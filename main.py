@@ -58,7 +58,6 @@ def main():
     """Main entry point of the application."""
     # Create application instance
     app = QApplication(sys.argv)
-    print(f"[DEBUG] QApplication created")
     
     # Load custom fonts
     fonts_loaded = load_fonts()

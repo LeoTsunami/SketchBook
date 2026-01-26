@@ -42,7 +42,6 @@ class AddTagDialog(QDialog):
         self.setWindowTitle("Add Tags")
         self.existing_tags = existing_tags or []
         self.selected_tags = []
-        
         layout = QVBoxLayout(self)
         
         # Tag input with autocomplete
@@ -95,7 +94,7 @@ class ImageGrid(QScrollArea):
         self.selection_start = None  # For drag selection
         self.is_selecting = False
         self.last_selected_image = None  # Store last selected image for range selection
-        
+
         # Create widget to hold the grid
         self.content = QWidget()
         self.setWidget(self.content)
@@ -556,19 +555,29 @@ class ImageGrid(QScrollArea):
         return thumbnail_width, self.max_thumbnail_height
 
     def mousePressEvent(self, event):
+        
         if event.button() == Qt.LeftButton:
+            self.clicked_position = event.pos()
             self.selection_start = event.pos()
             self.is_selecting = True
 
             # Convert viewport coordinates to content coordinates
             content_pos = self.content.mapFrom(self, event.pos())
             
-            # Check if clicked on a thumbnail
-            child = self.content.childAt(content_pos)
-            if isinstance(child, ImageThumbnail):
+            # Check if clicked on a thumbnail by checking all thumbnails
+            clicked_thumbnail = None
+            for thumbnail in self.thumbnails.values():
+                # Convert thumbnail position to content coordinates
+                thumbnail_global_pos = thumbnail.mapTo(self.content, QPoint(0, 0))
+                thumbnail_rect = QRect(thumbnail_global_pos, thumbnail.size())
+                if thumbnail_rect.contains(content_pos):
+                    clicked_thumbnail = thumbnail
+                    break
+            
+            if clicked_thumbnail:
                 # Store the clicked thumbnail for later processing
-                self.clicked_on_thumbnail = child.image_id
-                self.clicked_position = event.pos()
+                self.clicked_on_thumbnail = clicked_thumbnail.image_id
+                self._log_debug(f"Clicked on thumbnail: {self.clicked_on_thumbnail}")
             else:
                 self.clicked_on_thumbnail = None
                 if not (event.modifiers() & (Qt.ShiftModifier | Qt.ControlModifier)):
@@ -604,17 +613,21 @@ class ImageGrid(QScrollArea):
         super().mouseMoveEvent(event)
     
     def mouseReleaseEvent(self, event):
+        self._log_debug("Mouse release event")
         if event.button() == Qt.LeftButton and self.is_selecting:
+            self._log_debug("Left button released")
             self.is_selecting = False
             self.rubber_band.hide()
             
             # Check if this was a single click (no drag)
             if hasattr(self, 'clicked_position') and self.clicked_position == event.pos():
+                self._log_debug("Single click detected")
                 # Single click - handle thumbnail selection
                 if hasattr(self, 'clicked_on_thumbnail') and self.clicked_on_thumbnail:
+                    self._log_debug("Clicked on thumbnail detected")
                     if event.modifiers() == Qt.ShiftModifier:
                         # Range selection: select all images between last selected and clicked
-                        self._log_debug(f"Shift+click detected")
+                        self._log_debug("Shift+click detected")
                         self._log_debug(f"last_selected_image: {self.last_selected_image}")
                         self._log_debug(f"clicked_on_thumbnail: {self.clicked_on_thumbnail}")
                         self._log_debug(f"all_images count: {len(self.all_images)}")
@@ -692,6 +705,8 @@ class ImageGrid(QScrollArea):
                 # Drag selection - get thumbnails in selection rectangle
                 selection_rect = QRect(self.selection_start, event.pos()).normalized()
                 last_dragged_image = None
+                if not event.modifiers():
+                    self.selected_images.clear()
                 for i in range(self.grid.count()):
                     widget = self.grid.itemAt(i).widget()
                     if isinstance(widget, ImageThumbnail):
