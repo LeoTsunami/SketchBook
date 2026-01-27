@@ -59,6 +59,7 @@ from core.image_manager import ImageManager
 from gui.image_import_worker import ImageImportWorker
 from gui.image_grid import ImageGrid, ImageThumbnail
 from gui.tag_widgets import DraggableTagChip
+from gui.tag_apply_worker import TagApplyWorker
 from gui.session_settings_dialog import SessionSettingsDialog
 from qtpy.QtWidgets import QApplication
 import os
@@ -93,6 +94,48 @@ class DraggableTreeWidget(QTreeWidget):
         
         # Execute drag
         drag.exec_(Qt.MoveAction)
+
+
+class DraggableTagButton(QPushButton):
+    """Tag button in the tag library that can be dragged onto images."""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(text, parent)
+        self._drag_start_pos = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start_pos = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (
+            event.buttons() & Qt.LeftButton
+            and self._drag_start_pos is not None
+            and (event.pos() - self._drag_start_pos).manhattanLength() >= 10
+        ):
+            tag_text = self.text()
+            if not tag_text:
+                return
+
+            drag = QDrag(self)
+            mime_data = QMimeData()
+            mime_data.setText(tag_text)
+            drag.setMimeData(mime_data)
+
+            # Simple pixmap with tag text for visual feedback
+            pixmap = QPixmap(120, 28)
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            painter.setPen(Qt.white)
+            painter.drawText(pixmap.rect(), Qt.AlignCenter, tag_text)
+            painter.end()
+            drag.setPixmap(pixmap)
+
+            drag.exec_(Qt.MoveAction)
+            return
+
+        super().mouseMoveEvent(event)
 
 def apply_global_stylesheet():
     app = QApplication.instance()
@@ -758,7 +801,8 @@ class MainWindow(QMainWindow):
         Returns:
             QPushButton: Configured tag button.
         """
-        button = QPushButton(tag)
+        # Use draggable button so tags can be dragged onto images
+        button = DraggableTagButton(tag)
         icon = self._find_tag_icon(tag)
         if not icon.isNull():
             button.setIcon(self._invert_icon(icon))
@@ -1178,6 +1222,94 @@ class MainWindow(QMainWindow):
         # Start worker and keep a reference to prevent garbage collection
         self.current_worker = worker
         self.thread_pool.start(worker)
+
+    # === Bulk tag application (for drag & drop onto many images) ===
+
+    def apply_tag_to_images_async(self, tag: str, image_ids: List[str]) -> None:
+        """
+        Apply a tag to many images in a background thread with progress.
+
+        Args:
+            tag: Tag to apply.
+            image_ids: List of image IDs to update.
+        """
+        if not image_ids:
+            return
+
+        # Create progress bar in status bar
+        progress_bar = self._create_status_progress_bar()
+        progress_bar.setFormat(f"Applying tag '{tag}'...")
+
+        worker = TagApplyWorker(self.image_manager, image_ids, tag)
+
+        # Progress updates
+        worker.signals.progress.connect(
+            lambda current, total: self._handle_tag_apply_progress(tag, current, total),
+            Qt.QueuedConnection,
+        )
+
+        # Completion
+        worker.signals.finished.connect(
+            lambda total: self._handle_tag_apply_finished(tag, image_ids, total),
+            Qt.QueuedConnection,
+        )
+
+        # Errors
+        worker.signals.error.connect(
+            self._handle_tag_apply_error,
+            Qt.QueuedConnection,
+        )
+
+        # Start worker
+        self.statusBar().showMessage(f"Applying tag '{tag}' to images...")
+        self.current_worker = worker
+        self.thread_pool.start(worker)
+
+    def _handle_tag_apply_progress(self, tag: str, current: int, total: int) -> None:
+        """Update progress bar while applying tags."""
+        if total <= 0:
+            return
+        progress = int(current * 100 / total)
+
+        if self.status_progress_bar is not None:
+            self.status_progress_bar.setValue(progress)
+            self.status_progress_bar.setFormat(
+                f"Applying tag '{tag}': {current}/{total} ({progress}%)"
+            )
+
+        if self.dev_mode:
+            self.update_dev_progress_bar(progress)
+            self.update_dev_progress_label(
+                f"Applying tag '{tag}': {current}/{total} images updated"
+            )
+
+    def _handle_tag_apply_finished(
+        self, tag: str, image_ids: List[str], total: int
+    ) -> None:
+        """Handle completion of tag application."""
+        try:
+            if self.status_progress_bar is not None:
+                self.status_progress_bar.setValue(100)
+                self.status_progress_bar.setFormat(
+                    f"Applying tag '{tag}': completed"
+                )
+                self.status_progress_bar.repaint()
+
+            # Clean up progress bar
+            self._cleanup_progress_bars()
+
+            # Refresh thumbnails for affected images
+            for image_id in image_ids:
+                if image_id in self.image_grid.thumbnails:
+                    self.image_grid.thumbnails[image_id].refresh_tags()
+
+        except Exception:
+            self._cleanup_progress_bars()
+
+    def _handle_tag_apply_error(self, error_msg: str) -> None:
+        """Handle error during tag application."""
+        self._cleanup_progress_bars()
+        self.add_log_message(f"Error while applying tag: {error_msg}", "ERROR")
     
     def _handle_progress_update(self, current: int, total: int):
         """Handle progress update from worker thread."""

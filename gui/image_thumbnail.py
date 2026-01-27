@@ -17,7 +17,7 @@ from qtpy.QtWidgets import (
     QApplication
 )
 from qtpy.QtCore import Qt, Signal, QTimer
-from qtpy.QtGui import QPixmap, QIcon, QImage, QCursor
+from qtpy.QtGui import QPixmap, QIcon, QImage, QCursor, QDragEnterEvent, QDropEvent
 from core.settings import settings
 
 
@@ -156,7 +156,7 @@ class ImageThumbnail(QFrame):
     clicked = Signal(str)  # Emits image ID when clicked
     tag_removed = Signal(str, str)  # Emits (image_id, tag) when a tag is removed
     
-    def __init__(self, image_id: str, label: str, parent=None, image_manager=None, remove_tag_callback=None):
+    def __init__(self, image_id: str, label: str, parent=None, image_manager=None, remove_tag_callback=None, get_selected_images_callback=None):
         """
         Initialize the thumbnail widget.
         
@@ -166,16 +166,21 @@ class ImageThumbnail(QFrame):
             parent: Parent widget
             image_manager: ImageManager instance for accessing tags
             remove_tag_callback: Optional callback function(tag: str) to remove tag from selected images
+            get_selected_images_callback: Optional callback function() -> Set[str] to get selected image IDs
         """
         super().__init__(parent)
         self.image_id = image_id
         self.image_manager = image_manager
         self.remove_tag_callback = remove_tag_callback
+        self.get_selected_images_callback = get_selected_images_callback
         self.setObjectName("ImageThumbnail")
         self.setFrameStyle(QFrame.NoFrame)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.selected = False
         self.setProperty("selected", False)
+        
+        # Enable drag and drop for tags
+        self.setAcceptDrops(True)
         
         # Don't disable mouse events on the entire thumbnail - only on image parts
         # We'll handle clicks manually to distinguish image clicks from tag clicks
@@ -316,59 +321,24 @@ class ImageThumbnail(QFrame):
     
     def eventFilter(self, obj, event):
         """Filter events to ensure tag chips can receive mouse events."""
-        from qtpy.QtCore import QEvent
-        if event.type() == QEvent.MouseButtonPress:
-            print(f"[DEBUG ImageThumbnail] eventFilter: Mouse press on {type(obj).__name__}, objectName: {obj.objectName()}")
-            print(f"[DEBUG ImageThumbnail] eventFilter: Event position: {event.pos() if hasattr(event, 'pos') else 'N/A'}")
         # Let tag chips and their children handle their own events
         if isinstance(obj, TagChip) or obj.parent() == self.tags_container:
-            print(f"[DEBUG ImageThumbnail] eventFilter: Allowing event for {type(obj).__name__}")
             return False  # Don't filter, let the widget handle it
         return super().eventFilter(obj, event)
     
     def mousePressEvent(self, event):
         """Handle mouse press events - forward to ImageGrid if not on tags."""
-        from qtpy.QtCore import QPoint
         # Check if click is on tags container or any tag chip
         click_pos = event.pos()
-        
-        print(f"[DEBUG ImageThumbnail] mousePressEvent at {click_pos}")
-        
-        # Check if click is within tags container
+
         if self.tags_container.isVisible():
             tags_rect = self.tags_container.geometry()
-            print(f"[DEBUG ImageThumbnail] Tags container visible, rect: {tags_rect}")
             if tags_rect.contains(click_pos):
-                # Click is on tags area - check if it's on a chip or button
-                clicked_widget = self.childAt(click_pos)
-                print(f"[DEBUG ImageThumbnail] Clicked widget: {type(clicked_widget).__name__ if clicked_widget else 'None'}")
-                widget = clicked_widget
-                depth = 0
-                while widget and depth < 5:
-                    widget_name = getattr(widget, 'objectName', lambda: '')()
-                    print(f"[DEBUG ImageThumbnail] Checking widget at depth {depth}: {type(widget).__name__}, objectName: {widget_name}")
-                    if isinstance(widget, TagChip) or (widget_name and ("TagChip" in widget_name or "RemoveButton" in widget_name)):
-                        # Click is on a tag chip or button - let it handle the event
-                        print(f"[DEBUG ImageThumbnail] Click on tag widget - allowing event")
-                        super().mousePressEvent(event)
-                        return
-                    widget = widget.parent()
-                    depth += 1
-        
-        # Click is not on tags - forward to parent (ImageGrid) for selection handling
-        print(f"[DEBUG ImageThumbnail] Click not on tags - forwarding to parent")
-        # Convert to parent coordinates and create new event
-        parent_pos = self.mapToParent(click_pos)
-        # Create a new event for the parent
-        from qtpy.QtGui import QMouseEvent
-        parent_event = QMouseEvent(
-            event.type(),
-            parent_pos,
-            event.button(),
-            event.buttons(),
-            event.modifiers()
-        )
-        # Don't call super() - let ImageGrid handle it via event propagation
+                # Click is on tags area - let child widgets handle it
+                super().mousePressEvent(event)
+                return
+
+        # Click is not on tags - let parent (ImageGrid) handle selection
         event.ignore()  # Let the event propagate
     
     def resizeEvent(self, event):
@@ -385,22 +355,30 @@ class ImageThumbnail(QFrame):
             self._relayout_tags()
     
     def set_selected(self, selected: bool):
-        """Set the selection state of the thumbnail."""
+        """Set the selection state of the thumbnail (border only)."""
         if self.selected != selected:
             self.selected = selected
             self.setProperty("selected", selected)
             self.style().unpolish(self)
             self.style().polish(self)
-            
-            # Show/hide tags based on selection
-            if selected:
-                self._load_and_display_tags()
-            else:
-                self._hide_tags()
-    
+
+    def set_tags_visible(self, visible: bool) -> None:
+        """
+        Control whether tags are visible for this thumbnail.
+
+        Tags are now decoupled from simple selection: only the 'active'
+        image (gérée par ImageGrid) doit afficher ses tags pour éviter
+        de surcharger l'UI quand beaucoup d'images sont sélectionnées.
+        """
+        if visible:
+            self._load_and_display_tags()
+        else:
+            self._hide_tags()
+
     def refresh_tags(self):
-        """Refresh tags display (useful after external tag updates)."""
-        if self.selected:
+        """Refresh tags display (used after external tag updates)."""
+        # Tags ne sont rafraîchis que si le conteneur est visible
+        if self.tags_container.isVisible():
             self._load_and_display_tags()
     
     def _load_and_display_tags(self):
@@ -472,7 +450,6 @@ class ImageThumbnail(QFrame):
         if tag in self.tag_chips:
             return
         
-        print(f"[DEBUG ImageThumbnail] Adding tag chip for tag: {tag}")
         chip = TagChip(tag, self.tags_container)
         chip.removed.connect(self._on_tag_removed)
         # Enable mouse events on chip and all its children recursively
@@ -511,21 +488,15 @@ class ImageThumbnail(QFrame):
             child.setAttribute(Qt.WA_TransparentForMouseEvents, False)
             child.installEventFilter(self)
         
-        print(f"[DEBUG ImageThumbnail] Tag chip added. Chip geometry: {chip.geometry()}")
-        print(f"[DEBUG ImageThumbnail] Tags container geometry: {self.tags_container.geometry()}")
-        print(f"[DEBUG ImageThumbnail] Tags container WA_TransparentForMouseEvents: {not self.tags_container.testAttribute(Qt.WA_TransparentForMouseEvents)}")
-        print(f"[DEBUG ImageThumbnail] Chip WA_TransparentForMouseEvents: {not chip.testAttribute(Qt.WA_TransparentForMouseEvents)}")
+        # Debug info removed
     
     def _on_tag_removed(self, tag: str):
         """Handle tag removal from chip."""
-        print(f"[DEBUG ImageThumbnail] _on_tag_removed called for tag: {tag}")
         if not self.image_manager:
-            print(f"[DEBUG ImageThumbnail] No image_manager available")
             return
         
         # If callback is provided, use it to remove tag from all selected images
         if self.remove_tag_callback:
-            print(f"[DEBUG ImageThumbnail] Using callback to remove tag from selection")
             self.remove_tag_callback(tag)
             return
         
@@ -555,6 +526,94 @@ class ImageThumbnail(QFrame):
         
         # Emit signal for parent to handle if needed
         self.tag_removed.emit(self.image_id, tag)
-    
+
     def _update_style(self):
-        pass  # Désormais géré par le QSS global 
+        pass  # Désormais géré par le QSS global
+
+    def enterEvent(self, event):
+        """When mouse enters, ask parent grid to show this image's tags."""
+        parent = self.parent()
+        while parent:
+            if hasattr(parent, "set_active_image"):
+                parent.set_active_image(self.image_id)
+                break
+            parent = parent.parent()
+        super().enterEvent(event)
+
+    def leaveEvent(self, event):
+        """When mouse leaves, let grid decide if tags should change."""
+        # On ne force pas ici la désactivation des tags pour éviter les
+        # effets de flicker si d'autres logiques décident de l'image active.
+        super().leaveEvent(event)
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        """Handle drag enter event for tag drops."""
+        if event.mimeData().hasText():
+            # Check if it's a tag being dragged (from tag library)
+            tag_text = event.mimeData().text()
+            # Accept if it looks like a tag (not empty, reasonable length)
+            if tag_text and len(tag_text.strip()) > 0:
+                event.acceptProposedAction()
+                # Add visual feedback
+                self.setProperty("dragOver", True)
+                self.style().unpolish(self)
+                self.style().polish(self)
+            else:
+                event.ignore()
+        else:
+            event.ignore()
+    
+    def dragLeaveEvent(self, event):
+        """Handle drag leave event."""
+        # Remove visual feedback
+        self.setProperty("dragOver", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+    
+    def dropEvent(self, event: QDropEvent):
+        """Handle drop event for tag drops."""
+        if not event.mimeData().hasText():
+            event.ignore()
+            return
+
+        tag_text = event.mimeData().text().strip()
+        if not tag_text:
+            event.ignore()
+            return
+
+        # Get selected images
+        selected_images = set()
+        if self.get_selected_images_callback:
+            selected_images = self.get_selected_images_callback()
+
+        # Determine which images to tag
+        images_to_tag: list[str] = []
+
+        if not selected_images:
+            # No selection: tag only the image where we dropped
+            images_to_tag = [self.image_id]
+        elif len(selected_images) > 1 and self.image_id in selected_images:
+            # Multiple images selected and drop on one of them: tag all selected
+            images_to_tag = list(selected_images)
+        elif len(selected_images) == 1 and self.image_id in selected_images:
+            # Single image selected and drop on it: tag only that image
+            images_to_tag = [self.image_id]
+        else:
+            # Drop on non-selected image while others are selected: tag only the dropped image
+            images_to_tag = [self.image_id]
+
+        # Delegate heavy work to MainWindow via async worker
+        parent = self.parent()
+        while parent:
+            # MainWindow has apply_tag_to_images_async
+            if hasattr(parent, "apply_tag_to_images_async"):
+                parent.apply_tag_to_images_async(tag_text, images_to_tag)
+                break
+            parent = parent.parent()
+
+        # Remove visual feedback
+        self.setProperty("dragOver", False)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
+        event.acceptProposedAction()

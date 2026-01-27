@@ -92,6 +92,10 @@ QFrame#ImageThumbnail[selected="true"]:hover {
     background-color: #106ebe;
     border: 2px solid #1a5fb4;
 }
+QFrame#ImageThumbnail[dragOver="true"] {
+    background-color: #106ebe;
+    border: 3px dashed #ffffff;
+}
 
 /* Tag Components */
 QFrame#DraggableTagChip {

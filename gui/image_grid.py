@@ -197,7 +197,8 @@ class EditTagDialog(QDialog):
                 metadata.original_filename, 
                 self, 
                 self.image_manager,
-                remove_tag_callback=self._remove_tag_from_selection
+                remove_tag_callback=self._remove_tag_from_selection,
+                get_selected_images_callback=lambda: self.selected_images
             )
             thumbnail.setFixedWidth(120)
             thumbnail.setFixedHeight(120)
@@ -481,6 +482,7 @@ class ImageGrid(QScrollArea):
         self.selection_start = None  # For drag selection
         self.is_selecting = False
         self.last_selected_image = None  # Store last selected image for range selection
+        self.active_image_id = None  # Image whose tags are currently visible
 
         # Create widget to hold the grid
         self.content = QWidget()
@@ -784,7 +786,8 @@ class ImageGrid(QScrollArea):
                 metadata.original_filename, 
                 self, 
                 self.image_manager,
-                remove_tag_callback=self._remove_tag_from_selection
+                remove_tag_callback=self._remove_tag_from_selection,
+                get_selected_images_callback=lambda: self.selected_images
             )
             
             # Set initial size
@@ -955,29 +958,23 @@ class ImageGrid(QScrollArea):
             
             # Check if clicked on a tag chip - if so, don't handle selection
             clicked_widget = self.content.childAt(content_pos)
-            print(f"[DEBUG ImageGrid] mousePressEvent: clicked_widget = {type(clicked_widget).__name__ if clicked_widget else 'None'}")
             if clicked_widget:
-                print(f"[DEBUG ImageGrid] clicked_widget objectName: {clicked_widget.objectName()}")
                 # Walk up the widget hierarchy to find if we clicked on a TagChip
                 widget = clicked_widget
                 depth = 0
                 while widget and depth < 10:  # Limit depth to avoid infinite loops
-                    print(f"[DEBUG ImageGrid] Checking widget at depth {depth}: {type(widget).__name__}, objectName: {widget.objectName()}")
                     # Check if widget is a TagChip or has TagChip in its hierarchy
                     if isinstance(widget, TagChip) or widget.objectName() == "TagChip":
-                        print(f"[DEBUG ImageGrid] Found TagChip! Letting it handle the event")
                         # Clicked on a tag chip, let it handle the event
                         super().mousePressEvent(event)
                         return
                     # Check if widget is inside a tags container
                     if hasattr(widget, 'objectName') and widget.objectName() == "TagsContainer":
-                        print(f"[DEBUG ImageGrid] Found TagsContainer! Letting child widgets handle it")
                         # Clicked inside tags container, let child widgets handle it
                         super().mousePressEvent(event)
                         return
                     # Check if widget has "RemoveButton" in objectName
                     if hasattr(widget, 'objectName') and widget.objectName() and "RemoveButton" in widget.objectName():
-                        print(f"[DEBUG ImageGrid] Found RemoveButton! Letting it handle the event")
                         super().mousePressEvent(event)
                         return
                     widget = widget.parent()
@@ -1025,8 +1022,7 @@ class ImageGrid(QScrollArea):
                 parent.add_log_message(message, "INFO")
                 return
             parent = parent.parent()
-        # Fallback to print if no log available
-        print(f"[DEBUG] {message}")
+        # No global print fallback in normal mode
     
     def mouseMoveEvent(self, event):
         if self.is_selecting:
@@ -1155,16 +1151,50 @@ class ImageGrid(QScrollArea):
                 delattr(self, 'clicked_on_thumbnail')
             if hasattr(self, 'clicked_position'):
                 delattr(self, 'clicked_position')
+            
+            # Ensure active image (tags) follows the current click/selection
+            # so that when we select an image under the cursor, its tags appear
+            if self.last_selected_image:
+                self.set_active_image(self.last_selected_image)
         
         super().mouseReleaseEvent(event)
     
     def _update_selection(self):
-        """Update visual selection state of all thumbnails."""
+        """Update visual selection state of all thumbnails (borders only)."""
         for i in range(self.grid.count()):
             widget = self.grid.itemAt(i).widget()
             if isinstance(widget, ImageThumbnail):
                 widget.set_selected(widget.image_id in self.selected_images)
+
+        # If active image is no longer selected, hide its tags
+        if self.active_image_id and self.active_image_id not in self.selected_images:
+            self.set_active_image(None)
+
         self.selection_changed.emit(list(self.selected_images))
+
+    def set_active_image(self, image_id: str | None) -> None:
+        """
+        Set the image whose tags are currently visible, based on hover.
+
+        Only this image will display its TagChips to keep UI performant.
+        """
+        # Tags doivent être affichés uniquement pour les images sélectionnées
+        if image_id is not None and image_id not in self.selected_images:
+            # Si on survole une image non sélectionnée, on efface l'image active
+            image_id = None
+
+        if image_id == self.active_image_id:
+            return
+
+        # Hide tags on previous active image
+        if self.active_image_id and self.active_image_id in self.thumbnails:
+            self.thumbnails[self.active_image_id].set_tags_visible(False)
+
+        self.active_image_id = image_id
+
+        # Show tags on new active image
+        if self.active_image_id and self.active_image_id in self.thumbnails:
+            self.thumbnails[self.active_image_id].set_tags_visible(True)
 
     def contextMenuEvent(self, event):
         """Show context menu."""
@@ -1225,6 +1255,26 @@ class ImageGrid(QScrollArea):
         
         # Refresh tags display on all selected thumbnails
         for image_id in self.selected_images:
+            if image_id in self.thumbnails:
+                self.thumbnails[image_id].refresh_tags()
+    
+    def _add_tag_to_images(self, tag: str, image_ids: List[str]):
+        """
+        Add a tag to multiple images and refresh their display.
+        
+        Args:
+            tag: Tag to add
+            image_ids: List of image IDs to add the tag to
+        """
+        for image_id in image_ids:
+            metadata = self.image_manager.get_image_metadata(image_id)
+            if metadata:
+                new_tags = metadata.tags.copy()
+                new_tags.add(tag)
+                self.image_manager.update_image_metadata(image_id, tags=new_tags)
+        
+        # Refresh tags display on affected thumbnails
+        for image_id in image_ids:
             if image_id in self.thumbnails:
                 self.thumbnails[image_id].refresh_tags()
 
