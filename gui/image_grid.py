@@ -20,53 +20,440 @@ from qtpy.QtWidgets import (
     QLineEdit,
     QPushButton,
     QMessageBox,
-    QApplication
+    QApplication,
+    QSplitter,
+    QSizePolicy
 )
 from qtpy.QtCore import Qt, QSize, Signal, QTimer, QThreadPool, QRect, QPoint
-from qtpy.QtGui import QPixmap, QImage, QResizeEvent
+from qtpy.QtGui import QPixmap, QImage, QResizeEvent, QIcon
 from core.image_manager import ImageManager
 from core.image_db import ImageMetadata
 from gui.image_loader_worker import ImageLoaderWorker
-from gui.image_thumbnail import ImageThumbnail
+from gui.image_thumbnail import ImageThumbnail, TagChip
 from qtpy.QtWidgets import QCompleter
+import json
 
 def load_stylesheet(path: str) -> str:
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
-class AddTagDialog(QDialog):
-    """Dialog for adding tags to selected images."""
+class EditTagDialog(QDialog):
+    """Dialog for editing tags on multiple selected images."""
     
-    def __init__(self, parent=None, existing_tags=None):
+    def __init__(self, parent=None, image_manager: ImageManager = None, selected_image_ids: List[str] = None):
+        """
+        Initialize the edit tags dialog.
+        
+        Args:
+            parent: Parent widget
+            image_manager: ImageManager instance
+            selected_image_ids: List of image IDs to edit tags for
+        """
         super().__init__(parent)
-        self.setWindowTitle("Add Tags")
-        self.existing_tags = existing_tags or []
-        self.selected_tags = []
-        layout = QVBoxLayout(self)
+        self.setWindowTitle("Edit Tags")
+        self.image_manager = image_manager
+        self.selected_image_ids = selected_image_ids or []
+        self.selected_images_metadata: List[ImageMetadata] = []
         
-        # Tag input with autocomplete
-        self.tag_input = QLineEdit()
-        self.tag_input.setPlaceholderText("Enter tags (comma separated)")
-        layout.addWidget(self.tag_input)
+        # Load selected images metadata
+        for image_id in self.selected_image_ids:
+            metadata = self.image_manager.get_image_metadata(image_id)
+            if metadata:
+                self.selected_images_metadata.append(metadata)
         
-        # Add completer
-        completer = QCompleter(self.existing_tags)
-        completer.setCaseSensitivity(Qt.CaseInsensitive)
-        self.tag_input.setCompleter(completer)
+        # Calculate common tags (tags that all images have)
+        self.common_tags: Set[str] = set()
+        if self.selected_images_metadata:
+            self.common_tags = set(self.selected_images_metadata[0].tags)
+            for metadata in self.selected_images_metadata[1:]:
+                self.common_tags &= set(metadata.tags)
         
-        # Buttons
+        # Track which tags are selected in the UI
+        self.selected_tags: Set[str] = self.common_tags.copy()
+        
+        # Track if "Clear All Tags" was clicked
+        self.clear_all_requested = False
+        
+        # Tag buttons storage
+        self._category_buttons = {}
+        self._subcategory_buttons = {}
+        self._user_tag_buttons = {}
+        
+        self._setup_ui()
+    
+    def _setup_ui(self):
+        """Set up the UI layout."""
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(10, 10, 10, 10)
+        main_layout.setSpacing(10)
+        
+        # Horizontal splitter: images on left, tags on right
+        splitter = QSplitter(Qt.Horizontal)
+        
+        # Left side: Image grid
+        images_panel = QWidget()
+        images_layout = QVBoxLayout(images_panel)
+        images_layout.setContentsMargins(0, 0, 0, 0)
+        images_layout.setSpacing(5)
+        
+        images_label = QLabel(f"Selected Images ({len(self.selected_images_metadata)})")
+        images_label.setStyleSheet("font-weight: bold; font-size: 12px;")
+        images_layout.addWidget(images_label)
+        
+        # Scrollable image grid
+        self.images_scroll = QScrollArea()
+        self.images_scroll.setWidgetResizable(True)
+        self.images_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.images_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.images_scroll.setFrameShape(QFrame.NoFrame)
+        
+        images_container = QWidget()
+        self.images_grid = QGridLayout(images_container)
+        self.images_grid.setSpacing(8)
+        self.images_grid.setContentsMargins(8, 8, 8, 8)
+        
+        # Add thumbnails to grid
+        self._load_images_into_grid()
+        
+        self.images_scroll.setWidget(images_container)
+        images_layout.addWidget(self.images_scroll)
+        
+        splitter.addWidget(images_panel)
+        
+        # Right side: Tags library
+        tags_panel = QWidget()
+        tags_layout = QVBoxLayout(tags_panel)
+        tags_layout.setContentsMargins(0, 0, 0, 0)
+        tags_layout.setSpacing(5)
+        
+        tags_label = QLabel("Tags Library")
+        tags_label.setStyleSheet("font-weight: bold; font-size: 12px;")
+        tags_layout.addWidget(tags_label)
+        
+        # Common tags display
+        if self.common_tags:
+            common_label = QLabel(f"Common tags: {', '.join(sorted(self.common_tags))}")
+            common_label.setStyleSheet("font-size: 10px; color: #888; padding: 4px;")
+            common_label.setWordWrap(True)
+            tags_layout.addWidget(common_label)
+        
+        # Clear all tags button
+        clear_all_btn = QPushButton("Clear All Tags")
+        clear_all_btn.clicked.connect(self._clear_all_tags)
+        clear_all_btn.setStyleSheet("QPushButton { padding: 5px; }")
+        tags_layout.addWidget(clear_all_btn)
+        
+        # Scrollable tags library
+        tags_scroll = QScrollArea()
+        tags_scroll.setWidgetResizable(True)
+        tags_scroll.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        tags_scroll.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        tags_scroll.setFrameShape(QFrame.NoFrame)
+        
+        tags_container = QWidget()
+        self.tags_grid_layout = QGridLayout(tags_container)
+        self.tags_grid_layout.setContentsMargins(0, 0, 0, 0)
+        self.tags_grid_layout.setSpacing(10)
+        self.tags_grid_layout.setAlignment(Qt.AlignTop)
+        
+        self._load_tags_into_grid()
+        
+        tags_scroll.setWidget(tags_container)
+        tags_layout.addWidget(tags_scroll)
+        
+        splitter.addWidget(tags_panel)
+        
+        # Set splitter sizes (images take less space, tags take more)
+        splitter.setSizes([300, 500])
+        
+        main_layout.addWidget(splitter)
+        
+        # Bottom buttons
         button_layout = QHBoxLayout()
-        ok_button = QPushButton("Add")
-        ok_button.clicked.connect(self.accept)
+        button_layout.addStretch()
+        
+        apply_button = QPushButton("Apply")
+        apply_button.clicked.connect(self.accept)
         cancel_button = QPushButton("Cancel")
         cancel_button.clicked.connect(self.reject)
-        button_layout.addWidget(ok_button)
+        
+        button_layout.addWidget(apply_button)
         button_layout.addWidget(cancel_button)
-        layout.addLayout(button_layout)
+        main_layout.addLayout(button_layout)
+        
+        # Set dialog size
+        self.resize(900, 600)
     
-    def get_tags(self):
-        """Return the entered tags as a list."""
-        return [tag.strip() for tag in self.tag_input.text().split(",") if tag.strip()]
+    def _load_images_into_grid(self):
+        """Load selected images into the grid."""
+        columns = 3
+        for idx, metadata in enumerate(self.selected_images_metadata):
+            row = idx // columns
+            col = idx % columns
+            
+            # Create thumbnail with callback to remove tags from selected images
+            thumbnail = ImageThumbnail(
+                metadata.id, 
+                metadata.original_filename, 
+                self, 
+                self.image_manager,
+                remove_tag_callback=self._remove_tag_from_selection
+            )
+            thumbnail.setFixedWidth(120)
+            thumbnail.setFixedHeight(120)
+            thumbnail.image_container.setFixedSize(116, 116)
+            thumbnail.graphics_view.setFixedSize(116, 116)
+            
+            # Load image
+            image_path = self.image_manager.image_dir / metadata.path
+            if image_path.exists():
+                pixmap = QPixmap(str(image_path))
+                if not pixmap.isNull():
+                    scaled_pixmap = pixmap.scaled(
+                        116, 116, Qt.KeepAspectRatio, Qt.SmoothTransformation
+                    )
+                    thumbnail.graphics_view.scene().clear()
+                    thumbnail.graphics_view.scene().addPixmap(scaled_pixmap)
+            
+            self.images_grid.addWidget(thumbnail, row, col)
+    
+    def _load_tags_into_grid(self):
+        """Load tags from JSON into the tags grid (similar to MainWindow._load_tags_into_grid)."""
+        # Load default tags from JSON
+        default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
+        
+        if default_tags_path.exists():
+            try:
+                with open(default_tags_path, "r", encoding="utf-8") as f:
+                    default_tags = json.load(f)
+                
+                def collect_subtags(data, collected: List[str]) -> None:
+                    """Recursively collect subtags from nested structures."""
+                    if isinstance(data, list):
+                        for item in data:
+                            collect_subtags(item, collected)
+                    elif isinstance(data, dict):
+                        for key, value in data.items():
+                            collected.append(key)
+                            collect_subtags(value, collected)
+                    elif isinstance(data, str):
+                        collected.append(data)
+                
+                # Process each category
+                categories_list = list(default_tags.items())
+                max_cols = 3
+                max_tags_per_row = 3
+                
+                # First pass: calculate rows
+                category_row_counts: List[int] = []
+                for category, tags in categories_list:
+                    subtags: List[str] = []
+                    collect_subtags(tags, subtags)
+                    unique_subtags = list(dict.fromkeys(subtags))
+                    subtag_rows = max(1, (len(unique_subtags) + max_tags_per_row - 1) // max_tags_per_row) if unique_subtags else 0
+                    num_rows = 1 + subtag_rows
+                    category_row_counts.append(num_rows)
+                
+                # Calculate starting rows
+                current_row = 0
+                category_start_rows: List[int] = []
+                for num_rows in category_row_counts:
+                    category_start_rows.append(current_row)
+                    current_row += num_rows + 1
+                
+                # Second pass: create UI
+                for category_idx, (category, tags) in enumerate(categories_list):
+                    row = category_start_rows[category_idx]
+                    num_rows = category_row_counts[category_idx]
+                    
+                    is_label_category = category in ["Miscellaneous:", "Camera-Angle:"]
+                    
+                    # Category button/label
+                    if is_label_category:
+                        category_label = QLabel(category)
+                        category_label.setStyleSheet("font-weight: bold; font-size: 12px; padding: 4px; background-color: transparent;")
+                        category_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                        self.tags_grid_layout.addWidget(category_label, row, 0, 1, max_cols)
+                    else:
+                        category_button = self._build_tag_button(category)
+                        category_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+                        category_button.clicked.connect(lambda _, name=category: self._on_tag_button_clicked(name))
+                        self.tags_grid_layout.addWidget(category_button, row, 0, 1, max_cols)
+                        self._category_buttons[category] = category_button
+                    
+                    # Collect subtags
+                    subtags: List[str] = []
+                    collect_subtags(tags, subtags)
+                    unique_subtags = list(dict.fromkeys(subtags))
+                    
+                    subtag_buttons: Dict[str, QPushButton] = {}
+                    for idx, tag in enumerate(unique_subtags):
+                        tag_button = self._build_tag_button(tag)
+                        tag_button.clicked.connect(lambda _, name=tag: self._on_tag_button_clicked(name))
+                        tag_row = row + 1 + (idx // max_tags_per_row)
+                        tag_col = idx % max_tags_per_row
+                        self.tags_grid_layout.addWidget(tag_button, tag_row, tag_col)
+                        subtag_buttons[tag] = tag_button
+                        tag_button.setVisible(is_label_category)
+                    
+                    self._subcategory_buttons[category] = subtag_buttons
+                    
+                    # Separator
+                    if category_idx < len(categories_list) - 1:
+                        separator = QFrame()
+                        separator.setFrameShape(QFrame.Shape.HLine)
+                        separator.setFrameShadow(QFrame.Shadow.Sunken)
+                        separator.setStyleSheet("QFrame { color: #666; }")
+                        separator_row = row + num_rows
+                        self.tags_grid_layout.addWidget(separator, separator_row, 0, 1, max_cols)
+                
+                # Add spacer
+                max_row = 0
+                for i in range(self.tags_grid_layout.count()):
+                    item = self.tags_grid_layout.itemAt(i)
+                    if item:
+                        row, col, row_span, col_span = self.tags_grid_layout.getItemPosition(i)
+                        max_row = max(max_row, row + row_span - 1)
+                if max_row >= 0:
+                    self.tags_grid_layout.setRowStretch(max_row + 1, 1)
+            
+            except Exception as e:
+                print(f"Error loading default tags: {str(e)}")
+        
+        # Load user tags
+        all_tags = set()
+        for metadata in self.image_manager.db.list_images():
+            all_tags.update(metadata.tags)
+        default_tags_set = self._get_default_tags()
+        user_tags = sorted(all_tags - default_tags_set)
+        
+        if user_tags:
+            # Add separator
+            separator = QFrame()
+            separator.setFrameShape(QFrame.Shape.HLine)
+            separator.setFrameShadow(QFrame.Shadow.Sunken)
+            separator.setStyleSheet("QFrame { color: #666; }")
+            current_row = self.tags_grid_layout.rowCount()
+            self.tags_grid_layout.addWidget(separator, current_row, 0, 1, 3)
+            
+            # Add user tags
+            user_label = QLabel("User Tags")
+            user_label.setStyleSheet("font-weight: bold; font-size: 12px; padding: 4px;")
+            self.tags_grid_layout.addWidget(user_label, current_row + 1, 0, 1, 3)
+            
+            for idx, tag in enumerate(user_tags):
+                tag_row = current_row + 2 + (idx // max_cols)
+                tag_col = idx % max_cols
+                tag_button = self._build_tag_button(tag)
+                tag_button.clicked.connect(lambda _, name=tag: self._on_tag_button_clicked(name))
+                self.tags_grid_layout.addWidget(tag_button, tag_row, tag_col)
+                self._user_tag_buttons[tag] = tag_button
+        
+        # Sync button states with selected tags
+        self._sync_tag_button_states()
+    
+    def _get_default_tags(self) -> Set[str]:
+        """Get default tags from JSON."""
+        default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
+        
+        if not default_tags_path.exists():
+            return set()
+        
+        try:
+            with open(default_tags_path, "r", encoding="utf-8") as f:
+                default_tags_data = json.load(f)
+        except Exception:
+            return set()
+        
+        tag_set: Set[str] = set()
+        
+        def extract_tags(data) -> None:
+            if isinstance(data, list):
+                for item in data:
+                    extract_tags(item)
+            elif isinstance(data, dict):
+                for key, value in data.items():
+                    tag_set.add(key)
+                    extract_tags(value)
+            elif isinstance(data, str):
+                tag_set.add(data)
+        
+        extract_tags(default_tags_data)
+        return tag_set
+    
+    def _build_tag_button(self, tag: str) -> QPushButton:
+        """Build a tag button."""
+        button = QPushButton(tag)
+        button.setCheckable(True)
+        button.setStyleSheet("QPushButton { text-align: left; padding: 2px 4px; }")
+        return button
+    
+    def _on_tag_button_clicked(self, tag: str):
+        """Handle tag button click."""
+        if tag in self.selected_tags:
+            self.selected_tags.remove(tag)
+        else:
+            self.selected_tags.add(tag)
+        self._sync_tag_button_states()
+    
+    def _sync_tag_button_states(self):
+        """Sync tag button checked states with selected_tags."""
+        # Sync category buttons
+        for category, button in self._category_buttons.items():
+            button.setChecked(category in self.selected_tags)
+        
+        # Sync subcategory buttons
+        for category, buttons in self._subcategory_buttons.items():
+            for tag, button in buttons.items():
+                button.setChecked(tag in self.selected_tags)
+        
+        # Sync user tag buttons
+        for tag, button in self._user_tag_buttons.items():
+            button.setChecked(tag in self.selected_tags)
+    
+    def _clear_all_tags(self):
+        """Clear all tags from selected images."""
+        reply = QMessageBox.question(
+            self,
+            "Clear All Tags",
+            f"Are you sure you want to remove ALL tags from {len(self.selected_images_metadata)} image(s)?\n\nThis will remove both common tags and individual tags.",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.No
+        )
+        
+        if reply == QMessageBox.Yes:
+            self.clear_all_requested = True
+            self.selected_tags.clear()
+            self._sync_tag_button_states()
+    
+    def get_selected_tags(self) -> Set[str]:
+        """Get the currently selected tags."""
+        return self.selected_tags.copy()
+    
+    def apply_changes(self):
+        """
+        Apply tag changes to selected images.
+        
+        If clear_all_requested is True, removes all tags (including isolated ones).
+        Otherwise, only modifies common tags, keeping isolated tags intact.
+        """
+        for metadata in self.selected_images_metadata:
+            if self.clear_all_requested:
+                # Remove all tags
+                new_tags = set()
+            else:
+                # Get isolated tags (tags not in common_tags) - these are preserved
+                isolated_tags = set(metadata.tags) - self.common_tags
+                
+                # New tags = isolated tags + selected tags
+                # This means:
+                # - Tags that were in common_tags but not in selected_tags are removed
+                # - Tags that are in selected_tags but were not in common_tags are added
+                # - Isolated tags are preserved
+                new_tags = isolated_tags | self.selected_tags
+            
+            # Update image tags
+            self.image_manager.update_image_metadata(metadata.id, tags=new_tags)
 
 class ImageGrid(QScrollArea):
     """Scrollable grid of image thumbnails."""
@@ -162,7 +549,7 @@ class ImageGrid(QScrollArea):
         
         # Create context menu
         self.context_menu = QMenu(self)
-        self.add_tags_action = self.context_menu.addAction("Add Tags...")
+        self.add_tags_action = self.context_menu.addAction("Edit Tags...")
         self.delete_action = self.context_menu.addAction("Delete from Library")
         self.use_for_session_action = self.context_menu.addAction("Use for Drawing Session")
         
@@ -391,8 +778,14 @@ class ImageGrid(QScrollArea):
             row = idx // self.columns
             col = idx % self.columns
             
-            # Create thumbnail
-            thumbnail = ImageThumbnail(metadata.id, metadata.original_filename, self)
+            # Create thumbnail with callback to remove tags from selected images
+            thumbnail = ImageThumbnail(
+                metadata.id, 
+                metadata.original_filename, 
+                self, 
+                self.image_manager,
+                remove_tag_callback=self._remove_tag_from_selection
+            )
             
             # Set initial size
             thumbnail.setFixedWidth(thumbnail_width)
@@ -557,12 +950,42 @@ class ImageGrid(QScrollArea):
     def mousePressEvent(self, event):
         
         if event.button() == Qt.LeftButton:
+            # Convert viewport coordinates to content coordinates
+            content_pos = self.content.mapFrom(self, event.pos())
+            
+            # Check if clicked on a tag chip - if so, don't handle selection
+            clicked_widget = self.content.childAt(content_pos)
+            print(f"[DEBUG ImageGrid] mousePressEvent: clicked_widget = {type(clicked_widget).__name__ if clicked_widget else 'None'}")
+            if clicked_widget:
+                print(f"[DEBUG ImageGrid] clicked_widget objectName: {clicked_widget.objectName()}")
+                # Walk up the widget hierarchy to find if we clicked on a TagChip
+                widget = clicked_widget
+                depth = 0
+                while widget and depth < 10:  # Limit depth to avoid infinite loops
+                    print(f"[DEBUG ImageGrid] Checking widget at depth {depth}: {type(widget).__name__}, objectName: {widget.objectName()}")
+                    # Check if widget is a TagChip or has TagChip in its hierarchy
+                    if isinstance(widget, TagChip) or widget.objectName() == "TagChip":
+                        print(f"[DEBUG ImageGrid] Found TagChip! Letting it handle the event")
+                        # Clicked on a tag chip, let it handle the event
+                        super().mousePressEvent(event)
+                        return
+                    # Check if widget is inside a tags container
+                    if hasattr(widget, 'objectName') and widget.objectName() == "TagsContainer":
+                        print(f"[DEBUG ImageGrid] Found TagsContainer! Letting child widgets handle it")
+                        # Clicked inside tags container, let child widgets handle it
+                        super().mousePressEvent(event)
+                        return
+                    # Check if widget has "RemoveButton" in objectName
+                    if hasattr(widget, 'objectName') and widget.objectName() and "RemoveButton" in widget.objectName():
+                        print(f"[DEBUG ImageGrid] Found RemoveButton! Letting it handle the event")
+                        super().mousePressEvent(event)
+                        return
+                    widget = widget.parent()
+                    depth += 1
+            
             self.clicked_position = event.pos()
             self.selection_start = event.pos()
             self.is_selecting = True
-
-            # Convert viewport coordinates to content coordinates
-            content_pos = self.content.mapFrom(self, event.pos())
             
             # Check if clicked on a thumbnail by checking all thumbnails
             clicked_thumbnail = None
@@ -749,13 +1172,17 @@ class ImageGrid(QScrollArea):
             self.context_menu.popup(event.globalPos())
     
     def _add_tags_to_selection(self):
-        """Open dialog to add tags to selected images."""
-        dialog = AddTagDialog(self, self.image_manager.get_all_tags())
+        """Open dialog to edit tags on selected images."""
+        if not self.selected_images:
+            return
+        
+        dialog = EditTagDialog(self, self.image_manager, list(self.selected_images))
         if dialog.exec_() == QDialog.Accepted:
-            new_tags = dialog.get_tags()
-            if new_tags:
-                for image_id in self.selected_images:
-                    self.image_manager.add_tags(image_id, new_tags)
+            dialog.apply_changes()
+            # Refresh tags display on selected thumbnails
+            for image_id in self.selected_images:
+                if image_id in self.thumbnails:
+                    self.thumbnails[image_id].refresh_tags()
     
     def _delete_selected(self):
         """Delete selected images after confirmation."""
@@ -777,6 +1204,29 @@ class ImageGrid(QScrollArea):
     def _use_for_session(self):
         """Emit signal with selected images for drawing session."""
         self.session_images_selected.emit(list(self.selected_images))
+    
+    def _remove_tag_from_selection(self, tag: str):
+        """
+        Remove a tag from all selected images.
+        
+        Args:
+            tag: Tag to remove from selected images
+        """
+        if not self.selected_images:
+            return
+        
+        # Remove tag from all selected images
+        for image_id in self.selected_images:
+            metadata = self.image_manager.get_image_metadata(image_id)
+            if metadata and tag in metadata.tags:
+                new_tags = metadata.tags.copy()
+                new_tags.discard(tag)
+                self.image_manager.update_image_metadata(image_id, tags=new_tags)
+        
+        # Refresh tags display on all selected thumbnails
+        for image_id in self.selected_images:
+            if image_id in self.thumbnails:
+                self.thumbnails[image_id].refresh_tags()
 
     def load_images_with_advanced_filter(self, filters: dict):
         """

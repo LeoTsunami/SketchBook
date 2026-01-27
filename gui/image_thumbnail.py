@@ -3,24 +3,160 @@ Image thumbnail widget for displaying individual images in the grid.
 """
 import sys
 from pathlib import Path
+from typing import Optional
 from qtpy.QtWidgets import (
     QFrame,
     QVBoxLayout,
     QWidget,
     QGraphicsView,
-    QGraphicsScene
+    QGraphicsScene,
+    QHBoxLayout,
+    QGridLayout,
+    QLabel,
+    QPushButton,
+    QApplication
 )
 from qtpy.QtCore import Qt, Signal, QTimer
-from qtpy.QtGui import QPixmap
+from qtpy.QtGui import QPixmap, QIcon, QImage, QCursor
 from core.settings import settings
+
+
+def _find_tag_icon(tag: str) -> QIcon:
+    """
+    Resolve a tag icon based on the tag name.
+
+    Args:
+        tag: Tag name.
+
+    Returns:
+        QIcon: Icon for the tag or an empty icon if not found.
+    """
+    icons_dir = Path(__file__).parent / "ressources" / "icones" / "tags"
+    if not icons_dir.exists():
+        return QIcon()
+
+    tag_lower = tag.lower()
+    file_map = {path.stem.lower(): path for path in icons_dir.glob("*.png")}
+    if tag_lower in file_map:
+        return QIcon(str(file_map[tag_lower]))
+
+    fallback_map = {
+        "hands": "hand",
+        "feet": "foot",
+        "objects": "object",
+    }
+    fallback = fallback_map.get(tag_lower)
+    if fallback and fallback in file_map:
+        return QIcon(str(file_map[fallback]))
+
+    return QIcon()
+
+
+def _invert_icon(icon: QIcon, size: int = 20) -> QIcon:
+    """
+    Invert icon colors for better visibility.
+
+    Args:
+        icon: Original icon.
+        size: Icon size.
+
+    Returns:
+        QIcon: Inverted icon.
+    """
+    if icon.isNull():
+        return icon
+    pixmap = icon.pixmap(size, size)
+    image = pixmap.toImage()
+    image.invertPixels(QImage.InvertRgb)
+    return QIcon(QPixmap.fromImage(image))
+
+
+class TagChip(QFrame):
+    """Widget representing a single tag chip for thumbnail display."""
+    
+    removed = Signal(str)  # Emits tag text when removed
+    
+    def __init__(self, text: str, parent=None):
+        print(f"[DEBUG TagChip] Creating TagChip for tag: {text}")
+        """
+        Initialize the tag chip.
+
+        Args:
+            text: Tag text to display
+            parent: Parent widget
+        """
+        super().__init__(parent)
+        self.text = text
+        self.setObjectName("TagChip")
+        # CRITICAL: Force enable mouse events - override parent's transparent setting
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        
+        # Create layout
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(5, 3, 5, 3)
+        layout.setSpacing(6)
+
+        app_font = QApplication.instance().font() if QApplication.instance() else self.font()
+        # Use larger font for tags
+        larger_font = app_font
+        larger_font.setPointSize(max(9, app_font.pointSize() + 1))
+        self.setFont(larger_font)
+
+        # Add icon (if available) - larger size
+        icon = _find_tag_icon(text)
+        if not icon.isNull():
+            icon_label = QLabel()
+            icon_label.setPixmap(_invert_icon(icon, 20).pixmap(20, 20))
+            icon_label.setStyleSheet("background-color: transparent;")
+            layout.addWidget(icon_label)
+
+        # Add text label - larger font
+        label = QLabel(text)
+        label.setStyleSheet("color: #ffffff; font-size: 11px;")
+        label.setFont(larger_font)
+        layout.addWidget(label)
+
+        # Add remove button - larger size
+        remove_btn = QPushButton("×")
+        remove_btn.setFixedSize(18, 18)
+        remove_btn.setFont(larger_font)
+        remove_btn.setStyleSheet("color: #ffffff; background: transparent; border: none; font-weight: bold; font-size: 14px;")
+        remove_btn.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        remove_btn.setCursor(QCursor(Qt.PointingHandCursor))
+        remove_btn.setFocusPolicy(Qt.StrongFocus)  # Ensure button can receive focus
+        remove_btn.setObjectName(f"RemoveButton_{text}")  # For debugging
+        
+        # Create a wrapper function for debugging
+        def on_button_clicked():
+            print(f"[DEBUG TagChip] Remove button clicked for tag: {text}")
+            print(f"[DEBUG TagChip] Button objectName: {remove_btn.objectName()}")
+            print(f"[DEBUG TagChip] Button geometry: {remove_btn.geometry()}")
+            print(f"[DEBUG TagChip] Button WA_TransparentForMouseEvents: {not remove_btn.testAttribute(Qt.WA_TransparentForMouseEvents)}")
+            self.removed.emit(text)
+        
+        remove_btn.clicked.connect(on_button_clicked)
+        
+        # Override mousePressEvent for debugging
+        original_mouse_press = remove_btn.mousePressEvent
+        def debug_mouse_press(event):
+            print(f"[DEBUG TagChip] Remove button mousePressEvent for tag: {text}")
+            print(f"[DEBUG TagChip] Event position: {event.pos()}")
+            print(f"[DEBUG TagChip] Button geometry: {remove_btn.geometry()}")
+            print(f"[DEBUG TagChip] Event position in button: {event.pos()}")
+            original_mouse_press(event)
+        remove_btn.mousePressEvent = debug_mouse_press
+        
+        layout.addWidget(remove_btn)
 
 
 class ImageThumbnail(QFrame):
     """Widget representing a single image thumbnail."""
     
     clicked = Signal(str)  # Emits image ID when clicked
+    tag_removed = Signal(str, str)  # Emits (image_id, tag) when a tag is removed
     
-    def __init__(self, image_id: str, label: str, parent=None):
+    def __init__(self, image_id: str, label: str, parent=None, image_manager=None, remove_tag_callback=None):
         """
         Initialize the thumbnail widget.
         
@@ -28,17 +164,22 @@ class ImageThumbnail(QFrame):
             image_id: Unique identifier of the image
             label: Text to display under the image (not used anymore)
             parent: Parent widget
+            image_manager: ImageManager instance for accessing tags
+            remove_tag_callback: Optional callback function(tag: str) to remove tag from selected images
         """
         super().__init__(parent)
         self.image_id = image_id
+        self.image_manager = image_manager
+        self.remove_tag_callback = remove_tag_callback
         self.setObjectName("ImageThumbnail")
         self.setFrameStyle(QFrame.NoFrame)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.selected = False
         self.setProperty("selected", False)
         
-        # Disable mouse events on thumbnails to let ImageGrid handle all selection
-        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        # Don't disable mouse events on the entire thumbnail - only on image parts
+        # We'll handle clicks manually to distinguish image clicks from tag clicks
+        # self.setAttribute(Qt.WA_TransparentForMouseEvents, True)  # REMOVED - causes issues with tag clicks
         
         # Create layout
         layout = QVBoxLayout(self)
@@ -55,6 +196,8 @@ class ImageThumbnail(QFrame):
         """)
         self.graphics_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        # Make graphics view transparent to mouse events so ImageGrid can handle selection
+        self.graphics_view.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.scene = QGraphicsScene()
         self.scene.setBackgroundBrush(Qt.transparent)
         self.graphics_view.setScene(self.scene)
@@ -63,6 +206,8 @@ class ImageThumbnail(QFrame):
         self.image_container = QWidget()
         self.image_container.setMinimumHeight(100)  # Minimum height to prevent collapse
         self.image_container.setStyleSheet("background: transparent;")
+        # Make image container transparent to mouse events so ImageGrid can handle selection
+        self.image_container.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         
         # Create container layout
         container_layout = QVBoxLayout(self.image_container)
@@ -71,9 +216,24 @@ class ImageThumbnail(QFrame):
         
         layout.addWidget(self.image_container, 1)  # Give image container stretch factor
         
+        # Create tags container (initially hidden)
+        self.tags_container = QWidget()
+        self.tags_container.setObjectName("TagsContainer")
+        # CRITICAL: Force enable mouse events - set True then False to override parent
+        self.tags_container.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.tags_container.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        self.tags_container.hide()  # Hidden by default
+        self.tags_layout = QGridLayout(self.tags_container)
+        self.tags_layout.setContentsMargins(2, 2, 2, 2)
+        self.tags_layout.setSpacing(4)
+        self.tags_layout.setAlignment(Qt.AlignLeft | Qt.AlignTop)
+        
+        layout.addWidget(self.tags_container)
+        
         # Store original pixmap for resizing
         self.original_pixmap = None
         self.pixmap_item = None
+        self.tag_chips = {}  # Store tag chips by tag name
     
     def _apply_theme(self):
         pass  # Désormais géré par le QSS global
@@ -154,14 +314,75 @@ class ImageThumbnail(QFrame):
         # Add error text
         self.scene.addText(f"Error: {error_msg}")
     
+    def eventFilter(self, obj, event):
+        """Filter events to ensure tag chips can receive mouse events."""
+        from qtpy.QtCore import QEvent
+        if event.type() == QEvent.MouseButtonPress:
+            print(f"[DEBUG ImageThumbnail] eventFilter: Mouse press on {type(obj).__name__}, objectName: {obj.objectName()}")
+            print(f"[DEBUG ImageThumbnail] eventFilter: Event position: {event.pos() if hasattr(event, 'pos') else 'N/A'}")
+        # Let tag chips and their children handle their own events
+        if isinstance(obj, TagChip) or obj.parent() == self.tags_container:
+            print(f"[DEBUG ImageThumbnail] eventFilter: Allowing event for {type(obj).__name__}")
+            return False  # Don't filter, let the widget handle it
+        return super().eventFilter(obj, event)
+    
+    def mousePressEvent(self, event):
+        """Handle mouse press events - forward to ImageGrid if not on tags."""
+        from qtpy.QtCore import QPoint
+        # Check if click is on tags container or any tag chip
+        click_pos = event.pos()
+        
+        print(f"[DEBUG ImageThumbnail] mousePressEvent at {click_pos}")
+        
+        # Check if click is within tags container
+        if self.tags_container.isVisible():
+            tags_rect = self.tags_container.geometry()
+            print(f"[DEBUG ImageThumbnail] Tags container visible, rect: {tags_rect}")
+            if tags_rect.contains(click_pos):
+                # Click is on tags area - check if it's on a chip or button
+                clicked_widget = self.childAt(click_pos)
+                print(f"[DEBUG ImageThumbnail] Clicked widget: {type(clicked_widget).__name__ if clicked_widget else 'None'}")
+                widget = clicked_widget
+                depth = 0
+                while widget and depth < 5:
+                    widget_name = getattr(widget, 'objectName', lambda: '')()
+                    print(f"[DEBUG ImageThumbnail] Checking widget at depth {depth}: {type(widget).__name__}, objectName: {widget_name}")
+                    if isinstance(widget, TagChip) or (widget_name and ("TagChip" in widget_name or "RemoveButton" in widget_name)):
+                        # Click is on a tag chip or button - let it handle the event
+                        print(f"[DEBUG ImageThumbnail] Click on tag widget - allowing event")
+                        super().mousePressEvent(event)
+                        return
+                    widget = widget.parent()
+                    depth += 1
+        
+        # Click is not on tags - forward to parent (ImageGrid) for selection handling
+        print(f"[DEBUG ImageThumbnail] Click not on tags - forwarding to parent")
+        # Convert to parent coordinates and create new event
+        parent_pos = self.mapToParent(click_pos)
+        # Create a new event for the parent
+        from qtpy.QtGui import QMouseEvent
+        parent_event = QMouseEvent(
+            event.type(),
+            parent_pos,
+            event.button(),
+            event.buttons(),
+            event.modifiers()
+        )
+        # Don't call super() - let ImageGrid handle it via event propagation
+        event.ignore()  # Let the event propagate
+    
     def resizeEvent(self, event):
-        """Handle resize events to adjust image scaling."""
+        """Handle resize events to adjust image scaling and re-layout tags."""
         super().resizeEvent(event)
         
         # Just center the view - the image will be reloaded at new size if needed
         if self.scene and self.pixmap_item:
             self.graphics_view.centerOn(self.pixmap_item)
             self.graphics_view.resetTransform()
+        
+        # Re-layout tags if thumbnail size changed
+        if self.tag_chips:
+            self._relayout_tags()
     
     def set_selected(self, selected: bool):
         """Set the selection state of the thumbnail."""
@@ -170,6 +391,170 @@ class ImageThumbnail(QFrame):
             self.setProperty("selected", selected)
             self.style().unpolish(self)
             self.style().polish(self)
+            
+            # Show/hide tags based on selection
+            if selected:
+                self._load_and_display_tags()
+            else:
+                self._hide_tags()
+    
+    def refresh_tags(self):
+        """Refresh tags display (useful after external tag updates)."""
+        if self.selected:
+            self._load_and_display_tags()
+    
+    def _load_and_display_tags(self):
+        """Load and display tags for this image."""
+        if not self.image_manager:
+            return
+        
+        # Get image metadata
+        metadata = self.image_manager.get_image_metadata(self.image_id)
+        if not metadata:
+            return
+        
+        # Clear existing tags
+        self._clear_tags()
+        
+        # Add tags
+        for tag in sorted(metadata.tags):
+            self._add_tag_chip(tag)
+        
+        # Show tags container if there are tags
+        if self.tag_chips:
+            self.tags_container.show()
+            self.tags_container.raise_()  # Ensure tags container is on top
+            # Ensure all chips are on top
+            for chip in self.tag_chips.values():
+                chip.raise_()
+        else:
+            self.tags_container.hide()
+    
+    def _hide_tags(self):
+        """Hide the tags container."""
+        self.tags_container.hide()
+    
+    def _clear_tags(self):
+        """Clear all tag chips."""
+        for chip in self.tag_chips.values():
+            chip.deleteLater()
+        self.tag_chips.clear()
+    
+    def _relayout_tags(self):
+        """Re-layout all tag chips in the grid."""
+        # Remove all chips from layout
+        while self.tags_layout.count():
+            item = self.tags_layout.takeAt(0)
+            if item.widget():
+                self.tags_layout.removeWidget(item.widget())
+        
+        # Re-add all chips with proper positions
+        # Calculate max chips per row based on available width
+        # Each chip is roughly 80-100px wide now (larger), account for margins and spacing
+        available_width = max(self.width() - 20, 100)  # Account for margins
+        max_per_row = max(2, available_width // 90)  # Estimate based on available width (larger chips)
+        for idx, (tag, chip) in enumerate(sorted(self.tag_chips.items())):
+            row = idx // max_per_row
+            col = idx % max_per_row
+            self.tags_layout.addWidget(chip, row, col)
+    
+    def _enable_mouse_events_recursive(self, widget: QWidget):
+        """Recursively enable mouse events on widget and all its children."""
+        # Force disable by setting True then False
+        widget.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        widget.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+        for child in widget.findChildren(QWidget):
+            child.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            child.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+    
+    def _add_tag_chip(self, tag: str):
+        """Add a tag chip to the tags container."""
+        if tag in self.tag_chips:
+            return
+        
+        print(f"[DEBUG ImageThumbnail] Adding tag chip for tag: {tag}")
+        chip = TagChip(tag, self.tags_container)
+        chip.removed.connect(self._on_tag_removed)
+        # Enable mouse events on chip and all its children recursively
+        self._enable_mouse_events_recursive(chip)
+        chip.raise_()  # Ensure chip is on top
+        
+        # Calculate position in grid (wrap automatically)
+        num_chips = len(self.tag_chips)
+        # Estimate max chips per row based on thumbnail width
+        # Each chip is roughly 80-100px wide now (larger), so we can fit about 2-3 per row for typical thumbnails
+        # We'll use a simple calculation: row = num_chips // max_per_row, col = num_chips % max_per_row
+        available_width = max(self.width() - 20, 100)  # Account for margins
+        max_per_row = max(2, available_width // 90)  # Estimate based on available width (larger chips)
+        row = num_chips // max_per_row
+        col = num_chips % max_per_row
+        
+        self.tags_layout.addWidget(chip, row, col)
+        self.tag_chips[tag] = chip
+        
+        # CRITICAL: Force disable WA_TransparentForMouseEvents AFTER adding to layout
+        # We need to do this multiple times and ensure it's really disabled
+        self.tags_container.setAttribute(Qt.WA_TransparentForMouseEvents, True)  # Set to True first
+        self.tags_container.setAttribute(Qt.WA_TransparentForMouseEvents, False)  # Then False to force update
+        chip.setAttribute(Qt.WA_TransparentForMouseEvents, True)  # Set to True first
+        chip.setAttribute(Qt.WA_TransparentForMouseEvents, False)  # Then False to force update
+        
+        # Enable mouse events on all children recursively
+        self._enable_mouse_events_recursive(chip)
+        
+        self.tags_container.raise_()
+        chip.raise_()
+        
+        # Install event filter to ensure mouse events reach chips
+        chip.installEventFilter(self)
+        for child in chip.findChildren(QWidget):
+            child.setAttribute(Qt.WA_TransparentForMouseEvents, False)
+            child.installEventFilter(self)
+        
+        print(f"[DEBUG ImageThumbnail] Tag chip added. Chip geometry: {chip.geometry()}")
+        print(f"[DEBUG ImageThumbnail] Tags container geometry: {self.tags_container.geometry()}")
+        print(f"[DEBUG ImageThumbnail] Tags container WA_TransparentForMouseEvents: {not self.tags_container.testAttribute(Qt.WA_TransparentForMouseEvents)}")
+        print(f"[DEBUG ImageThumbnail] Chip WA_TransparentForMouseEvents: {not chip.testAttribute(Qt.WA_TransparentForMouseEvents)}")
+    
+    def _on_tag_removed(self, tag: str):
+        """Handle tag removal from chip."""
+        print(f"[DEBUG ImageThumbnail] _on_tag_removed called for tag: {tag}")
+        if not self.image_manager:
+            print(f"[DEBUG ImageThumbnail] No image_manager available")
+            return
+        
+        # If callback is provided, use it to remove tag from all selected images
+        if self.remove_tag_callback:
+            print(f"[DEBUG ImageThumbnail] Using callback to remove tag from selection")
+            self.remove_tag_callback(tag)
+            return
+        
+        # Otherwise, remove tag only from this image (fallback behavior)
+        # Get current tags
+        metadata = self.image_manager.get_image_metadata(self.image_id)
+        if not metadata:
+            return
+        
+        # Remove tag from set
+        new_tags = metadata.tags.copy()
+        new_tags.discard(tag)
+        
+        # Update metadata
+        self.image_manager.update_image_metadata(self.image_id, tags=new_tags)
+        
+        # Remove chip from UI and re-layout remaining chips
+        if tag in self.tag_chips:
+            chip = self.tag_chips.pop(tag)
+            chip.deleteLater()
+            # Re-layout remaining chips
+            self._relayout_tags()
+        
+        # Hide tags container if no tags left
+        if not self.tag_chips:
+            self.tags_container.hide()
+        
+        # Emit signal for parent to handle if needed
+        self.tag_removed.emit(self.image_id, tag)
     
     def _update_style(self):
         pass  # Désormais géré par le QSS global 

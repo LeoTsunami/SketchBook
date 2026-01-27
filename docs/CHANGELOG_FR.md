@@ -1,5 +1,19 @@
 # Journal des modifications
 
+## 2026-01-27
+### ✅ Tâches :
+- Affichage des tags sur les images sélectionnées dans la grille
+
+- Ajout de l'affichage des tags dans ImageThumbnail quand l'image est sélectionnée
+- Les tags sont affichés en bas des images sélectionnées avec leurs icônes
+- Chaque chip de tag a un bouton de suppression (×) pour retirer le tag de l'image
+- Les tags sont automatiquement rafraîchis quand ils sont mis à jour via EditTagDialog
+- Ajout du widget TagChip pour afficher les tags dans les miniatures
+- Ajout des styles pour les chips de tags dans les thèmes sombre et clair
+- Le conteneur de tags est scrollable horizontalement quand les tags débordent
+ → Résultat : Les utilisateurs peuvent maintenant voir et gérer les tags directement sur les images sélectionnées dans la grille
+---
+
 ## 2026-01-23
 ### ✅ Tâches :
 - Mise à jour du dictionnaire de tags par défaut

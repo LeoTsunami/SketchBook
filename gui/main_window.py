@@ -382,6 +382,7 @@ class MainWindow(QMainWindow):
         middle_layout.addLayout(grid_controls)
         
         # Create image grid
+        print("Creating image grid")
         self.image_grid = ImageGrid(self.image_manager)
         self.image_grid.set_columns(self.columns_slider.value())
         middle_layout.addWidget(self.image_grid)

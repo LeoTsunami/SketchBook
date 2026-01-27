@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-01-27
+### ✅ Tasks:
+- Display tags on selected images in grid
+
+- Added tag display in ImageThumbnail when image is selected
+- Tags are shown at the bottom of selected images with their icons
+- Each tag chip has a remove button (×) to delete the tag from the image
+- Tags are automatically refreshed when updated via EditTagDialog
+- Added TagChip widget for displaying tags in thumbnails
+- Added styles for tag chips in both dark and light themes
+- Tags container is scrollable horizontally when tags overflow
+ → Result: Users can now see and manage tags directly on selected images in the grid
+---
+
 ## 2026-01-23
 ### ✅ Tasks:
 - Default tag dictionary update
