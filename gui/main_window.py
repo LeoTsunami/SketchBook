@@ -2,7 +2,7 @@
 Main window of the SketchBook application.
 """
 from pathlib import Path
-from typing import Dict, List, Set
+from typing import Dict, List, Set, Optional, Tuple
 from qtpy.QtWidgets import (
     QMainWindow,
     QMenuBar,
@@ -189,8 +189,8 @@ class MainWindow(QMainWindow):
         # Maximize window on startup
         self.showMaximized()
         
-        # Load initial images
-        self.image_grid.load_images()
+        # Load initial images (will be sorted by _apply_category_filters which is called in _setup_ui)
+        # Don't call load_images here as _apply_category_filters will handle it
     
     def _setup_ui(self):
         """Set up the main UI components."""
@@ -402,8 +402,29 @@ class MainWindow(QMainWindow):
         self.session_images_count_label.setStyleSheet("font-size: 12px; font-weight: bold;")
         grid_controls.addWidget(self.session_images_count_label)
         
-        # Add column control slider (right side)
+        # Add sort combo box
         grid_controls.addStretch()
+        sort_label = QLabel("Sort:")
+        sort_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
+        self.sort_combo = QComboBox()
+        self.sort_combo.addItems([
+            "Most Recent First",
+            "Oldest First",
+            "Filename A→Z",
+            "Filename Z→A",
+            "Size Small→Large",
+            "Size Large→Small",
+            "Dimensions Small→Large",
+            "Dimensions Large→Small"
+        ])
+        self.sort_combo.setCurrentIndex(0)  # Default: Most Recent First
+        self.sort_combo.setFixedWidth(150)
+        self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        
+        grid_controls.addWidget(sort_label)
+        grid_controls.addWidget(self.sort_combo)
+        
+        # Add column control slider (right side)
         columns_label = QLabel("Columns:")
         columns_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
         self.columns_slider = QSlider(Qt.Horizontal)
@@ -506,16 +527,48 @@ class MainWindow(QMainWindow):
         filtered_images = self._filter_images_by_category()
         # Also apply AND/OR filters if they exist
         filtered_images = self._apply_and_or_filters(filtered_images)
+        
+        # Get current sort order
+        sort_by = self._get_current_sort_order()
+        
+        # Apply sorting
+        filtered_images = self.image_manager.db._sort_images(filtered_images, sort_by)
+        
         filter_key = (
             frozenset(self._active_categories),
             frozenset(
                 (category, frozenset(tags))
                 for category, tags in self._active_subtags.items()
             ),
+            sort_by
         )
         self.image_grid.load_images_from_list(filtered_images, filter_key)
         self._update_session_images_count(filtered_images)
         self._sync_tag_grid_state()
+    
+    def _get_current_sort_order(self) -> str:
+        """
+        Get the current sort order from the combo box.
+        
+        Returns:
+            Sort order string
+        """
+        sort_map = {
+            0: "import_date_desc",  # Most Recent First
+            1: "import_date_asc",   # Oldest First
+            2: "filename_asc",      # Filename A→Z
+            3: "filename_desc",     # Filename Z→A
+            4: "file_size_asc",    # Size Small→Large
+            5: "file_size_desc",   # Size Large→Small
+            6: "dimensions_asc",   # Dimensions Small→Large
+            7: "dimensions_desc"   # Dimensions Large→Small
+        }
+        return sort_map.get(self.sort_combo.currentIndex(), "import_date_desc")
+    
+    def _on_sort_changed(self, index: int):
+        """Handle sort order change."""
+        # Reapply filters with new sort order
+        self._apply_category_filters()
     
     def _apply_and_or_filters(self, images: List) -> List:
         """
@@ -959,7 +1012,9 @@ class MainWindow(QMainWindow):
         Returns:
             List: Filtered image metadata list.
         """
-        all_images = self.image_manager.db.list_images()
+        # Get current sort order and apply it
+        sort_by = self._get_current_sort_order()
+        all_images = self.image_manager.db.list_images(sort_by)
         
         # Label categories are not real tags, they're just organizational labels
         label_categories = ["Miscellaneous:", "Camera-Angle:"]
@@ -1177,6 +1232,36 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error during cleanup: {e}")
 
+    def _count_images_to_import(self, paths: List[Path]) -> Tuple[List[Path], Optional[Path]]:
+        """
+        Count images to import and get the first image path for preview.
+        
+        Args:
+            paths: List of paths to check
+            
+        Returns:
+            Tuple of (list of image paths, first image path for preview)
+        """
+        all_images = []
+        first_image = None
+        
+        for path in paths:
+            try:
+                if path.is_dir():
+                    found_images = self.image_manager.find_images_in_directory(path)
+                    all_images.extend(found_images)
+                    if first_image is None and found_images:
+                        first_image = found_images[0]
+                else:
+                    if path.suffix.lower() in ImageManager.SUPPORTED_FORMATS:
+                        all_images.append(path)
+                        if first_image is None:
+                            first_image = path
+            except Exception as e:
+                print(f"Error scanning path {path}: {str(e)}")
+        
+        return all_images, first_image
+    
     def _import_images(self, paths: List[Path]):
         """
         Import images from paths.
@@ -1184,11 +1269,37 @@ class MainWindow(QMainWindow):
         Args:
             paths: List of paths to import
         """
+        # Count images and get first image for preview
+        image_paths, first_image_path = self._count_images_to_import(paths)
+        
+        if not image_paths:
+            QMessageBox.warning(
+                self,
+                "No Images Found",
+                "No valid images found to import."
+            )
+            return
+        
+        # Show import dialog
+        from gui.import_dialog import ImportDialog
+        dialog = ImportDialog(
+            self,
+            image_manager=self.image_manager,
+            image_paths=image_paths,
+            first_image_path=first_image_path
+        )
+        
+        if dialog.exec_() != QDialog.Accepted:
+            return
+        
+        # Get selected tags
+        selected_tags = dialog.get_selected_tags()
+        
         # Create progress bar in status bar
         progress_bar = self._create_status_progress_bar()
         
-        # Create and configure worker
-        worker = ImageImportWorker(self.image_manager, paths)
+        # Create and configure worker with tags
+        worker = ImageImportWorker(self.image_manager, image_paths, selected_tags)
         
         # Connect signals with queued connections to ensure thread safety
         worker.signals.progress.connect(
@@ -1361,8 +1472,9 @@ class MainWindow(QMainWindow):
             # Clean up all progress bars
             self._cleanup_progress_bars()
             
-            # Reload images and update tags
-            self.image_grid.load_images()
+            # Reload images and update tags (with current sort order)
+            sort_by = self._get_current_sort_order()
+            self.image_grid.load_images(sort_by=sort_by)
             self._update_available_tags()
             
         except Exception as e:
@@ -1416,23 +1528,32 @@ class MainWindow(QMainWindow):
         """Set up the menu bar."""
         # File menu
         file_menu = self.menuBar().addMenu("&File")
+        # Set minimum width to prevent text overlap with keyboard shortcuts
+        file_menu.setMinimumWidth(220)
         
         # - Import images
-        import_action = QAction("&Import Images...", self)
+        import_action = QAction("Import Images", self)
         import_action.setShortcut("Ctrl+I")
         import_action.triggered.connect(self._on_import_images)
         file_menu.addAction(import_action)
         
         # - Import folder
-        import_folder_action = QAction("Import &Folder...", self)
+        import_folder_action = QAction("Import Folder", self)
         import_folder_action.setShortcut("Ctrl+F")
         import_folder_action.triggered.connect(self._on_import_folder)
         file_menu.addAction(import_folder_action)
         
         file_menu.addSeparator()
         
+        # - Settings
+        settings_action = QAction("Settings", self)
+        settings_action.triggered.connect(self._show_settings)
+        file_menu.addAction(settings_action)
+        
+        file_menu.addSeparator()
+        
         # - Exit
-        exit_action = QAction("E&xit", self)
+        exit_action = QAction("Exit", self)
         exit_action.setShortcut("Alt+F4")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
@@ -1508,6 +1629,19 @@ class MainWindow(QMainWindow):
             "SketchBook - A desktop application for timed life drawing sessions.\n\n"
             "Version: 0.1.0"
         )
+    
+    def _show_settings(self):
+        """Show settings dialog."""
+        from gui.settings_dialog import SettingsDialog
+        dialog = SettingsDialog(self)
+        # Store current theme before dialog opens
+        old_theme = settings.get("ui.theme", "dark")
+        if dialog.exec_() == QDialog.Accepted:
+            # Apply theme (settings are already saved by dialog.accept())
+            new_theme = settings.get("ui.theme", "dark")
+            if new_theme != old_theme:
+                # Apply the theme immediately
+                apply_global_stylesheet()
     
     def _set_theme(self, theme: str):
         """

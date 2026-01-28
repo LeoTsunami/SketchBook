@@ -2,7 +2,7 @@
 Worker class for handling image imports in a background thread.
 """
 from pathlib import Path
-from typing import List
+from typing import List, Set, Optional
 import traceback
 from PIL import Image
 from qtpy.QtCore import QObject, QRunnable, Signal, Slot, QThread
@@ -18,17 +18,19 @@ class ImageImportSignals(QObject):
 class ImageImportWorker(QRunnable):
     """Worker for importing images in a background thread."""
     
-    def __init__(self, image_manager, paths: List[Path]):
+    def __init__(self, image_manager, paths: List[Path], tags: Optional[Set[str]] = None):
         """
         Initialize the worker.
         
         Args:
             image_manager: ImageManager instance
             paths: List of paths to import
+            tags: Optional set of tags to apply to imported images
         """
         super().__init__()
         self.image_manager = image_manager
         self.paths = paths
+        self.tags = tags or set()
         self.signals = ImageImportSignals()
         self.setAutoDelete(True)
     
@@ -95,6 +97,16 @@ class ImageImportWorker(QRunnable):
                     if result is not None:
                         successful += 1
                         self._log(f"Successfully imported: {path.name}")
+                        
+                        # Apply tags if provided
+                        if self.tags:
+                            image_id = result.stem
+                            tags_list = list(self.tags)
+                            if self.image_manager.add_tags(image_id, tags_list):
+                                self._log(f"Applied {len(tags_list)} tag(s) to {path.name}")
+                            else:
+                                self._log(f"Warning: Could not apply tags to {path.name}", "WARNING")
+                        
                         # Emit signal with the stem (ID) of the imported image
                         self.signals.image_imported.emit(result.stem)
                     else:

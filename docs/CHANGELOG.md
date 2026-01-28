@@ -3,15 +3,27 @@
 ## 2026-01-27
 ### ✅ Tasks:
 - Display tags on selected images in grid
+- Settings dialog and menu improvements
 
 - Added tag display in ImageThumbnail when image is selected
 - Tags are shown at the bottom of selected images with their icons
-- Each tag chip has a remove button (×) to delete the tag from the image
-- Tags are automatically refreshed when updated via EditTagDialog
+- Each tag chip has a remove button (×) to delete the tag from all selected images
+- Tags are automatically refreshed when updated
 - Added TagChip widget for displaying tags in thumbnails
 - Added styles for tag chips in both dark and light themes
-- Tags container is scrollable horizontally when tags overflow
- → Result: Users can now see and manage tags directly on selected images in the grid
+- Tags container uses a grid layout that wraps automatically
+- Optimized tag chip layout: text elides (crops) when space is limited, preserving icon and remove button visibility
+- Icon and remove button maintain minimum sizes while text adapts to available space
+- Removed obsolete EditTagDialog - all tag editing now happens directly in the main UI
+- Removed keyboard shortcuts text from File menu actions (cleaner UI)
+- Added Settings dialog accessible from File menu
+- Settings dialog includes theme selection (Light/Dark)
+- Settings dialog includes image compression settings:
+  - Maximum height for imported images (default: 1080p, range: 360p-4K)
+  - JPEG compression quality slider (default: 75, range: 30-100) with quality descriptions
+- Updated image import to use max_height instead of max_width for better control
+- Compression quality default changed from 85 to 75 for better file size/quality balance
+ → Result: Users can now see and manage tags directly on selected images in the grid, with improved layout on small thumbnails. Settings are now centralized in a dedicated dialog for easier configuration.
 ---
 
 ## 2026-01-23

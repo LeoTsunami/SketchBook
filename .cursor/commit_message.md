@@ -1,21 +1,22 @@
-feat: display tags on selected images with grid layout and multi-selection removal
+feat: add settings dialog and improve menu UI
 
 Description:
-- Added tag display in ImageThumbnail when image is selected
-- Tags are shown at the bottom of selected images with their icons in a grid layout (wraps automatically)
-- Each tag chip has a remove button (×) that removes the tag from ALL selected images
-- Tags are larger with white text for better visibility
-- Tags are automatically refreshed when updated via EditTagDialog
-- Fixed mouse event handling to allow tag chips to be clickable
-- Added TagChip widget for displaying tags in thumbnails
-- Added styles for tag chips in both dark and light themes
+- Removed keyboard shortcut text from File menu actions (cleaner UI)
+- Added Settings action in File menu
+- Created SettingsDialog with theme selection and image compression settings
+- Settings dialog includes:
+  - Theme selector (Light/Dark)
+  - Maximum height for imported images (default: 1080p, range: 360p-4K)
+  - JPEG compression quality slider (default: 75, range: 30-100) with quality descriptions
+- Updated image import to use max_height instead of max_width for better control
+- Changed default compression quality from 85 to 75 for better file size/quality balance
+- Updated settings.py to include max_height parameter
+- Updated image_manager.py to use settings for compression and resizing
 
 Affected files:
-- gui/image_thumbnail.py
-- gui/image_grid.py
-- gui/styles/style_dark.qss
-- gui/styles/style_light.qss
+- gui/main_window.py
+- gui/settings_dialog.py (new)
+- core/settings.py
+- core/image_manager.py
 - docs/CHANGELOG.md
 - docs/CHANGELOG_FR.md
-- docs/DOC_USER.md
-- .cursor/TASKS.md

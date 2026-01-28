@@ -21,6 +21,7 @@ class ImageMetadata:
     format: str
     original_path: str = ""  # Path to the original image file
     tags: Set[str] = field(default_factory=set)
+    import_date: str = ""  # ISO format date string of when image was imported
 
 class ImageDatabase:
     """Local database for image metadata."""
@@ -133,16 +134,81 @@ class ImageDatabase:
             return True
         return False
     
-    def list_images(self) -> List[ImageMetadata]:
+    def list_images(self, sort_by: str = "import_date_desc") -> List[ImageMetadata]:
         """
-        Get list of all image metadata.
+        Get list of all image metadata, optionally sorted.
+        
+        Args:
+            sort_by: Sort order. Options:
+                - "import_date_desc": Most recent first (default)
+                - "import_date_asc": Oldest first
+                - "filename_asc": Filename A→Z
+                - "filename_desc": Filename Z→A
+                - "file_size_asc": Smallest first
+                - "file_size_desc": Largest first
+                - "dimensions_asc": Smallest dimensions first
+                - "dimensions_desc": Largest dimensions first
         
         Returns:
-            List of all image metadata
+            List of all image metadata, sorted
         """
-        return list(self._images.values())
+        images = list(self._images.values())
+        return self._sort_images(images, sort_by)
     
-    def search_images(self, tags: Optional[List[str]] = None) -> List[ImageMetadata]:
+    def _sort_images(self, images: List[ImageMetadata], sort_by: str) -> List[ImageMetadata]:
+        """
+        Sort images according to the specified criteria.
+        
+        Args:
+            images: List of images to sort
+            sort_by: Sort order string
+            
+        Returns:
+            Sorted list of images
+        """
+        if not images:
+            return images
+        
+        # Default: most recent first
+        if sort_by == "import_date_desc":
+            return sorted(
+                images,
+                key=lambda m: m.import_date or "",
+                reverse=True
+            )
+        elif sort_by == "import_date_asc":
+            return sorted(
+                images,
+                key=lambda m: m.import_date or ""
+            )
+        elif sort_by == "filename_asc":
+            return sorted(
+                images,
+                key=lambda m: m.original_filename.lower()
+            )
+        elif sort_by == "filename_desc":
+            return sorted(
+                images,
+                key=lambda m: m.original_filename.lower(),
+                reverse=True
+            )
+        elif sort_by == "file_size_asc":
+            return sorted(images, key=lambda m: m.file_size)
+        elif sort_by == "file_size_desc":
+            return sorted(images, key=lambda m: m.file_size, reverse=True)
+        elif sort_by == "dimensions_asc":
+            return sorted(images, key=lambda m: m.width * m.height)
+        elif sort_by == "dimensions_desc":
+            return sorted(images, key=lambda m: m.width * m.height, reverse=True)
+        else:
+            # Default fallback
+            return sorted(
+                images,
+                key=lambda m: m.import_date or "",
+                reverse=True
+            )
+    
+    def search_images(self, tags: Optional[List[str]] = None, sort_by: str = "import_date_desc") -> List[ImageMetadata]:
         """
         Search images by tags.
         
@@ -151,33 +217,36 @@ class ImageDatabase:
         
         Args:
             tags: List of tags to search for (if None, returns all images)
+            sort_by: Sort order (see list_images for options)
             
         Returns:
-            List of matching image metadata
+            List of matching image metadata, sorted
         """
         if not tags:
-            return self.list_images()
+            return self.list_images(sort_by)
             
         tag_set = set(tags)
-        return [
+        matching = [
             metadata
             for metadata in self._images.values()
             if metadata.tags & tag_set == tag_set
         ]
+        return self._sort_images(matching, sort_by)
     
-    def search_images_advanced(self, and_tags: Set[str] = None, or_tags: Set[str] = None) -> List[ImageMetadata]:
+    def search_images_advanced(self, and_tags: Set[str] = None, or_tags: Set[str] = None, sort_by: str = "import_date_desc") -> List[ImageMetadata]:
         """
         Advanced search with AND and OR tag filtering.
         
         Args:
             and_tags: Set of tags that must ALL be present (AND logic)
             or_tags: Set of tags where at least ONE must be present (OR logic)
+            sort_by: Sort order (see list_images for options)
             
         Returns:
-            List of matching image metadata
+            List of matching image metadata, sorted
         """
         if not and_tags and not or_tags:
-            return self.list_images()
+            return self.list_images(sort_by)
         
         matching_images = []
         
@@ -198,4 +267,4 @@ class ImageDatabase:
             if and_condition and or_condition:
                 matching_images.append(metadata)
         
-        return matching_images 
+        return self._sort_images(matching_images, sort_by) 

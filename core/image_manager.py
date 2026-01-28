@@ -15,7 +15,6 @@ class ImageManager:
     """Manages image importing, processing, and storage."""
     
     SUPPORTED_FORMATS = {".jpg", ".jpeg", ".png"}
-    MAX_WIDTH = 1920  # Maximum width for imported images
     
     def __init__(self):
         """Initialize the image manager."""
@@ -153,21 +152,27 @@ class ImageManager:
                 if img.mode != "RGB":
                     img = img.convert("RGB")
                 
-                # Resize if needed
-                if img.width > self.MAX_WIDTH:
-                    ratio = self.MAX_WIDTH / img.width
-                    new_size = (self.MAX_WIDTH, int(img.height * ratio))
-                    img = img.resize(new_size, Image.Resampling.LANCZOS)
+                # Resize if needed (based on max_height setting from user settings)
+                # Note: Settings are read fresh on each import to ensure user preferences are applied
+                max_height = settings.get("images.max_height", 1080)
+                if img.height > max_height:
+                    ratio = max_height / img.height
+                    new_width = int(img.width * ratio)
+                    new_height = max_height
+                    img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
                 
-                # Save with compression
+                # Save with compression using user-defined quality setting
+                # Note: Settings are read fresh on each import to ensure user preferences are applied
+                compression_quality = settings.get("images.compression.quality", 75)
                 img.save(
                     dest_path,
                     format="JPEG",
-                    quality=settings.get("images.compression.quality", 85),
+                    quality=compression_quality,
                     optimize=True
                 )
                 
                 # Create and save metadata
+                import_date = datetime.now().isoformat()
                 metadata = ImageMetadata(
                     id=dest_path.stem,
                     path=dest_path.name,
@@ -176,7 +181,8 @@ class ImageManager:
                     height=img.height,
                     file_size=dest_path.stat().st_size,
                     format=img.format or "JPEG",
-                    original_path=str(source_path)
+                    original_path=str(source_path),
+                    import_date=import_date
                 )
                 self.db.add_image(metadata)
             
@@ -285,7 +291,7 @@ class ImageManager:
         # Delete metadata
         return self.db.delete_image(image_id)
     
-    def search_images(self, tags: Optional[List[str]] = None) -> List[ImageMetadata]:
+    def search_images(self, tags: Optional[List[str]] = None, sort_by: str = "import_date_desc") -> List[ImageMetadata]:
         """
         Search images by tags.
         
@@ -294,11 +300,12 @@ class ImageManager:
         
         Args:
             tags: List of tags to search for (if None, returns all images)
+            sort_by: Sort order (see ImageDatabase.list_images for options)
             
         Returns:
-            List of matching image metadata
+            List of matching image metadata, sorted
         """
-        return self.db.search_images(tags)
+        return self.db.search_images(tags, sort_by)
     
     def get_all_tags(self) -> List[str]:
         """
@@ -333,15 +340,16 @@ class ImageManager:
         # Update the database
         return self.db.update_image(image_id, tags=metadata.tags)
     
-    def search_images_advanced(self, and_tags: Set[str] = None, or_tags: Set[str] = None) -> List[ImageMetadata]:
+    def search_images_advanced(self, and_tags: Set[str] = None, or_tags: Set[str] = None, sort_by: str = "import_date_desc") -> List[ImageMetadata]:
         """
         Advanced search with AND and OR tag filtering.
         
         Args:
             and_tags: Set of tags that must ALL be present (AND logic)
             or_tags: Set of tags where at least ONE must be present (OR logic)
+            sort_by: Sort order (see ImageDatabase.list_images for options)
             
         Returns:
-            List of matching image metadata
+            List of matching image metadata, sorted
         """
-        return self.db.search_images_advanced(and_tags, or_tags) 
+        return self.db.search_images_advanced(and_tags, or_tags, sort_by) 

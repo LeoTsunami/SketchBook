@@ -3,15 +3,27 @@
 ## 2026-01-27
 ### ✅ Tâches :
 - Affichage des tags sur les images sélectionnées dans la grille
+- Fenêtre de paramètres et améliorations du menu
 
 - Ajout de l'affichage des tags dans ImageThumbnail quand l'image est sélectionnée
 - Les tags sont affichés en bas des images sélectionnées avec leurs icônes
-- Chaque chip de tag a un bouton de suppression (×) pour retirer le tag de l'image
-- Les tags sont automatiquement rafraîchis quand ils sont mis à jour via EditTagDialog
+- Chaque chip de tag a un bouton de suppression (×) pour retirer le tag de toutes les images sélectionnées
+- Les tags sont automatiquement rafraîchis quand ils sont mis à jour
 - Ajout du widget TagChip pour afficher les tags dans les miniatures
 - Ajout des styles pour les chips de tags dans les thèmes sombre et clair
-- Le conteneur de tags est scrollable horizontalement quand les tags débordent
- → Résultat : Les utilisateurs peuvent maintenant voir et gérer les tags directement sur les images sélectionnées dans la grille
+- Le conteneur de tags utilise une mise en page en grille qui s'enroule automatiquement
+- Optimisation de la mise en page des chips de tags : le texte est coupé (avec "...") quand l'espace est limité, préservant la visibilité de l'icône et du bouton de suppression
+- L'icône et le bouton de suppression conservent leurs tailles minimales tandis que le texte s'adapte à l'espace disponible
+- Suppression de l'obsolete EditTagDialog - toute l'édition de tags se fait maintenant directement dans l'interface principale
+- Suppression des raccourcis clavier écrits dans les actions du menu File (interface plus propre)
+- Ajout d'une fenêtre de paramètres accessible depuis le menu File
+- La fenêtre de paramètres inclut la sélection du thème (Clair/Sombre)
+- La fenêtre de paramètres inclut les paramètres de compression d'images :
+  - Hauteur maximale pour les images importées (par défaut : 1080p, plage : 360p-4K)
+  - Curseur de qualité de compression JPEG (par défaut : 75, plage : 30-100) avec descriptions de qualité
+- Mise à jour de l'import d'images pour utiliser max_height au lieu de max_width pour un meilleur contrôle
+- Qualité de compression par défaut changée de 85 à 75 pour un meilleur équilibre taille/qualité
+ → Résultat : Les utilisateurs peuvent maintenant voir et gérer les tags directement sur les images sélectionnées dans la grille, avec une mise en page améliorée sur les miniatures de petite taille. Les paramètres sont maintenant centralisés dans une fenêtre dédiée pour une configuration plus facile.
 ---
 
 ## 2026-01-23

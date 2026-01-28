@@ -47,9 +47,10 @@ You can add tags and notes to your images to help organize and find them later:
 ### Viewing Tags on Selected Images
 When you select an image in the gallery, its tags are automatically displayed at the bottom of the thumbnail:
 - Each tag appears as a small chip with its icon (if available)
-- Click the × button on any tag chip to remove that tag from the image
-- Tags are displayed in a scrollable horizontal area if there are many tags
-- The tags display updates automatically when you modify tags through the Edit Tags dialog
+- Click the × button on any tag chip to remove that tag from all selected images
+- Tags are displayed in a grid layout that wraps automatically
+- You can drag and drop tags from the tag library directly onto images to add them
+- The tags display updates automatically when you modify tags
 
 ### Filtering Images
 You can filter your image collection using the tag buttons:

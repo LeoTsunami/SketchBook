@@ -14,10 +14,11 @@ from qtpy.QtWidgets import (
     QGridLayout,
     QLabel,
     QPushButton,
-    QApplication
+    QApplication,
+    QSizePolicy
 )
 from qtpy.QtCore import Qt, Signal, QTimer
-from qtpy.QtGui import QPixmap, QIcon, QImage, QCursor, QDragEnterEvent, QDropEvent
+from qtpy.QtGui import QPixmap, QIcon, QImage, QCursor, QDragEnterEvent, QDropEvent, QFontMetrics
 from core.settings import settings
 
 
@@ -77,7 +78,6 @@ class TagChip(QFrame):
     removed = Signal(str)  # Emits tag text when removed
     
     def __init__(self, text: str, parent=None):
-        print(f"[DEBUG TagChip] Creating TagChip for tag: {text}")
         """
         Initialize the tag chip.
 
@@ -103,51 +103,73 @@ class TagChip(QFrame):
         larger_font.setPointSize(max(9, app_font.pointSize() + 1))
         self.setFont(larger_font)
 
-        # Add icon (if available) - larger size
+        # Add icon (if available) - preserve visibility with minimum size
         icon = _find_tag_icon(text)
-        if not icon.isNull():
+        self.has_icon = not icon.isNull()
+        if self.has_icon:
             icon_label = QLabel()
+            # Use 20x20 pixmap, allow slight reduction if space is very limited
             icon_label.setPixmap(_invert_icon(icon, 20).pixmap(20, 20))
             icon_label.setStyleSheet("background-color: transparent;")
+            icon_label.setMinimumSize(16, 16)  # Minimum size to keep icon visible
+            icon_label.setMaximumSize(20, 20)  # Maximum size
+            icon_label.setScaledContents(True)  # Allow pixmap to scale down if needed
             layout.addWidget(icon_label)
 
-        # Add text label - larger font
-        label = QLabel(text)
-        label.setStyleSheet("color: #ffffff; font-size: 11px;")
-        label.setFont(larger_font)
-        layout.addWidget(label)
+        # Add text label - allow it to shrink and elide when space is limited
+        self.text_label = QLabel(text)
+        self.text_label.setStyleSheet("color: #ffffff; font-size: 11px;")
+        self.text_label.setFont(larger_font)
+        # Allow text to shrink and elide (crop) when space is limited
+        self.text_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self.text_label.setMinimumWidth(0)  # Allow label to shrink to minimum
+        layout.addWidget(self.text_label, 1)  # Give text label stretch factor to take available space
 
-        # Add remove button - larger size
+        # Add remove button - fixed size to preserve visibility
         remove_btn = QPushButton("×")
-        remove_btn.setFixedSize(18, 18)
+        remove_btn.setFixedSize(18, 18)  # Fixed size - always visible
         remove_btn.setFont(larger_font)
         remove_btn.setStyleSheet("color: #ffffff; background: transparent; border: none; font-weight: bold; font-size: 14px;")
         remove_btn.setAttribute(Qt.WA_TransparentForMouseEvents, False)
         remove_btn.setCursor(QCursor(Qt.PointingHandCursor))
         remove_btn.setFocusPolicy(Qt.StrongFocus)  # Ensure button can receive focus
-        remove_btn.setObjectName(f"RemoveButton_{text}")  # For debugging
+        remove_btn.setObjectName(f"RemoveButton_{text}")
         
-        # Create a wrapper function for debugging
-        def on_button_clicked():
-            print(f"[DEBUG TagChip] Remove button clicked for tag: {text}")
-            print(f"[DEBUG TagChip] Button objectName: {remove_btn.objectName()}")
-            print(f"[DEBUG TagChip] Button geometry: {remove_btn.geometry()}")
-            print(f"[DEBUG TagChip] Button WA_TransparentForMouseEvents: {not remove_btn.testAttribute(Qt.WA_TransparentForMouseEvents)}")
-            self.removed.emit(text)
-        
-        remove_btn.clicked.connect(on_button_clicked)
-        
-        # Override mousePressEvent for debugging
-        original_mouse_press = remove_btn.mousePressEvent
-        def debug_mouse_press(event):
-            print(f"[DEBUG TagChip] Remove button mousePressEvent for tag: {text}")
-            print(f"[DEBUG TagChip] Event position: {event.pos()}")
-            print(f"[DEBUG TagChip] Button geometry: {remove_btn.geometry()}")
-            print(f"[DEBUG TagChip] Event position in button: {event.pos()}")
-            original_mouse_press(event)
-        remove_btn.mousePressEvent = debug_mouse_press
+        remove_btn.clicked.connect(lambda: self.removed.emit(text))
         
         layout.addWidget(remove_btn)
+        
+        # Update elided text after layout is calculated
+        QTimer.singleShot(0, self._update_elided_text)
+    
+    def resizeEvent(self, event):
+        """Update elided text when chip is resized."""
+        super().resizeEvent(event)
+        self._update_elided_text()
+    
+    def _update_elided_text(self):
+        """Update the text label with elided text based on available width."""
+        if not hasattr(self, 'text_label') or not self.text_label:
+            return
+        
+        # Calculate available width for text label
+        # Account for margins, spacing, icon, and remove button
+        margins = self.layout().contentsMargins()
+        spacing = self.layout().spacing()
+        
+        # Estimate space taken by icon (if present) and remove button
+        icon_width = 20 if hasattr(self, 'has_icon') and self.has_icon else 0
+        remove_btn_width = 18
+        available_width = self.width() - margins.left() - margins.right() - icon_width - remove_btn_width - (spacing * 2)
+        
+        if available_width <= 0:
+            self.text_label.setText("")
+            return
+        
+        # Use QFontMetrics to calculate elided text
+        font_metrics = QFontMetrics(self.text_label.font())
+        elided_text = font_metrics.elidedText(self.text, Qt.ElideRight, available_width)
+        self.text_label.setText(elided_text)
 
 
 class ImageThumbnail(QFrame):

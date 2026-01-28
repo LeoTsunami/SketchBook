@@ -63,10 +63,11 @@ class Settings:
             "images": {
                 "storage_path": str(user_data.get_images_dir()),
                 "max_width": 1920,
+                "max_height": 1080,
                 "formats": ["jpg", "jpeg", "png"],
                 "compression": {
                     "enabled": True,
-                    "quality": 85
+                    "quality": 75
                 }
             },
             "session": {
