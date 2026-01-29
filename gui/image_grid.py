@@ -38,7 +38,8 @@ def load_stylesheet(path: str) -> str:
 class ImageGrid(QScrollArea):
     """Scrollable grid of image thumbnails."""
     
-    image_clicked = Signal(str)  # Emits image ID when clicked
+    image_clicked = Signal(str)  # Emits image ID when clicked (single click)
+    image_double_clicked = Signal(str)  # Emits image ID when double-clicked (open viewer)
     selection_changed = Signal(list)  # Emits list of selected image IDs
     session_images_selected = Signal(list)  # Emits list of image IDs for drawing session
     BASE_BATCH_SIZE = 20
@@ -605,6 +606,21 @@ class ImageGrid(QScrollArea):
             parent = parent.parent()
         # No global print fallback in normal mode
     
+    def mouseDoubleClickEvent(self, event):
+        """Open viewer on double-click on a thumbnail."""
+        if event.button() != Qt.LeftButton:
+            super().mouseDoubleClickEvent(event)
+            return
+        content_pos = self.content.mapFrom(self, event.pos())
+        for thumbnail in self.thumbnails.values():
+            thumbnail_global_pos = thumbnail.mapTo(self.content, QPoint(0, 0))
+            thumbnail_rect = QRect(thumbnail_global_pos, thumbnail.size())
+            if thumbnail_rect.contains(content_pos):
+                self.image_double_clicked.emit(thumbnail.image_id)
+                event.accept()
+                return
+        super().mouseDoubleClickEvent(event)
+
     def mouseMoveEvent(self, event):
         if self.is_selecting:
             # Update rubber band geometry with proper coordinates

@@ -144,10 +144,6 @@ class ImageDatabase:
                 - "import_date_asc": Oldest first
                 - "filename_asc": Filename A→Z
                 - "filename_desc": Filename Z→A
-                - "file_size_asc": Smallest first
-                - "file_size_desc": Largest first
-                - "dimensions_asc": Smallest dimensions first
-                - "dimensions_desc": Largest dimensions first
         
         Returns:
             List of all image metadata, sorted
@@ -169,17 +165,23 @@ class ImageDatabase:
         if not images:
             return images
         
+        # Sentinel for missing import_date: sort last in both directions
+        # Reason: old images (imported before import_date existed) have "" and would
+        # otherwise keep arbitrary dict order instead of true date order
+        SENTINEL_OLDEST = "0000-00-00T00:00:00"
+        SENTINEL_NEWEST = "9999-12-31T23:59:59"
+
         # Default: most recent first
         if sort_by == "import_date_desc":
             return sorted(
                 images,
-                key=lambda m: m.import_date or "",
+                key=lambda m: m.import_date if m.import_date else SENTINEL_OLDEST,
                 reverse=True
             )
         elif sort_by == "import_date_asc":
             return sorted(
                 images,
-                key=lambda m: m.import_date or ""
+                key=lambda m: m.import_date if m.import_date else SENTINEL_NEWEST
             )
         elif sort_by == "filename_asc":
             return sorted(
@@ -192,19 +194,11 @@ class ImageDatabase:
                 key=lambda m: m.original_filename.lower(),
                 reverse=True
             )
-        elif sort_by == "file_size_asc":
-            return sorted(images, key=lambda m: m.file_size)
-        elif sort_by == "file_size_desc":
-            return sorted(images, key=lambda m: m.file_size, reverse=True)
-        elif sort_by == "dimensions_asc":
-            return sorted(images, key=lambda m: m.width * m.height)
-        elif sort_by == "dimensions_desc":
-            return sorted(images, key=lambda m: m.width * m.height, reverse=True)
         else:
-            # Default fallback
+            # Default fallback: most recent first
             return sorted(
                 images,
-                key=lambda m: m.import_date or "",
+                key=lambda m: m.import_date if m.import_date else SENTINEL_OLDEST,
                 reverse=True
             )
     

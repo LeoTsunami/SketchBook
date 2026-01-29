@@ -61,6 +61,7 @@ from gui.image_grid import ImageGrid, ImageThumbnail
 from gui.tag_widgets import DraggableTagChip
 from gui.tag_apply_worker import TagApplyWorker
 from gui.session_settings_dialog import SessionSettingsDialog
+from gui.image_viewer_window import ImageViewerWindow
 from qtpy.QtWidgets import QApplication
 import os
 import json
@@ -411,11 +412,7 @@ class MainWindow(QMainWindow):
             "Most Recent First",
             "Oldest First",
             "Filename A→Z",
-            "Filename Z→A",
-            "Size Small→Large",
-            "Size Large→Small",
-            "Dimensions Small→Large",
-            "Dimensions Large→Small"
+            "Filename Z→A"
         ])
         self.sort_combo.setCurrentIndex(0)  # Default: Most Recent First
         self.sort_combo.setFixedWidth(150)
@@ -449,7 +446,11 @@ class MainWindow(QMainWindow):
         print("Creating image grid")
         self.image_grid = ImageGrid(self.image_manager)
         self.image_grid.set_columns(self.columns_slider.value())
+        self.image_grid.image_double_clicked.connect(self._on_image_clicked)
         middle_layout.addWidget(self.image_grid)
+
+        # Lazy-created image viewer window (one window, reused)
+        self._image_viewer_window = None
         
         # Add middle panel to splitter
         main_splitter.addWidget(middle_panel)
@@ -558,10 +559,6 @@ class MainWindow(QMainWindow):
             1: "import_date_asc",   # Oldest First
             2: "filename_asc",      # Filename A→Z
             3: "filename_desc",     # Filename Z→A
-            4: "file_size_asc",    # Size Small→Large
-            5: "file_size_desc",   # Size Large→Small
-            6: "dimensions_asc",   # Dimensions Small→Large
-            7: "dimensions_desc"   # Dimensions Large→Small
         }
         return sort_map.get(self.sort_combo.currentIndex(), "import_date_desc")
     
@@ -1732,4 +1729,13 @@ class MainWindow(QMainWindow):
         self.columns_count.setText(str(value))
         self.image_grid.set_columns(value)
         settings.set("ui.grid.columns", value)
+
+    def _on_image_clicked(self, image_id: str):
+        """Open the image in a large viewer window."""
+        if self._image_viewer_window is None:
+            self._image_viewer_window = ImageViewerWindow(self.image_manager, self)
+        if self._image_viewer_window.set_image(image_id):
+            self._image_viewer_window.show()
+            self._image_viewer_window.raise_()
+            self._image_viewer_window.activateWindow()
     

@@ -22,7 +22,27 @@ class ImageManager:
         self.image_dir = user_data.get_images_dir()
         ensure_dir(self.image_dir)
         self.db = ImageDatabase()
+        # Backfill import_date for images that don't have it (imported before the field existed)
+        self._backfill_import_dates()
     
+    def _backfill_import_dates(self) -> None:
+        """
+        Set import_date from file mtime for images that have empty import_date.
+        Ensures "most recent first" sort works for images imported before import_date existed.
+        """
+        for metadata in self.db.list_images(sort_by="filename_asc"):
+            if metadata.import_date:
+                continue
+            path = self.image_dir / metadata.path
+            if not path.exists():
+                continue
+            try:
+                mtime = path.stat().st_mtime
+                iso = datetime.fromtimestamp(mtime).isoformat()
+                self.db.update_image(metadata.id, import_date=iso)
+            except OSError:
+                pass
+
     def _is_duplicate(self, source_path: Path, source_img: Image.Image) -> bool:
         """
         Check if an image is already imported by comparing name, size and resolution.
