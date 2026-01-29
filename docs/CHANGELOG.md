@@ -2,6 +2,22 @@
 
 ## 2026-01-27
 ### ✅ Tasks:
+- Drawing sessions (Course + Constant interval)
+- Display tags on selected images in grid
+- Settings dialog and menu improvements
+
+- **Sessions**: Session Settings now starts a dedicated session window.
+  - **Course** sessions: duration 10–60 min (step 10). Phases: WarmUp (30 s/image), Gesture (1 min/image), Anatomy (5 min/image), Shading (10 min/image). Presets defined in `gui/ressources/session_configs.json`.
+  - **Constant interval**: fixed duration per image (30 s, 1/3/5/10/20 min).
+  - Image list is built from currently filtered images (by tags), shuffled randomly.
+  - Session window: fullscreen or “Window always on top” (from Session Settings).
+  - Countdown per image in top-right; bottom bar: Play/Pause, Previous, Next; Space toggles controls, Escape closes and returns to main window.
+  - Main window hides when session starts and re-shows when session window is closed.
+- Session logic in `core/session_manager.py`: `load_course_config`, `build_course_run`, `SessionManager.start_session` (image_ids, type, course_duration_minutes / interval_seconds, window_mode), navigation (advance_image, previous_image, get_current_duration, get_session_progress).
+- Unit tests in `tests/test_session_manager.py` for config loading, run building, and manager navigation.
+ → Result: Users can run timed drawing sessions from filtered images with Course or constant timing; session runs in a separate fullscreen or always-on-top window with countdown and controls.
+---
+### ✅ Tasks (UI/tags):
 - Display tags on selected images in grid
 - Settings dialog and menu improvements
 

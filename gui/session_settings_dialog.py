@@ -72,10 +72,10 @@ class SessionSettingsDialog(QDialog):
         course_duration_layout.addWidget(self.course_duration_label)
         
         self.course_duration_spin = QSpinBox()
-        self.course_duration_spin.setRange(10, 300)  # 10 to 300 minutes
-        self.course_duration_spin.setSingleStep(10)  # Step of 10 minutes
+        self.course_duration_spin.setRange(10, 60)  # Course presets: 10 to 60 minutes (step 10)
+        self.course_duration_spin.setSingleStep(10)
         self.course_duration_spin.setSuffix(" minutes")
-        self.course_duration_spin.setValue(30)  # Default 30 minutes
+        self.course_duration_spin.setValue(30)
         course_duration_layout.addWidget(self.course_duration_spin)
         layout.addLayout(course_duration_layout)
         

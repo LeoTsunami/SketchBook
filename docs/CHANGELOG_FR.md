@@ -2,6 +2,20 @@
 
 ## 2026-01-27
 ### ✅ Tâches :
+- Sessions de dessin (Course + intervalle constant)
+- Affichage des tags sur les images sélectionnées dans la grille
+- Fenêtre de paramètres et améliorations du menu
+
+- **Sessions** : Session Settings lance maintenant une fenêtre de session dédiée.
+  - **Course** : durée 10–60 min (pas de 10). Phases : WarmUp (30 s/image), Gesture (1 min/image), Anatomy (5 min/image), Shading (10 min/image). Presets dans `gui/ressources/session_configs.json`.
+  - **Intervalle constant** : durée fixe par image (30 s, 1/3/5/10/20 min).
+  - Liste d’images construite à partir des images filtrées (par tags), mélangée aléatoirement.
+  - Fenêtre de session : plein écran ou « fenêtre toujours au premier plan » (depuis Session Settings).
+  - Décompte par image en haut à droite ; barre du bas : Play/Pause, Précédent, Suivant ; Espace affiche/masque les contrôles, Échap ferme et revient à la fenêtre principale.
+  - La fenêtre principale se cache au démarrage de la session et réapparaît à la fermeture de la fenêtre de session.
+ → Résultat : Les utilisateurs peuvent lancer des sessions de dessin chronométrées à partir des images filtrées (Course ou intervalle constant), dans une fenêtre plein écran ou toujours au premier plan avec décompte et contrôles.
+---
+### ✅ Tâches (UI / tags) :
 - Affichage des tags sur les images sélectionnées dans la grille
 - Fenêtre de paramètres et améliorations du menu
 

@@ -38,11 +38,13 @@ SketchBook/
 ## Architecture
 
 ### GUI (gui/)
-- `main_window.py` : Fenêtre principale de l'application
-  - Classe `MainWindow` : Gère la fenêtre principale et ses composants
+- `main_window.py` : Fenêtre principale. Crée et cache la fenêtre au lancement d’une session ; réaffiche à la fermeture de la session.
+- `slideshow_window.py` : Fenêtre de session (plein écran ou toujours au premier plan). Décompte en haut à droite, barre de contrôles (Play/Pause, Précédent, Suivant). Appelle `SessionManager.start_session` avec les image_ids filtrés et les paramètres du dialogue.
+- `session_settings_dialog.py` : Type de session (Course / Constant), durée course (10–60 min) ou intervalle, mode fenêtre.
 
 ### Core (core/)
 - Module principal contenant la logique métier
+- `session_manager.py` : Gestion des sessions (Course et intervalle constant). `load_course_config`, `build_course_run`, `SessionManager.start_session` (image_ids, type, durée/intervalle, window_mode), navigation (advance_image, previous_image, get_current_duration, get_session_progress). Presets Course dans `gui/ressources/session_configs.json` (10–60 min, phases WarmUp/Gesture/Anatomy/Shading).
 - Version actuelle : 0.1.0
 
 ### Utils (utils/)

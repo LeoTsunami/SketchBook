@@ -105,6 +105,11 @@ Update this file via prompt:
   - [x] Add session start/stop controls
 
 ### Phase 6: Advanced Features (Current Sprint)
+- [x] **Drawing sessions (Course + Constant)** (2026-01-27)
+  - [x] JSON course config (10–60 min): WarmUp / Gesture / Anatomy / Shading (`gui/ressources/session_configs.json`)
+  - [x] SessionManager: build run from tags filter + config, navigation API
+  - [x] Session window: countdown top-right, play/pause/prev/next, fullscreen or always-on-top
+  - [x] Main window: hide on session start, re-show on session close
 - [ ] Implement auto-tagging using AI
   - [ ] Research AI tagging libraries (CLIP, etc.)
   - [ ] Create AI tagging service

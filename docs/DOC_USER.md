@@ -70,3 +70,25 @@ Categories act as a global OR (Human OR Animal). Sub-tags act as AND within thei
 ### Tags Library Notes
 Categories stay collapsed by default and only expand when you add the category tag to your filters.
 Categories are displayed as buttons in the first column, with sub-tag buttons revealed horizontally to the right when active.
+
+## Drawing Sessions
+
+You can run timed drawing sessions using the images currently shown (filtered by your tag selection).
+
+### Starting a Session
+1. Apply tag filters so the gallery shows the images you want to use.
+2. Click **Session Settings** (bottom of the left panel).
+3. Choose **Session Type**:
+   - **Course**: Phased session (WarmUp → Gesture → Anatomy → Shading) with duration 10–60 minutes (step 10).
+   - **Constant interval**: Same duration per image (30 s, 1/3/5/10/20 min).
+4. Choose **Window Mode**: FullScreen or Window always on top.
+5. Click **Start Session**.
+
+The main window is hidden and the session window opens. The image list is built from your filtered images, in random order.
+
+### Session Window
+- **Countdown**: Shown in the top-right for the current image.
+- **Controls** (bottom bar): Previous, Next, and timer controls (Play/Pause, Reset). Press **Space** to show or hide the control bar.
+- **Keyboard**: **Space** (toggle controls), **Left/Right** (previous/next), **S** (start/stop timer), **P** (pause), **Escape** (end session and return to main window).
+
+When you close the session window (or finish the last image), the main window is shown again.

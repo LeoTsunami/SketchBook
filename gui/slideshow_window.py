@@ -1,8 +1,9 @@
 """
-Fullscreen slideshow window for drawing sessions.
+Fullscreen or always-on-top slideshow window for drawing sessions.
+Shows countdown top-right; play/pause/prev/next in bottom bar.
 """
 from pathlib import Path
-from typing import Optional, List
+from typing import Optional, List, Dict, Any
 from qtpy.QtWidgets import (
     QMainWindow,
     QWidget,
@@ -14,69 +15,57 @@ from qtpy.QtWidgets import (
     QGraphicsView,
     QGraphicsScene,
     QGraphicsPixmapItem,
-    QApplication
+    QApplication,
+    QGridLayout,
 )
-from qtpy.QtCore import Qt, QTimer, Signal, QRect, QSize, QThreadPool
-from qtpy.QtGui import QPixmap, QImage, QKeySequence, QShortcut, QFont, QPainter
-from core.session_manager import SessionManager, DrawingSession
+from qtpy.QtCore import Qt, QTimer, Signal, QThreadPool
+from qtpy.QtGui import QPixmap, QKeySequence, QShortcut, QFont, QPainter
+from core.session_manager import SessionManager, load_course_config
 from core.image_manager import ImageManager
 from gui.session_timer import SessionTimer
 from gui.image_loader_worker import ImageLoaderWorker
 
 
 class SlideshowWindow(QMainWindow):
-    """Fullscreen slideshow window for drawing sessions."""
-    
-    session_ended = Signal()  # Emitted when session ends
-    
+    """Fullscreen or always-on-top slideshow window for drawing sessions."""
+
+    session_ended = Signal()  # Emitted when session ends (user closed or run finished)
+
     def __init__(self, session_manager: SessionManager, image_manager: ImageManager, parent=None):
         """
         Initialize the slideshow window.
-        
+
         Args:
             session_manager: Session manager instance
             image_manager: Image manager instance
-            parent: Parent widget
+            parent: Parent widget (e.g. main window, for hide/show)
         """
         super().__init__(parent)
         self.session_manager = session_manager
         self.image_manager = image_manager
-        
-        # Set up fullscreen window
+
         self.setWindowTitle("SketchBook - Drawing Session")
-        self.setWindowState(Qt.WindowFullScreen)
-        self.setCursor(Qt.BlankCursor)  # Hide cursor during session
-        
-        # Create central widget
+        self.setCursor(Qt.BlankCursor)  # Hide cursor during session; window state set in start_session
+
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        
-        # Create layout
+
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
-        # Create image display
+
         self._setup_image_display(layout)
-        
-        # Create controls overlay
+        # Countdown overlay top-right (always visible)
+        self._setup_countdown_overlay(layout)
         self._setup_controls(layout)
-        
-        # Set up keyboard shortcuts
+
         self._setup_shortcuts()
-        
-        # Thread pool for image loading
+
         self.thread_pool = QThreadPool.globalInstance()
         self.thread_pool.setMaxThreadCount(2)
-        
-        # Current image cache
         self.current_pixmap: Optional[QPixmap] = None
-        
-        # Apply theme
+
         self._apply_theme()
-        
-        # Connect session manager
-        self.session_manager = session_manager
     
     def _setup_image_display(self, layout):
         """Set up the image display area."""
@@ -96,7 +85,26 @@ class SlideshowWindow(QMainWindow):
         self.scene.addItem(self.pixmap_item)
         
         layout.addWidget(self.graphics_view, 1)  # Take most of the space
-    
+
+    def _setup_countdown_overlay(self, layout):
+        """Countdown label top-right over the image area (sibling above graphics_view)."""
+        top_row = QHBoxLayout()
+        top_row.addStretch()
+        self.countdown_frame = QFrame()
+        self.countdown_frame.setObjectName("countdownFrame")
+        self.countdown_frame.setFixedSize(120, 56)
+        countdown_layout = QVBoxLayout(self.countdown_frame)
+        countdown_layout.setContentsMargins(8, 4, 8, 4)
+        self.countdown_label = QLabel("00:00")
+        self.countdown_label.setAlignment(Qt.AlignCenter)
+        font = QFont()
+        font.setPointSize(22)
+        font.setBold(True)
+        self.countdown_label.setFont(font)
+        countdown_layout.addWidget(self.countdown_label)
+        top_row.addWidget(self.countdown_frame)
+        layout.insertLayout(0, top_row)
+
     def _setup_controls(self, layout):
         """Set up the controls overlay."""
         # Create controls frame
@@ -121,9 +129,10 @@ class SlideshowWindow(QMainWindow):
         
         top_row.addStretch()
         
-        # Timer widget
+        # Timer widget (controls bar)
         self.timer_widget = SessionTimer()
         self.timer_widget.timer_finished.connect(self._on_timer_finished)
+        self.timer_widget.timer_updated.connect(self._on_timer_updated)
         top_row.addWidget(self.timer_widget)
         
         controls_layout.addLayout(top_row)
@@ -188,7 +197,7 @@ class SlideshowWindow(QMainWindow):
         from core.settings import settings
         
         if settings.get("ui.theme") == "dark":
-            # Dark theme
+            # Dark theme (countdown frame uses same as controls for visibility)
             self.setStyleSheet("""
                 QMainWindow {
                     background-color: #1e1e1e;
@@ -196,6 +205,10 @@ class SlideshowWindow(QMainWindow):
                 QFrame {
                     background-color: rgba(30, 30, 30, 0.9);
                     border: none;
+                }
+                QFrame#countdownFrame {
+                    background-color: rgba(30, 30, 30, 0.85);
+                    border-radius: 6px;
                 }
                 QLabel {
                     color: #ffffff;
@@ -230,6 +243,10 @@ class SlideshowWindow(QMainWindow):
                     background-color: rgba(255, 255, 255, 0.9);
                     border: none;
                 }
+                QFrame#countdownFrame {
+                    background-color: rgba(255, 255, 255, 0.85);
+                    border-radius: 6px;
+                }
                 QLabel {
                     color: #000000;
                 }
@@ -254,28 +271,66 @@ class SlideshowWindow(QMainWindow):
                 }
             """)
     
-    def start_session(self, session: DrawingSession):
+    def start_session(
+        self,
+        image_ids: List[str],
+        session_type: str,
+        course_duration_minutes: Optional[int] = None,
+        interval_seconds: Optional[int] = None,
+        window_mode: str = "FullScreen",
+        course_config_path: Optional[Path] = None,
+    ) -> bool:
         """
-        Start a drawing session.
-        
+        Start a drawing session from filtered image IDs and settings.
+
         Args:
-            session: Session to start
+            image_ids: Filtered image IDs (will be shuffled).
+            session_type: "Course" or "Constant interval".
+            course_duration_minutes: For Course: 10, 20, ..., 60.
+            interval_seconds: For Constant: seconds per image.
+            window_mode: "FullScreen" or "Window always on top".
+            course_config_path: Path to session_configs.json for Course.
+
+        Returns:
+            True if session started (run has at least one image), False otherwise.
         """
-        self.current_session = session
-        self.session_manager.start_session(session)
-        
-        # Update UI
-        self.session_info.setText(f"Session: {session.preset.name}")
-        self.timer_widget.set_duration(session.preset.duration_seconds)
-        
-        # Load first image
+        course_config: Optional[Dict[str, Any]] = None
+        if session_type == "Course" and course_config_path and course_config_path.exists():
+            course_config = load_course_config(course_config_path)
+
+        ok = self.session_manager.start_session(
+            image_ids=image_ids,
+            session_type=session_type,
+            course_duration_minutes=course_duration_minutes,
+            interval_seconds=interval_seconds,
+            window_mode=window_mode,
+            course_config=course_config,
+        )
+        if not ok:
+            return False
+
+        # Window mode: FullScreen or Window always on top
+        if window_mode == "Window always on top":
+            self.setWindowState(Qt.WindowNoState)
+            self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+        else:
+            self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
+            self.setWindowState(Qt.WindowFullScreen)
+
+        # UI
+        self.session_info.setText(f"Session: {self.session_manager.get_session_display_name()}")
+        dur = self.session_manager.get_current_duration()
+        self.timer_widget.set_duration(dur)
+        m, s = dur // 60, dur % 60
+        self.countdown_label.setText(f"{m:02d}:{s:02d}")
+
         self._load_current_image()
         self._update_progress()
-        
-        # Show window
+
         self.show()
         self.raise_()
         self.activateWindow()
+        return True
     
     def _load_current_image(self):
         """Load the current image for display."""
@@ -335,20 +390,27 @@ class SlideshowWindow(QMainWindow):
     def _next_image(self):
         """Go to the next image."""
         if self.session_manager.advance_image():
+            self._sync_timer_to_current_image()
             self._load_current_image()
             self._update_progress()
-            self.timer_widget.reset_timer()
         else:
-            # Session ended
             self.session_ended.emit()
             self.close()
-    
+
+    def _sync_timer_to_current_image(self):
+        """Set timer duration to current image and reset countdown display."""
+        dur = self.session_manager.get_current_duration()
+        self.timer_widget.set_duration(dur)
+        self.timer_widget.reset_timer()
+        m, s = dur // 60, dur % 60
+        self.countdown_label.setText(f"{m:02d}:{s:02d}")
+
     def _previous_image(self):
         """Go to the previous image."""
         if self.session_manager.previous_image():
+            self._sync_timer_to_current_image()
             self._load_current_image()
             self._update_progress()
-            self.timer_widget.reset_timer()
     
     def _toggle_controls(self):
         """Toggle the visibility of controls."""
@@ -371,11 +433,15 @@ class SlideshowWindow(QMainWindow):
         """Pause/resume timer."""
         self.timer_widget.pause_timer()
     
+    def _on_timer_updated(self, remaining_seconds: int):
+        """Sync countdown label (top-right) with timer."""
+        m = remaining_seconds // 60
+        s = remaining_seconds % 60
+        self.countdown_label.setText(f"{m:02d}:{s:02d}")
+
     def _on_timer_finished(self):
-        """Handle timer completion."""
-        # Auto-advance if enabled
-        if self.current_session and self.current_session.preset.auto_advance:
-            self._next_image()
+        """Handle timer completion: auto-advance to next image or end session."""
+        self._next_image()
     
     def resizeEvent(self, event):
         """Handle resize events to maintain image fit."""
@@ -384,12 +450,9 @@ class SlideshowWindow(QMainWindow):
             self._update_image_display()
     
     def closeEvent(self, event):
-        """Handle window close event."""
-        # End the session
-        if self.session_manager.get_current_session():
-            self.session_manager.end_session()
-        
-        # Restore cursor
+        """Handle window close event: end session and notify parent to re-show main window."""
+        if self.session_manager.session_run:
+            self.session_ended.emit()
+        self.session_manager.end_session()
         self.setCursor(Qt.ArrowCursor)
-        
         super().closeEvent(event) 

@@ -62,6 +62,8 @@ from gui.tag_widgets import DraggableTagChip
 from gui.tag_apply_worker import TagApplyWorker
 from gui.session_settings_dialog import SessionSettingsDialog
 from gui.image_viewer_window import ImageViewerWindow
+from gui.slideshow_window import SlideshowWindow
+from core.session_manager import SessionManager
 from qtpy.QtWidgets import QApplication
 import os
 import json
@@ -157,7 +159,11 @@ class MainWindow(QMainWindow):
         
         # Initialize managers
         self.image_manager = ImageManager()
+        self.session_manager = SessionManager()
         self.thread_pool = QThreadPool()
+
+        # Session slideshow window (created when needed, parent=self for hide/show)
+        self._slideshow_window: Optional[SlideshowWindow] = None
         
         # Dev mode flag
         self.dev_mode = settings.get("ui.dev_mode", False)
@@ -615,45 +621,66 @@ class MainWindow(QMainWindow):
         self.session_images_count_label.setText(f"Images: {count}")
     
     def _on_session_settings_clicked(self):
-        """Handle Session Settings button click."""
-        # Get filtered images
+        """Handle Session Settings button click: open dialog then start session window."""
         filtered_images = self._filter_images_by_category()
-        
         image_count = len(filtered_images)
-        
-        # Create and show session settings dialog
+
         dialog = SessionSettingsDialog(self.image_manager, image_count, self)
-        
-        if dialog.exec_() == QDialog.Accepted and dialog.session_started:
-            # Get session settings from dialog
-            settings = dialog.get_session_settings()
-            
-            # Get session type
-            session_type = settings["session_type"]
-            
-            # Get session parameters based on type
-            if session_type == "Course":
-                course_duration_minutes = settings["course_duration_minutes"]
-                QMessageBox.information(
-                    self,
-                    "Session Configuration",
-                    f"Starting Course session:\n"
-                    f"- Duration: {course_duration_minutes} minutes\n"
-                    f"- Images: {image_count}\n"
-                    f"- Window Mode: {settings['window_mode']}"
-                )
-            else:  # Constant interval
-                interval_text = settings["interval_duration"]
-                QMessageBox.information(
-                    self,
-                    "Session Configuration",
-                    f"Starting Constant interval session:\n"
-                    f"- Interval: {interval_text}\n"
-                    f"- Images: {image_count}\n"
-                    f"- Window Mode: {settings['window_mode']}"
-                )
-            
-            # TODO: Implement actual session start logic
+        if dialog.exec_() != QDialog.Accepted or not dialog.session_started:
+            return
+
+        settings_dict = dialog.get_session_settings()
+        session_type = settings_dict["session_type"]
+        window_mode = settings_dict["window_mode"]
+        image_ids = [m.id for m in filtered_images]
+
+        course_duration_minutes: Optional[int] = None
+        interval_seconds: Optional[int] = None
+
+        if session_type == "Course":
+            course_duration_minutes = settings_dict["course_duration_minutes"]
+        else:
+            # Map "30 seconds" -> 30, "1 minute" -> 60, etc.
+            interval_text = settings_dict.get("interval_duration", "1 minute")
+            _interval_map = {
+                "30 seconds": 30,
+                "1 minute": 60,
+                "3 minutes": 180,
+                "5 minutes": 300,
+                "10 minutes": 600,
+                "20 minutes": 1200,
+            }
+            interval_seconds = _interval_map.get(interval_text, 60)
+
+        if self._slideshow_window is None:
+            self._slideshow_window = SlideshowWindow(
+                self.session_manager, self.image_manager, parent=self
+            )
+            self._slideshow_window.session_ended.connect(self._on_session_ended)
+
+        course_config_path = Path(__file__).resolve().parent / "ressources" / "session_configs.json"
+        started = self._slideshow_window.start_session(
+            image_ids=image_ids,
+            session_type=session_type,
+            course_duration_minutes=course_duration_minutes,
+            interval_seconds=interval_seconds,
+            window_mode=window_mode,
+            course_config_path=course_config_path,
+        )
+        if started:
+            self.hide()
+        else:
+            QMessageBox.warning(
+                self,
+                "Session",
+                "Could not start session. For Course, use a duration of 10, 20, 30, 40, 50 or 60 minutes.",
+            )
+
+    def _on_session_ended(self):
+        """Re-show main window when session window is closed."""
+        self.show()
+        self.raise_()
+        self.activateWindow()
     
     def _load_tags_into_grid(self):
         """Load tags from JSON into the tags grid."""
