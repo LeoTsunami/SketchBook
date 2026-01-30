@@ -1,5 +1,15 @@
 # Journal des modifications
 
+## 2026-01-30
+### ✅ Tâches :
+- Décompte de session : seconde par seconde et dégradé rouge vers 0
+
+- Le timer déclenche maintenant chaque seconde (intervalle 1 s) au lieu de 100 ms ; le décompte décroît seconde par seconde.
+- L’overlay de décompte est passé de haut-droite à haut-gauche dans la fenêtre de session.
+- La couleur du décompte varie progressivement vers le rouge quand le temps restant approche de 0 (thème sombre : blanc → rouge ; thème clair : noir → rouge). La couleur est réinitialisée au changement d’image ou au démarrage de session.
+ → Résultat : Décompte plus lisible en haut à gauche, avec retour visuel d’urgence quand le temps diminue.
+---
+
 ## 2026-01-27
 ### ✅ Tâches :
 - Sessions de dessin (Course + intervalle constant)

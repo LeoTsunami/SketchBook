@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-01-30
+### ✅ Tasks:
+- Session countdown: second-by-second and red gradient toward 0
+
+- Timer now ticks every second (interval 1s) instead of 100ms; countdown decreases second by second.
+- Countdown overlay moved from top-right to top-left in the session window.
+- Countdown label color interpolates toward red as remaining time approaches 0 (dark theme: white → red; light theme: black → red). Color is reset when changing image or starting session.
+ → Result: Clearer, less distracting countdown in top-left; urgency feedback as time runs out.
+---
+
 ## 2026-01-27
 ### ✅ Tasks:
 - Drawing sessions (Course + Constant interval)

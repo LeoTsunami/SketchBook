@@ -87,7 +87,7 @@ You can run timed drawing sessions using the images currently shown (filtered by
 The main window is hidden and the session window opens. The image list is built from your filtered images, in random order.
 
 ### Session Window
-- **Countdown**: Shown in the top-right for the current image.
+- **Countdown**: Shown in the top-left for the current image; it decreases second by second and turns red as time approaches zero.
 - **Controls** (bottom bar): Previous, Next, and timer controls (Play/Pause, Reset). Press **Space** to show or hide the control bar.
 - **Keyboard**: **Space** (toggle controls), **Left/Right** (previous/next), **S** (start/stop timer), **P** (pause), **Escape** (end session and return to main window).
 

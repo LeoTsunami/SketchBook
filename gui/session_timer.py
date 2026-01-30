@@ -36,10 +36,10 @@ class SessionTimer(QWidget):
         self.is_running = False
         self.is_paused = False
         
-        # Create timer for updates
+        # Create timer for updates (tick every second)
         self.update_timer = QTimer(self)
         self.update_timer.timeout.connect(self._update_timer)
-        self.update_timer.setInterval(100)  # Update every 100ms for smooth countdown
+        self.update_timer.setInterval(1000)  # Update every 1s for second-by-second countdown
         
         self._setup_ui()
         self._apply_theme()
@@ -241,7 +241,7 @@ class SessionTimer(QWidget):
         if not self.is_running or self.is_paused:
             return
         
-        self.remaining_seconds -= 0.1  # Decrease by 100ms
+        self.remaining_seconds -= 1  # Decrease by one second per tick
         
         if self.remaining_seconds <= 0:
             self.remaining_seconds = 0
