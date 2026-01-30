@@ -1,6 +1,6 @@
 """
 Fullscreen or always-on-top slideshow window for drawing sessions.
-Shows countdown top-left (reddening as time approaches 0); play/pause/prev/next in bottom bar.
+Image full area + countdown overlay (top-left). No bottom bar.
 """
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -18,12 +18,51 @@ from qtpy.QtWidgets import (
     QApplication,
     QGridLayout,
 )
-from qtpy.QtCore import Qt, QTimer, Signal, QThreadPool, QVariantAnimation
-from qtpy.QtGui import QPixmap, QKeySequence, QShortcut, QFont, QPainter
+from qtpy.QtCore import Qt, QTimer, Signal, QThreadPool, QVariantAnimation, QRectF
+from qtpy.QtGui import (
+    QPixmap,
+    QKeySequence,
+    QShortcut,
+    QFont,
+    QPainter,
+    QTransform,
+    QGuiApplication,
+)
 from core.session_manager import SessionManager, load_course_config
 from core.image_manager import ImageManager
 from gui.session_timer import SessionTimer
 from gui.image_loader_worker import ImageLoaderWorker
+
+
+class _OverlayContainer(QWidget):
+    """Container: image view full area + countdown overlay (top-left)."""
+
+    resized = Signal()
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._graphics_view = None
+        self._countdown_frame = None
+
+    def set_content(
+        self,
+        graphics_view: QGraphicsView,
+        countdown_frame: QFrame,
+    ) -> None:
+        self._graphics_view = graphics_view
+        self._countdown_frame = countdown_frame
+        graphics_view.setParent(self)
+        countdown_frame.setParent(self)
+
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        r = self.rect()
+        if self._graphics_view:
+            self._graphics_view.setGeometry(r)
+        if self._countdown_frame:
+            self._countdown_frame.setGeometry(16, 16, 120, 56)
+            self._countdown_frame.raise_()
+        self.resized.emit()
 
 
 class SlideshowWindow(QMainWindow):
@@ -49,53 +88,51 @@ class SlideshowWindow(QMainWindow):
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        self._setup_image_display(layout)
-        # Countdown overlay top-right (always visible)
-        self._setup_countdown_overlay(layout)
-        self._setup_controls(layout)
+        # Image + countdown only
+        self._setup_image_display()
+        self._setup_countdown_overlay()
+        self._setup_timer_hidden()  # Timer logic for countdown and auto-advance, no UI
+        self._overlay_container = _OverlayContainer(self)
+        self._overlay_container.set_content(self.graphics_view, self.countdown_frame)
+        self._overlay_container.resized.connect(self._on_container_resized)
+        layout.addWidget(self._overlay_container, 1)
 
         self._setup_shortcuts()
 
         self.thread_pool = QThreadPool.globalInstance()
         self.thread_pool.setMaxThreadCount(2)
         self.current_pixmap: Optional[QPixmap] = None
-        self._first_image = True  # No fade on first image
+        self._first_image = True
         self._fade_animation: Optional[QVariantAnimation] = None
+        self._is_fullscreen = False
 
         self._apply_theme()
     
-    def _setup_image_display(self, layout):
-        """Set up the image display area with two layers for crossfade."""
-        # Create graphics view for image display
+    def _setup_image_display(self):
+        """Set up the image display (two layers for crossfade). Will be placed full-size in container."""
         self.graphics_view = QGraphicsView()
         self.graphics_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.graphics_view.setRenderHint(QPainter.SmoothPixmapTransform)
         self.graphics_view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
-        
-        # Create graphics scene
+        self.graphics_view.setStyleSheet("background: black;")  # Letterbox color when ratio differs
+
         self.scene = QGraphicsScene()
         self.graphics_view.setScene(self.scene)
-        
-        # Back layer: current image (always fully visible)
+
         self.pixmap_item = QGraphicsPixmapItem()
         self.scene.addItem(self.pixmap_item)
-        # Front layer: next image fades in on top (opacity 0 when idle)
         self.pixmap_item_next = QGraphicsPixmapItem()
         self.pixmap_item_next.setZValue(1)
         self.pixmap_item_next.setOpacity(0.0)
         self.scene.addItem(self.pixmap_item_next)
-        
-        layout.addWidget(self.graphics_view, 1)  # Take most of the space
 
-    def _setup_countdown_overlay(self, layout):
-        """Countdown label top-left over the image area (sibling above graphics_view)."""
-        top_row = QHBoxLayout()
+    def _setup_countdown_overlay(self):
+        """Countdown frame (overlay top-left)."""
         self.countdown_frame = QFrame()
         self.countdown_frame.setObjectName("countdownFrame")
         self.countdown_frame.setFixedSize(120, 56)
@@ -108,94 +145,21 @@ class SlideshowWindow(QMainWindow):
         font.setBold(True)
         self.countdown_label.setFont(font)
         countdown_layout.addWidget(self.countdown_label)
-        top_row.addWidget(self.countdown_frame)
-        top_row.addStretch()
-        layout.insertLayout(0, top_row)
 
-    def _setup_controls(self, layout):
-        """Set up the controls overlay."""
-        # Create controls frame
-        self.controls_frame = QFrame()
-        self.controls_frame.setFixedHeight(120)
-        self.controls_frame.setVisible(False)  # Hidden by default
-        
-        controls_layout = QVBoxLayout(self.controls_frame)
-        controls_layout.setContentsMargins(20, 10, 20, 10)
-        
-        # Top row: Progress and timer
-        top_row = QHBoxLayout()
-        
-        # Progress label
-        self.progress_label = QLabel("Image 1 of 5")
-        self.progress_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        font = QFont()
-        font.setPointSize(12)
-        font.setBold(True)
-        self.progress_label.setFont(font)
-        top_row.addWidget(self.progress_label)
-        
-        top_row.addStretch()
-        
-        # Timer widget (controls bar)
+    def _setup_timer_hidden(self):
+        """Timer for countdown and auto-advance; no visible UI."""
         self.timer_widget = SessionTimer()
+        self.timer_widget.setParent(self)
+        self.timer_widget.setVisible(False)
         self.timer_widget.timer_finished.connect(self._on_timer_finished)
         self.timer_widget.timer_updated.connect(self._on_timer_updated)
-        top_row.addWidget(self.timer_widget)
-        
-        controls_layout.addLayout(top_row)
-        
-        # Bottom row: Navigation buttons
-        bottom_row = QHBoxLayout()
-        
-        # Previous button
-        self.prev_button = QPushButton("← Previous")
-        self.prev_button.clicked.connect(self._previous_image)
-        self.prev_button.setFixedSize(100, 40)
-        bottom_row.addWidget(self.prev_button)
-        
-        bottom_row.addStretch()
-        
-        # Session info
-        self.session_info = QLabel("Session: Standard (2min)")
-        self.session_info.setAlignment(Qt.AlignCenter)
-        font = QFont()
-        font.setPointSize(10)
-        self.session_info.setFont(font)
-        bottom_row.addWidget(self.session_info)
-        
-        bottom_row.addStretch()
-        
-        # Next button
-        self.next_button = QPushButton("Next →")
-        self.next_button.clicked.connect(self._next_image)
-        self.next_button.setFixedSize(100, 40)
-        bottom_row.addWidget(self.next_button)
-        
-        controls_layout.addLayout(bottom_row)
-        
-        layout.addWidget(self.controls_frame)
-    
+
     def _setup_shortcuts(self):
-        """Set up keyboard shortcuts."""
-        # Show/hide controls
-        self.show_controls_shortcut = QShortcut(QKeySequence("Space"), self)
-        self.show_controls_shortcut.activated.connect(self._toggle_controls)
-        
-        # Navigation
+        """Keyboard: Left/Right = prev/next, Escape = close session."""
         self.next_shortcut = QShortcut(QKeySequence("Right"), self)
         self.next_shortcut.activated.connect(self._next_image)
-        
         self.prev_shortcut = QShortcut(QKeySequence("Left"), self)
         self.prev_shortcut.activated.connect(self._previous_image)
-        
-        # Timer controls
-        self.start_stop_shortcut = QShortcut(QKeySequence("S"), self)
-        self.start_stop_shortcut.activated.connect(self._toggle_timer)
-        
-        self.pause_shortcut = QShortcut(QKeySequence("P"), self)
-        self.pause_shortcut.activated.connect(self._pause_timer)
-        
-        # Exit
         self.exit_shortcut = QShortcut(QKeySequence("Escape"), self)
         self.exit_shortcut.activated.connect(self.close)
     
@@ -317,15 +281,15 @@ class SlideshowWindow(QMainWindow):
             return False
 
         # Window mode: FullScreen or Window always on top
-        if window_mode == "Window always on top":
-            self.setWindowState(Qt.WindowNoState)
-            self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
-        else:
+        self._is_fullscreen = window_mode != "Window always on top"
+        if self._is_fullscreen:
             self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
             self.setWindowState(Qt.WindowFullScreen)
+        else:
+            self.setWindowState(Qt.WindowNoState)
+            self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
 
-        # UI
-        self.session_info.setText(f"Session: {self.session_manager.get_session_display_name()}")
+        # Countdown + timer
         dur = self.session_manager.get_current_duration()
         self.timer_widget.set_duration(dur)
         m, s = dur // 60, dur % 60
@@ -335,9 +299,8 @@ class SlideshowWindow(QMainWindow):
         # Auto-start timer so countdown decreases immediately (no need to press S/Start)
         self.timer_widget.start_timer()
 
-        self._first_image = True  # First image of session: no fade
+        self._first_image = True
         self._load_current_image()
-        self._update_progress()
 
         self.show()
         self.raise_()
@@ -383,33 +346,148 @@ class SlideshowWindow(QMainWindow):
         self.current_pixmap = placeholder
         self._update_image_display()
     
+    def _get_viewport_size(self):
+        """Return (width, height) in *logical* pixels (for view transform)."""
+        vp = self.graphics_view.viewport()
+        return (vp.width(), vp.height())
+
+    def _get_screen_dpr(self):
+        """Device pixel ratio of the screen this window is on."""
+        try:
+            screen = self.screen()
+            if screen:
+                return screen.devicePixelRatio()
+        except Exception:
+            pass
+        return 1.0
+
+    def _get_display_size_sources(self):
+        """Return dict of (name -> (width, height) logical) from different Qt sources.
+        Useful to see what each API returns and pick the right one.
+        """
+        out = {}
+        try:
+            app = QApplication.instance()
+            if app:
+                primary = QGuiApplication.primaryScreen()
+                if primary:
+                    g = primary.geometry()
+                    out["primaryScreen.geometry()"] = (g.width(), g.height())
+                    ag = primary.availableGeometry()
+                    out["primaryScreen.availableGeometry()"] = (ag.width(), ag.height())
+        except Exception as e:
+            out["primaryScreen"] = (0, 0)
+
+        try:
+            screen = self.screen()
+            if screen:
+                g = screen.geometry()
+                out["window.screen().geometry()"] = (g.width(), g.height())
+                ag = screen.availableGeometry()
+                out["window.screen().availableGeometry()"] = (ag.width(), ag.height())
+        except Exception:
+            out["window.screen()"] = (0, 0)
+
+        try:
+            out["window.size()"] = (self.width(), self.height())
+            out["window.frameGeometry()"] = (
+                self.frameGeometry().width(),
+                self.frameGeometry().height(),
+            )
+        except Exception:
+            out["window"] = (0, 0)
+
+        try:
+            container = getattr(self, "_overlay_container", None)
+            if container:
+                out["container.rect()"] = (container.width(), container.height())
+        except Exception:
+            pass
+
+        try:
+            vp = self.graphics_view.viewport()
+            out["graphics_view.viewport()"] = (vp.width(), vp.height())
+        except Exception:
+            pass
+
+        return out
+
+    def _get_viewport_physical_size(self):
+        """Return (width, height) for scaling: prefer screen size in fullscreen, else viewport physical."""
+        dpr = self._get_screen_dpr()
+        if self._is_fullscreen:
+            try:
+                screen = self.screen()
+                if screen:
+                    g = screen.geometry()
+                    w, h = g.width(), g.height()
+                    if w > 0 and h > 0:
+                        return (
+                            max(1, int(round(w * dpr))),
+                            max(1, int(round(h * dpr))),
+                        )
+            except Exception:
+                pass
+        vp = self.graphics_view.viewport()
+        w, h = vp.width(), vp.height()
+        return (max(1, int(round(w * dpr))), max(1, int(round(h * dpr))))
+
+    def _fit_scene_in_view(self) -> None:
+        """Fit the scene contents in the viewport (Qt standard: fitInView with scene rect, not view rect).
+        Call after setting pixmaps and on resize. See e.g. Stack Overflow 9654222.
+        """
+        rect = self.scene.itemsBoundingRect()
+        if rect.isEmpty():
+            return
+        self.scene.setSceneRect(rect)
+        self.graphics_view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+
+    def _scale_and_display_pixmap(self, pixmap: QPixmap) -> None:
+        """Set pixmap at original size, then fit scene in viewport via fitInView (no manual scaling)."""
+        if pixmap.isNull():
+            return
+        vw, vh = self._get_viewport_size()
+        if vw <= 0 or vh <= 0:
+            QTimer.singleShot(50, lambda: self._scale_and_display_pixmap(pixmap))
+            return
+        self.pixmap_item.setPixmap(pixmap)
+        self.pixmap_item_next.setPixmap(pixmap)
+        self.pixmap_item_next.setOpacity(0.0)
+        self._fit_scene_in_view()
+
+    def _on_container_resized(self) -> None:
+        """On resize: refit scene in viewport (fitInView with scene rect)."""
+        self._fit_scene_in_view()
+
     def _update_image_display(self):
-        """Update the image display, with crossfade when not the first image."""
+        """Update the image display: set pixmap, fit in view; optional crossfade for subsequent images."""
         if not self.current_pixmap:
+            return
+        vw, vh = self._get_viewport_size()
+        if vw <= 0 or vh <= 0:
+            QTimer.singleShot(50, self._update_image_display)
             return
 
         if self._first_image:
-            # First image: no fade, show immediately
-            self.pixmap_item.setPixmap(self.current_pixmap)
-            self.pixmap_item_next.setOpacity(0.0)
+            self._scale_and_display_pixmap(self.current_pixmap)
             self._first_image = False
-            self._fit_image_in_view()
             return
 
-        # Stop any running fade so we can start a new one
+        # Stop any running fade
         if self._fade_animation:
             self._fade_animation.stop()
             self.pixmap_item.setPixmap(self.pixmap_item_next.pixmap())
             self.pixmap_item_next.setOpacity(0.0)
 
-        # Crossfade: show new image on top layer, fade in from 0 to 1
+        # Crossfade: new image on top layer at original size
         self.pixmap_item_next.setPixmap(self.current_pixmap)
         self.pixmap_item_next.setOpacity(0.0)
+        self._fit_scene_in_view()
 
         self._fade_animation = QVariantAnimation(self)
         self._fade_animation.setStartValue(0.0)
         self._fade_animation.setEndValue(1.0)
-        self._fade_animation.setDuration(400)  # 400 ms fade
+        self._fade_animation.setDuration(400)
         self._fade_animation.valueChanged.connect(self._on_fade_value_changed)
         self._fade_animation.finished.connect(self._on_fade_finished)
         self._fade_animation.start()
@@ -419,30 +497,20 @@ class SlideshowWindow(QMainWindow):
         self.pixmap_item_next.setOpacity(float(value))
 
     def _on_fade_finished(self):
-        """After fade: move new image to back layer, reset overlay for next transition."""
+        """After fade: move new image to back layer, refit."""
         self.pixmap_item.setPixmap(self.pixmap_item_next.pixmap())
         self.pixmap_item_next.setOpacity(0.0)
-        self._fit_image_in_view()
+        self._fit_scene_in_view()
         if self._fade_animation:
             self._fade_animation.valueChanged.disconnect(self._on_fade_value_changed)
             self._fade_animation.finished.disconnect(self._on_fade_finished)
-
-    def _fit_image_in_view(self):
-        """Fit the scene to the view while keeping aspect ratio."""
-        self.graphics_view.fitInView(self.scene.sceneRect(), Qt.KeepAspectRatio)
-    
-    def _update_progress(self):
-        """Update the progress display."""
-        current, total, time_remaining = self.session_manager.get_session_progress()
-        self.progress_label.setText(f"Image {current} of {total}")
     
     def _next_image(self):
         """Go to the next image."""
         if self.session_manager.advance_image():
             self._sync_timer_to_current_image()
-            self.timer_widget.start_timer()  # Countdown for new image starts immediately
+            self.timer_widget.start_timer()
             self._load_current_image()
-            self._update_progress()
         else:
             self.session_ended.emit()
             self.close()
@@ -460,31 +528,9 @@ class SlideshowWindow(QMainWindow):
         """Go to the previous image."""
         if self.session_manager.previous_image():
             self._sync_timer_to_current_image()
-            self.timer_widget.start_timer()  # Countdown for this image starts immediately
-            self._load_current_image()
-            self._update_progress()
-    
-    def _toggle_controls(self):
-        """Toggle the visibility of controls."""
-        self.controls_frame.setVisible(not self.controls_frame.isVisible())
-        
-        # Show cursor when controls are visible
-        if self.controls_frame.isVisible():
-            self.setCursor(Qt.ArrowCursor)
-        else:
-            self.setCursor(Qt.BlankCursor)
-    
-    def _toggle_timer(self):
-        """Toggle timer start/stop."""
-        if self.timer_widget.is_timer_running():
-            self.timer_widget.stop_timer()
-        else:
             self.timer_widget.start_timer()
-    
-    def _pause_timer(self):
-        """Pause/resume timer."""
-        self.timer_widget.pause_timer()
-    
+            self._load_current_image()
+
     def _apply_countdown_color(self, remaining_seconds: int):
         """Set countdown label color: more red as remaining time approaches 0."""
         total = max(1, self.timer_widget.total_seconds)
@@ -514,10 +560,8 @@ class SlideshowWindow(QMainWindow):
         self._next_image()
     
     def resizeEvent(self, event):
-        """Handle resize events to maintain image fit."""
+        """Handle resize events; container.resized will trigger re-scale and display."""
         super().resizeEvent(event)
-        if self.current_pixmap:
-            self._fit_image_in_view()
     
     def closeEvent(self, event):
         """Handle window close event: end session and notify parent to re-show main window."""
