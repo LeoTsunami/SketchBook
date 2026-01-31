@@ -42,10 +42,7 @@ from gui.image_loader_worker import ImageLoaderWorker
 # Set to True to print dimension debug to console (viewport, scene rect, items)
 _DEBUG_SLIDESHOW_DIMENSIONS = False
 # Set to True to print Space key / play-pause toggle debug
-_DEBUG_SPACE_PLAYPAUSE = True
-# Set to True to print which widget receives MouseMove during slideshow
-_DEBUG_SLIDESHOW_MOUSEMOVE = True
-
+_DEBUG_SPACE_PLAYPAUSE = False
 # UI auto-hide: show overlays + cursor on key/mouse, hide after inactivity
 _UI_HIDE_AFTER_MS = 2000
 
@@ -69,15 +66,6 @@ def _dbg(msg: str) -> None:
 def _dbg_space(msg: str) -> None:
     if _DEBUG_SPACE_PLAYPAUSE:
         print(f"[Slideshow Space] {msg}")
-
-
-def _dbg_mousemove(obj, event) -> None:
-    """Print which widget received a mouse event (for debugging MouseMove during slideshow)."""
-    if not _DEBUG_SLIDESHOW_MOUSEMOVE or event.type() != QEvent.MouseMove:
-        return
-    name = obj.metaObject().className() if obj else "None"
-    oname = obj.objectName() or ""
-    print(f"[Slideshow MouseMove] received by: {name!r} objectName={oname!r}")
 
 
 def _invert_icon(icon: QIcon) -> QIcon:
@@ -904,7 +892,6 @@ class SlideshowWindow(QMainWindow):
 
     def eventFilter(self, obj, event):
         """Catch Space on graphics view; show UI on any key, mouse move, or mouse click."""
-        _dbg_mousemove(obj, event)
         # Viewport receives mouse events (QGraphicsView delegates to viewport())
         if obj == self.graphics_view.viewport():
             if event.type() in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
