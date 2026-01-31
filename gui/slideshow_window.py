@@ -3,6 +3,7 @@ Fullscreen or always-on-top slideshow window for drawing sessions.
 Image full area; countdown (top-left); Escape = fullscreen->window, window->close;
 Plein écran button (windowed); bottom bar: Previous, Next, Play/Pause.
 """
+import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any
 from qtpy.QtWidgets import (
@@ -18,8 +19,9 @@ from qtpy.QtWidgets import (
     QGraphicsPixmapItem,
     QApplication,
     QGridLayout,
+    QStyle,
 )
-from qtpy.QtCore import Qt, QTimer, Signal, QThreadPool, QVariantAnimation, QRectF
+from qtpy.QtCore import Qt, QTimer, Signal, QThreadPool, QVariantAnimation, QRectF, QEvent, QSize
 from qtpy.QtGui import (
     QPixmap,
     QKeySequence,
@@ -28,6 +30,9 @@ from qtpy.QtGui import (
     QPainter,
     QTransform,
     QGuiApplication,
+    QKeyEvent,
+    QIcon,
+    QImage,
 )
 from core.session_manager import SessionManager, load_course_config
 from core.image_manager import ImageManager
@@ -36,6 +41,13 @@ from gui.image_loader_worker import ImageLoaderWorker
 
 # Set to True to print dimension debug to console (viewport, scene rect, items)
 _DEBUG_SLIDESHOW_DIMENSIONS = False
+# Set to True to print Space key / play-pause toggle debug
+_DEBUG_SPACE_PLAYPAUSE = True
+# Set to True to print which widget receives MouseMove during slideshow
+_DEBUG_SLIDESHOW_MOUSEMOVE = True
+
+# UI auto-hide: show overlays + cursor on key/mouse, hide after inactivity
+_UI_HIDE_AFTER_MS = 2000
 
 # --- Qui contient quoi (hiérarchie) ---
 # On utilise fitInView(scene.itemsBoundingRect(), KeepAspectRatio) pour un vrai fullscreen :
@@ -52,6 +64,57 @@ _DEBUG_SLIDESHOW_DIMENSIONS = False
 def _dbg(msg: str) -> None:
     if _DEBUG_SLIDESHOW_DIMENSIONS:
         print(f"[Slideshow DEBUG] {msg}")
+
+
+def _dbg_space(msg: str) -> None:
+    if _DEBUG_SPACE_PLAYPAUSE:
+        print(f"[Slideshow Space] {msg}")
+
+
+def _dbg_mousemove(obj, event) -> None:
+    """Print which widget received a mouse event (for debugging MouseMove during slideshow)."""
+    if not _DEBUG_SLIDESHOW_MOUSEMOVE or event.type() != QEvent.MouseMove:
+        return
+    name = obj.metaObject().className() if obj else "None"
+    oname = obj.objectName() or ""
+    print(f"[Slideshow MouseMove] received by: {name!r} objectName={oname!r}")
+
+
+def _invert_icon(icon: QIcon) -> QIcon:
+    """Return a new QIcon with inverted RGB colors (for visibility on button)."""
+    if icon is None or icon.isNull():
+        return icon
+    size = 32
+    pixmap = icon.pixmap(QSize(size, size))
+    if pixmap.isNull():
+        return icon
+    image = pixmap.toImage()
+    if image.isNull():
+        return icon
+    image.invertPixels(QImage.InvertRgb)
+    return QIcon(QPixmap.fromImage(image))
+
+
+def _get_media_icons():
+    """Return (play_icon, pause_icon) from QStyle if available, inverted; else (None, None)."""
+    style = QApplication.style()
+    if style is None:
+        return None, None
+    play_icon = None
+    pause_icon = None
+    sp_play = getattr(QStyle, "SP_MediaPlay", None)
+    sp_pause = getattr(QStyle, "SP_MediaPause", None)
+    if sp_play is not None:
+        try:
+            play_icon = _invert_icon(style.standardIcon(sp_play))
+        except Exception:
+            pass
+    if sp_pause is not None:
+        try:
+            pause_icon = _invert_icon(style.standardIcon(sp_pause))
+        except Exception:
+            pass
+    return play_icon, pause_icon
 
 
 class _OverlayContainer(QWidget):
@@ -92,7 +155,7 @@ class _OverlayContainer(QWidget):
         if self._fullscreen_btn:
             self._fullscreen_btn.setGeometry(r.width() - 116, 16, 100, 40)
         if self._controls_frame:
-            self._controls_frame.setGeometry(0, r.height() - 100, r.width(), 100)
+            self._controls_frame.setGeometry(0, r.height() - 70, r.width(), 70)
         for w in (self._countdown_frame, self._fullscreen_btn, self._controls_frame):
             if w:
                 w.raise_()
@@ -140,6 +203,11 @@ class SlideshowWindow(QMainWindow):
         self._overlay_container.resized.connect(self._on_container_resized)
         layout.addWidget(self._overlay_container, 1)
 
+        self._setup_ui_auto_hide()  # Show overlays + cursor on key/mouse; hide after 2s inactivity
+        self._overlay_container.installEventFilter(self)
+        for w in (self.countdown_frame, self.fullscreen_btn, self.controls_frame):
+            w.installEventFilter(self)  # Catch mouse move over overlay area
+
         self._setup_shortcuts()
 
         self.thread_pool = QThreadPool.globalInstance()
@@ -148,6 +216,7 @@ class SlideshowWindow(QMainWindow):
         self._first_image = True
         self._fade_animation: Optional[QVariantAnimation] = None
         self._is_fullscreen = False
+        self._last_play_pause_toggle_time: float = 0.0  # Debounce: avoid double toggle on one Space press
 
         self._apply_theme()
     
@@ -159,6 +228,9 @@ class SlideshowWindow(QMainWindow):
         self.graphics_view.setRenderHint(QPainter.SmoothPixmapTransform)
         self.graphics_view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
         self.graphics_view.setStyleSheet("background: black;")  # Letterbox color when ratio differs
+        self.graphics_view.setFocusPolicy(Qt.StrongFocus)  # Reason: so Space is received by view first
+        self.graphics_view.setMouseTracking(True)  # Reason: receive MouseMove without button pressed (show controls)
+        self.graphics_view.viewport().setMouseTracking(True)  # QGraphicsView forwards to viewport
 
         self.scene = QGraphicsScene()
         self.graphics_view.setScene(self.scene)
@@ -169,6 +241,10 @@ class SlideshowWindow(QMainWindow):
         self.pixmap_item_next.setZValue(1)
         self.pixmap_item_next.setOpacity(0.0)
         self.scene.addItem(self.pixmap_item_next)
+        # So Space is handled even when focus is on the view (first keypress)
+        self.graphics_view.installEventFilter(self)
+        # Mouse events go to the viewport, not the view; install filter there to catch MouseMove
+        self.graphics_view.viewport().installEventFilter(self)
 
     def _setup_countdown_overlay(self):
         """Countdown frame (overlay top-left)."""
@@ -189,14 +265,16 @@ class SlideshowWindow(QMainWindow):
         """Button to switch to fullscreen (visible only in windowed mode)."""
         self.fullscreen_btn = QPushButton("Plein écran")
         self.fullscreen_btn.setFixedSize(100, 40)
+        self.fullscreen_btn.setFocusPolicy(Qt.NoFocus)  # Reason: Space must go to view
         self.fullscreen_btn.clicked.connect(self._switch_to_fullscreen)
         self.fullscreen_btn.setVisible(False)
 
     def _setup_controls(self):
-        """Bottom bar: Previous, Next, timer (Play/Pause/Reset)."""
+        """Bottom bar: Previous, Play/Pause, Next (no progress bar, no timer; countdown stays top-left)."""
         self.controls_frame = QFrame()
-        self.controls_frame.setFixedHeight(100)
-        self.controls_frame.setVisible(False)
+        self.controls_frame.setObjectName("controlsFrame")
+        self.controls_frame.setFixedHeight(70)
+        self.controls_frame.setVisible(True)  # Always visible for now; show/hide later
 
         bar = QHBoxLayout(self.controls_frame)
         bar.setContentsMargins(16, 8, 16, 8)
@@ -204,23 +282,55 @@ class SlideshowWindow(QMainWindow):
 
         self.prev_button = QPushButton("← Préc.")
         self.prev_button.setFixedSize(90, 40)
+        self.prev_button.setFocusPolicy(Qt.NoFocus)  # Reason: Space must go to view, not trigger button
         self.prev_button.clicked.connect(self._previous_image)
         bar.addWidget(self.prev_button)
 
-        self.timer_widget = SessionTimer()
-        self.timer_widget.timer_finished.connect(self._on_timer_finished)
-        self.timer_widget.timer_updated.connect(self._on_timer_updated)
-        bar.addWidget(self.timer_widget)
+        # Play/Pause only (timer logic runs in hidden SessionTimer; countdown stays top-left)
+        self.play_pause_btn = QPushButton("Play")
+        self.play_pause_btn.setObjectName("playPauseBtn")
+        self.play_pause_btn.setFixedSize(90, 40)
+        self.play_pause_btn.setFocusPolicy(Qt.NoFocus)  # Reason: Space must go to view, not trigger button
+        self.play_pause_btn.clicked.connect(self._on_play_pause_clicked)
+        bar.addWidget(self.play_pause_btn)
+        self._icon_play, self._icon_pause = _get_media_icons()
 
         self.next_button = QPushButton("Suiv. →")
         self.next_button.setFixedSize(90, 40)
+        self.next_button.setFocusPolicy(Qt.NoFocus)  # Reason: Space must go to view, not trigger button
         self.next_button.clicked.connect(self._next_image)
         bar.addWidget(self.next_button)
 
+        # Timer widget: hidden, drives countdown (top-left) and session logic (timer_finished)
+        self.timer_widget = SessionTimer(self)
+        self.timer_widget.setVisible(False)
+        self.timer_widget.timer_finished.connect(self._on_timer_finished)
+        self.timer_widget.timer_updated.connect(self._on_timer_updated)
+
+    def _setup_ui_auto_hide(self):
+        """Setup 2s inactivity timer; show overlays + cursor on key/mouse, hide after inactivity (no fade)."""
+        self._hide_ui_timer = QTimer(self)
+        self._hide_ui_timer.setSingleShot(True)
+        self._hide_ui_timer.timeout.connect(self._hide_ui)
+
+    def _show_ui_and_restart_timer(self):
+        """Show controls and cursor, (re)start 2s hide timer; countdown (timer) is always visible."""
+        self._hide_ui_timer.stop()
+        self.countdown_frame.setVisible(True)  # Timer always visible
+        self.fullscreen_btn.setVisible(not self._is_fullscreen)  # Only in windowed mode
+        self.controls_frame.setVisible(True)
+        self.setCursor(Qt.ArrowCursor)
+        self._hide_ui_timer.start(_UI_HIDE_AFTER_MS)
+
+    def _hide_ui(self):
+        """Hide controls and cursor after inactivity; countdown (timer) stays visible."""
+        self.fullscreen_btn.setVisible(False)
+        self.controls_frame.setVisible(False)
+        self.setCursor(Qt.BlankCursor)
+
     def _setup_shortcuts(self):
-        """Keyboard: Space = toggle bar, Left/Right = prev/next, Escape = fullscreen->window or close."""
-        self.space_shortcut = QShortcut(QKeySequence("Space"), self)
-        self.space_shortcut.activated.connect(self._toggle_controls)
+        """Keyboard: Space = toggle pause/play (via eventFilter/keyPressEvent only, to avoid double trigger). Left/Right = prev/next, Escape = fullscreen->window or close."""
+        # Do NOT use QShortcut for Space: it would fire in addition to eventFilter and toggle twice
         self.next_shortcut = QShortcut(QKeySequence("Right"), self)
         self.next_shortcut.activated.connect(self._next_image)
         self.prev_shortcut = QShortcut(QKeySequence("Left"), self)
@@ -246,6 +356,10 @@ class SlideshowWindow(QMainWindow):
                     background-color: rgba(30, 30, 30, 0.85);
                     border-radius: 6px;
                 }
+                QFrame#controlsFrame {
+                    background: transparent;
+                    border: none;
+                }
                 QLabel {
                     color: #ffffff;
                 }
@@ -268,6 +382,13 @@ class SlideshowWindow(QMainWindow):
                     color: #666666;
                     border: 1px solid #3c3c3c;
                 }
+                QPushButton#playPauseBtnPaused {
+                    background-color: #4b6eaf;
+                    border: 1px solid #5a7fbf;
+                }
+                QPushButton#playPauseBtnPaused:hover {
+                    background-color: #5a7fbf;
+                }
             """)
         else:
             # Light theme
@@ -282,6 +403,10 @@ class SlideshowWindow(QMainWindow):
                 QFrame#countdownFrame {
                     background-color: rgba(255, 255, 255, 0.85);
                     border-radius: 6px;
+                }
+                QFrame#controlsFrame {
+                    background: transparent;
+                    border: none;
                 }
                 QLabel {
                     color: #000000;
@@ -304,6 +429,14 @@ class SlideshowWindow(QMainWindow):
                     background-color: #f5f5f5;
                     color: #999999;
                     border: 1px solid #e0e0e0;
+                }
+                QPushButton#playPauseBtnPaused {
+                    background-color: #4b6eaf;
+                    color: #ffffff;
+                    border: 1px solid #3d5a8c;
+                }
+                QPushButton#playPauseBtnPaused:hover {
+                    background-color: #5a7fbf;
                 }
             """)
     
@@ -373,6 +506,7 @@ class SlideshowWindow(QMainWindow):
 
         # Auto-start timer so countdown decreases immediately (no need to press S/Start)
         self.timer_widget.start_timer()
+        self._sync_play_pause_button()  # Show "Pause" at open since timer is running
 
         self._first_image = True
         self._load_current_image()
@@ -381,6 +515,11 @@ class SlideshowWindow(QMainWindow):
         self.show()
         self.raise_()
         self.activateWindow()
+        # Defer focus to view so it wins after layout/default focus; avoids first Space going to a button
+        QTimer.singleShot(0, self._give_focus_to_view)
+        _dbg_space(f"session started, focusWidget={QApplication.focusWidget()}")
+        # Show overlays + cursor; hide after 2s inactivity (key/mouse restarts timer)
+        self._show_ui_and_restart_timer()
         if self._is_fullscreen:
             self.setWindowState(Qt.WindowFullScreen)
             # Re-layout after fullscreen: viewport size is only final after resize (Qt/Windows)
@@ -564,6 +703,11 @@ class SlideshowWindow(QMainWindow):
         self.pixmap_item_next.setPos(0, 0)
         self._fit_scene_in_view()
 
+    def _give_focus_to_view(self) -> None:
+        """Set keyboard focus to the graphics view so Space is handled by eventFilter (first press works)."""
+        self.graphics_view.setFocus(Qt.OtherFocusReason)
+        _dbg_space(f"_give_focus_to_view done, focusWidget={QApplication.focusWidget()}")
+
     def _on_container_resized(self) -> None:
         """On resize: refit scene in viewport (fitInView)."""
         _dbg("_on_container_resized: fitInView")
@@ -680,13 +824,47 @@ class SlideshowWindow(QMainWindow):
         self.show()
         self._fit_scene_in_view()
 
-    def _toggle_controls(self):
-        """Show/hide bottom bar (Previous, Next, Play/Pause)."""
-        self.controls_frame.setVisible(not self.controls_frame.isVisible())
-        if self.controls_frame.isVisible():
-            self.setCursor(Qt.ArrowCursor)
+    def _sync_play_pause_button(self):
+        """Set button to 'Play' (with icon) when paused, 'Pause' (with icon) when playing; blue when paused."""
+        is_playing = self.timer_widget.is_running and not self.timer_widget.is_paused
+        if is_playing:
+            self.play_pause_btn.setText("Pause")
+            if self._icon_pause and not self._icon_pause.isNull():
+                self.play_pause_btn.setIcon(self._icon_pause)
+            else:
+                self.play_pause_btn.setIcon(QIcon())
+            self.play_pause_btn.setObjectName("playPauseBtn")
         else:
-            self.setCursor(Qt.BlankCursor)
+            self.play_pause_btn.setText("Play")
+            if self._icon_play and not self._icon_play.isNull():
+                self.play_pause_btn.setIcon(self._icon_play)
+            else:
+                self.play_pause_btn.setIcon(QIcon())
+            self.play_pause_btn.setObjectName("playPauseBtnPaused")
+        self.play_pause_btn.style().unpolish(self.play_pause_btn)
+        self.play_pause_btn.style().polish(self.play_pause_btn)
+
+    def _toggle_controls(self):
+        """Show/hide bottom bar (reserved for later; not bound to Space)."""
+        self.controls_frame.setVisible(not self.controls_frame.isVisible())
+
+    def _on_play_pause_clicked(self):
+        """Toggle play/pause; button shows Play when paused, Pause when playing."""
+        now = time.monotonic()
+        if now - self._last_play_pause_toggle_time < 0.15:
+            _dbg_space("_on_play_pause_clicked ignored (debounce)")
+            return
+        self._last_play_pause_toggle_time = now
+        _dbg_space(
+            f"_on_play_pause_clicked called | is_running={self.timer_widget.is_running} "
+            f"is_paused={self.timer_widget.is_paused}"
+        )
+        if not self.timer_widget.is_running:
+            self.timer_widget.start_timer()
+        else:
+            self.timer_widget.pause_timer()  # toggles pause <-> resume
+        self._sync_play_pause_button()
+        _dbg_space(f"after toggle | is_running={self.timer_widget.is_running} is_paused={self.timer_widget.is_paused}")
 
     def _apply_countdown_color(self, remaining_seconds: int):
         """Set countdown label color: more red as remaining time approaches 0."""
@@ -715,12 +893,50 @@ class SlideshowWindow(QMainWindow):
     def _on_timer_finished(self):
         """Handle timer completion: auto-advance to next image or end session."""
         self._next_image()
+        if self.controls_frame.isVisible():
+            self._sync_play_pause_button()
     
     def showEvent(self, event):
         """Re-fit when window is shown so viewport has final size."""
         super().showEvent(event)
         _dbg("showEvent: scheduling fitInView in 0ms")
         QTimer.singleShot(0, self._fit_scene_in_view)
+
+    def eventFilter(self, obj, event):
+        """Catch Space on graphics view; show UI on any key, mouse move, or mouse click."""
+        _dbg_mousemove(obj, event)
+        # Viewport receives mouse events (QGraphicsView delegates to viewport())
+        if obj == self.graphics_view.viewport():
+            if event.type() in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+                self._show_ui_and_restart_timer()
+                return False
+        if obj == self.graphics_view:
+            if event.type() in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+                self._show_ui_and_restart_timer()
+                return False
+            if event.type() == QEvent.KeyPress:
+                self._show_ui_and_restart_timer()
+                if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+                    _dbg_space("eventFilter: Space on graphics_view, toggling play/pause")
+                    self._on_play_pause_clicked()
+                    return True
+        if obj == self._overlay_container and event.type() in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            self._show_ui_and_restart_timer()
+            return False
+        if obj in (self.countdown_frame, self.fullscreen_btn, self.controls_frame) and event.type() in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            self._show_ui_and_restart_timer()
+            return False
+        return super().eventFilter(obj, event)
+
+    def keyPressEvent(self, event: QKeyEvent):
+        """Catch Space at window level; show UI on any key."""
+        self._show_ui_and_restart_timer()
+        if event.key() == Qt.Key_Space and not event.isAutoRepeat():
+            _dbg_space("keyPressEvent: Space on window, toggling play/pause")
+            self._on_play_pause_clicked()
+            event.accept()
+            return
+        super().keyPressEvent(event)
 
     def resizeEvent(self, event):
         """Handle resize events; container.resized will trigger re-scale and display."""
