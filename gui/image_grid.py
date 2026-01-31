@@ -41,7 +41,6 @@ class ImageGrid(QScrollArea):
     image_clicked = Signal(str)  # Emits image ID when clicked (single click)
     image_double_clicked = Signal(str)  # Emits image ID when double-clicked (open viewer)
     selection_changed = Signal(list)  # Emits list of selected image IDs
-    session_images_selected = Signal(list)  # Emits list of image IDs for drawing session
     BASE_BATCH_SIZE = 20
     MIN_ROWS_LOADED = 5
     MIN_THUMBNAIL_HEIGHT = 150
@@ -133,11 +132,7 @@ class ImageGrid(QScrollArea):
         # Create context menu
         self.context_menu = QMenu(self)
         self.delete_action = self.context_menu.addAction("Delete from Library")
-        self.use_for_session_action = self.context_menu.addAction("Use for Drawing Session")
-        
-        # Connect actions
         self.delete_action.triggered.connect(self._delete_selected)
-        self.use_for_session_action.triggered.connect(self._use_for_session)
     
     def _apply_theme(self):
         from core.settings import settings
@@ -814,10 +809,6 @@ class ImageGrid(QScrollArea):
                 self.image_manager.delete_image(image_id)
             self.selected_images.clear()
             self._update_selection()
-    
-    def _use_for_session(self):
-        """Emit signal with selected images for drawing session."""
-        self.session_images_selected.emit(list(self.selected_images))
     
     def _remove_tag_from_selection(self, tag: str):
         """

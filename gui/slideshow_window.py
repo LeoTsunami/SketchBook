@@ -1,6 +1,7 @@
 """
 Fullscreen or always-on-top slideshow window for drawing sessions.
-Image full area + countdown overlay (top-left). No bottom bar.
+Image full area; countdown (top-left); Escape = fullscreen->window, window->close;
+Plein écran button (windowed); bottom bar: Previous, Next, Play/Pause.
 """
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -33,9 +34,28 @@ from core.image_manager import ImageManager
 from gui.session_timer import SessionTimer
 from gui.image_loader_worker import ImageLoaderWorker
 
+# Set to True to print dimension debug to console (viewport, scene rect, items)
+_DEBUG_SLIDESHOW_DIMENSIONS = False
+
+# --- Qui contient quoi (hiérarchie) ---
+# On utilise fitInView(scene.itemsBoundingRect(), KeepAspectRatio) pour un vrai fullscreen :
+# la vue projette le rect des items sur tout le viewport. Pixmaps à taille d'origine dans la scène.
+#
+# QMainWindow → central widget → _OverlayContainer (fullscreen)
+#   ├── QGraphicsView (fullscreen) → viewport() (fullscreen, zone peinte)
+#   │     └── scene (sceneRect = items rect) → fitInView() = transformation vue pour remplir le viewport
+#   │           ├── pixmap_item
+#   │           └── pixmap_item_next
+#   ├── countdown_frame, fullscreen_btn, controls_frame (overlays)
+
+
+def _dbg(msg: str) -> None:
+    if _DEBUG_SLIDESHOW_DIMENSIONS:
+        print(f"[Slideshow DEBUG] {msg}")
+
 
 class _OverlayContainer(QWidget):
-    """Container: image view full area + countdown overlay (top-left)."""
+    """Container: image full area; countdown (top-left); fullscreen btn (top-right); controls (bottom)."""
 
     resized = Signal()
 
@@ -43,16 +63,24 @@ class _OverlayContainer(QWidget):
         super().__init__(parent)
         self._graphics_view = None
         self._countdown_frame = None
+        self._fullscreen_btn = None
+        self._controls_frame = None
 
     def set_content(
         self,
         graphics_view: QGraphicsView,
         countdown_frame: QFrame,
+        fullscreen_btn: QPushButton,
+        controls_frame: QFrame,
     ) -> None:
         self._graphics_view = graphics_view
         self._countdown_frame = countdown_frame
+        self._fullscreen_btn = fullscreen_btn
+        self._controls_frame = controls_frame
         graphics_view.setParent(self)
         countdown_frame.setParent(self)
+        fullscreen_btn.setParent(self)
+        controls_frame.setParent(self)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -61,7 +89,13 @@ class _OverlayContainer(QWidget):
             self._graphics_view.setGeometry(r)
         if self._countdown_frame:
             self._countdown_frame.setGeometry(16, 16, 120, 56)
-            self._countdown_frame.raise_()
+        if self._fullscreen_btn:
+            self._fullscreen_btn.setGeometry(r.width() - 116, 16, 100, 40)
+        if self._controls_frame:
+            self._controls_frame.setGeometry(0, r.height() - 100, r.width(), 100)
+        for w in (self._countdown_frame, self._fullscreen_btn, self._controls_frame):
+            if w:
+                w.raise_()
         self.resized.emit()
 
 
@@ -92,12 +126,17 @@ class SlideshowWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Image + countdown only
         self._setup_image_display()
         self._setup_countdown_overlay()
-        self._setup_timer_hidden()  # Timer logic for countdown and auto-advance, no UI
+        self._setup_fullscreen_button()
+        self._setup_controls()  # Previous, Next, Play/Pause (timer)
         self._overlay_container = _OverlayContainer(self)
-        self._overlay_container.set_content(self.graphics_view, self.countdown_frame)
+        self._overlay_container.set_content(
+            self.graphics_view,
+            self.countdown_frame,
+            self.fullscreen_btn,
+            self.controls_frame,
+        )
         self._overlay_container.resized.connect(self._on_container_resized)
         layout.addWidget(self._overlay_container, 1)
 
@@ -146,22 +185,48 @@ class SlideshowWindow(QMainWindow):
         self.countdown_label.setFont(font)
         countdown_layout.addWidget(self.countdown_label)
 
-    def _setup_timer_hidden(self):
-        """Timer for countdown and auto-advance; no visible UI."""
+    def _setup_fullscreen_button(self):
+        """Button to switch to fullscreen (visible only in windowed mode)."""
+        self.fullscreen_btn = QPushButton("Plein écran")
+        self.fullscreen_btn.setFixedSize(100, 40)
+        self.fullscreen_btn.clicked.connect(self._switch_to_fullscreen)
+        self.fullscreen_btn.setVisible(False)
+
+    def _setup_controls(self):
+        """Bottom bar: Previous, Next, timer (Play/Pause/Reset)."""
+        self.controls_frame = QFrame()
+        self.controls_frame.setFixedHeight(100)
+        self.controls_frame.setVisible(False)
+
+        bar = QHBoxLayout(self.controls_frame)
+        bar.setContentsMargins(16, 8, 16, 8)
+        bar.setSpacing(12)
+
+        self.prev_button = QPushButton("← Préc.")
+        self.prev_button.setFixedSize(90, 40)
+        self.prev_button.clicked.connect(self._previous_image)
+        bar.addWidget(self.prev_button)
+
         self.timer_widget = SessionTimer()
-        self.timer_widget.setParent(self)
-        self.timer_widget.setVisible(False)
         self.timer_widget.timer_finished.connect(self._on_timer_finished)
         self.timer_widget.timer_updated.connect(self._on_timer_updated)
+        bar.addWidget(self.timer_widget)
+
+        self.next_button = QPushButton("Suiv. →")
+        self.next_button.setFixedSize(90, 40)
+        self.next_button.clicked.connect(self._next_image)
+        bar.addWidget(self.next_button)
 
     def _setup_shortcuts(self):
-        """Keyboard: Left/Right = prev/next, Escape = close session."""
+        """Keyboard: Space = toggle bar, Left/Right = prev/next, Escape = fullscreen->window or close."""
+        self.space_shortcut = QShortcut(QKeySequence("Space"), self)
+        self.space_shortcut.activated.connect(self._toggle_controls)
         self.next_shortcut = QShortcut(QKeySequence("Right"), self)
         self.next_shortcut.activated.connect(self._next_image)
         self.prev_shortcut = QShortcut(QKeySequence("Left"), self)
         self.prev_shortcut.activated.connect(self._previous_image)
         self.exit_shortcut = QShortcut(QKeySequence("Escape"), self)
-        self.exit_shortcut.activated.connect(self.close)
+        self.exit_shortcut.activated.connect(self._on_escape)
     
     def _apply_theme(self):
         """Apply theme-aware styles."""
@@ -284,10 +349,20 @@ class SlideshowWindow(QMainWindow):
         self._is_fullscreen = window_mode != "Window always on top"
         if self._is_fullscreen:
             self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
-            self.setWindowState(Qt.WindowFullScreen)
+            self.fullscreen_btn.setVisible(False)
         else:
             self.setWindowState(Qt.WindowNoState)
             self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+            self.fullscreen_btn.setVisible(True)
+            # Size window to 80% of user screen, centered
+            screen = QGuiApplication.primaryScreen()
+            if screen:
+                ag = screen.availableGeometry()
+                w = int(ag.width() * 0.8)
+                h = int(ag.height() * 0.8)
+                x = ag.x() + (ag.width() - w) // 2
+                y = ag.y() + (ag.height() - h) // 2
+                self.setGeometry(x, y, w, h)
 
         # Countdown + timer
         dur = self.session_manager.get_current_duration()
@@ -302,9 +377,17 @@ class SlideshowWindow(QMainWindow):
         self._first_image = True
         self._load_current_image()
 
+        # Show first, then set fullscreen (required on Windows for fullscreen to apply)
         self.show()
         self.raise_()
         self.activateWindow()
+        if self._is_fullscreen:
+            self.setWindowState(Qt.WindowFullScreen)
+            # Re-layout after fullscreen: viewport size is only final after resize (Qt/Windows)
+            def _delayed_fit_after_fullscreen():
+                _dbg("delayed (100ms) fitInView after setWindowState(WindowFullScreen)")
+                self._fit_scene_in_view()
+            QTimer.singleShot(100, _delayed_fit_after_fullscreen)
         return True
     
     def _load_current_image(self):
@@ -347,9 +430,14 @@ class SlideshowWindow(QMainWindow):
         self._update_image_display()
     
     def _get_viewport_size(self):
-        """Return (width, height) in *logical* pixels (for view transform)."""
+        """Return (width, height) in logical pixels. Use container size if viewport not yet sized (e.g. before show/fullscreen)."""
         vp = self.graphics_view.viewport()
-        return (vp.width(), vp.height())
+        vw, vh = vp.width(), vp.height()
+        if vw > 0 and vh > 0:
+            return (vw, vh)
+        # Fallback: container rect (viewport may be 0 before show/fullscreen resize)
+        r = self._overlay_container.rect()
+        return (max(1, r.width()), max(1, r.height()))
 
     def _get_screen_dpr(self):
         """Device pixel ratio of the screen this window is on."""
@@ -433,17 +521,34 @@ class SlideshowWindow(QMainWindow):
         return (max(1, int(round(w * dpr))), max(1, int(round(h * dpr))))
 
     def _fit_scene_in_view(self) -> None:
-        """Fit the scene contents in the viewport (Qt standard: fitInView with scene rect, not view rect).
-        Call after setting pixmaps and on resize. See e.g. Stack Overflow 9654222.
-        """
+        """Fit the scene (items rect) in the viewport via fitInView. Real fullscreen (Qt does scale/center)."""
         rect = self.scene.itemsBoundingRect()
         if rect.isEmpty():
             return
         self.scene.setSceneRect(rect)
-        self.graphics_view.fitInView(rect, Qt.AspectRatioMode.KeepAspectRatio)
+        self.graphics_view.fitInView(rect, Qt.KeepAspectRatio)
+        self._debug_dimensions("_fit_scene_in_view")
+
+    def _debug_dimensions(self, label: str) -> None:
+        """Print viewport, scene rect, itemsBoundingRect (fitInView maps this to viewport)."""
+        if not _DEBUG_SLIDESHOW_DIMENSIONS:
+            return
+        vp = self.graphics_view.viewport()
+        vpw, vph = vp.width(), vp.height()
+        sr = self.scene.sceneRect()
+        ibr = self.scene.itemsBoundingRect()
+        _dbg(f"--- {label} ---")
+        _dbg(f"viewport: ({vpw}, {vph})  sceneRect: ({sr.width():.1f}, {sr.height():.1f})  itemsBoundingRect: ({ibr.width():.1f}, {ibr.height():.1f})")
+        for name, item in [("pixmap_item", self.pixmap_item), ("pixmap_item_next", self.pixmap_item_next)]:
+            pix = item.pixmap()
+            if pix.isNull():
+                _dbg(f"{name}: pixmap=null")
+            else:
+                _dbg(f"{name}: pixmap=({pix.width()}, {pix.height()})")
+        _dbg("")
 
     def _scale_and_display_pixmap(self, pixmap: QPixmap) -> None:
-        """Set pixmap at original size, then fit scene in viewport via fitInView (no manual scaling)."""
+        """Set pixmap at original size on both layers, then fitInView (real fullscreen)."""
         if pixmap.isNull():
             return
         vw, vh = self._get_viewport_size()
@@ -453,10 +558,15 @@ class SlideshowWindow(QMainWindow):
         self.pixmap_item.setPixmap(pixmap)
         self.pixmap_item_next.setPixmap(pixmap)
         self.pixmap_item_next.setOpacity(0.0)
+        self.pixmap_item.setScale(1.0)
+        self.pixmap_item.setPos(0, 0)
+        self.pixmap_item_next.setScale(1.0)
+        self.pixmap_item_next.setPos(0, 0)
         self._fit_scene_in_view()
 
     def _on_container_resized(self) -> None:
-        """On resize: refit scene in viewport (fitInView with scene rect)."""
+        """On resize: refit scene in viewport (fitInView)."""
+        _dbg("_on_container_resized: fitInView")
         self._fit_scene_in_view()
 
     def _update_image_display(self):
@@ -479,11 +589,18 @@ class SlideshowWindow(QMainWindow):
             self.pixmap_item.setPixmap(self.pixmap_item_next.pixmap())
             self.pixmap_item_next.setOpacity(0.0)
 
-        # Crossfade: new image on top layer at original size
+        # Crossfade: set new image, fitInView (real fullscreen), then fade after paint (évite resize pendant le fondu).
         self.pixmap_item_next.setPixmap(self.current_pixmap)
         self.pixmap_item_next.setOpacity(0.0)
+        self.pixmap_item_next.setScale(1.0)
+        self.pixmap_item_next.setPos(0, 0)
         self._fit_scene_in_view()
+        self.graphics_view.viewport().repaint()
+        QApplication.processEvents()
+        QTimer.singleShot(80, self._start_fade_animation)
 
+    def _start_fade_animation(self):
+        """Start the crossfade (called after resize/repaint so image is at correct size)."""
         self._fade_animation = QVariantAnimation(self)
         self._fade_animation.setStartValue(0.0)
         self._fade_animation.setEndValue(1.0)
@@ -531,6 +648,46 @@ class SlideshowWindow(QMainWindow):
             self.timer_widget.start_timer()
             self._load_current_image()
 
+    def _on_escape(self):
+        """Escape: fullscreen -> switch to window; window -> close session."""
+        if self._is_fullscreen:
+            self._switch_to_window()
+        else:
+            self.close()
+
+    def _switch_to_window(self):
+        """Leave fullscreen: switch to window always on top, maximized (title bar + close X visible)."""
+        self._is_fullscreen = False
+        # Keep existing flags and ensure close/minimize/maximize buttons are available
+        self.setWindowFlags(
+            self.windowFlags()
+            | Qt.WindowStaysOnTopHint
+            | Qt.WindowCloseButtonHint
+            | Qt.WindowMinimizeButtonHint
+            | Qt.WindowMaximizeButtonHint
+        )
+        self.setWindowState(Qt.WindowMaximized)
+        self.show()
+        self.fullscreen_btn.setVisible(True)
+        self._fit_scene_in_view()
+
+    def _switch_to_fullscreen(self):
+        """Switch to fullscreen from windowed mode."""
+        self._is_fullscreen = True
+        self.fullscreen_btn.setVisible(False)
+        self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
+        self.setWindowState(Qt.WindowFullScreen)
+        self.show()
+        self._fit_scene_in_view()
+
+    def _toggle_controls(self):
+        """Show/hide bottom bar (Previous, Next, Play/Pause)."""
+        self.controls_frame.setVisible(not self.controls_frame.isVisible())
+        if self.controls_frame.isVisible():
+            self.setCursor(Qt.ArrowCursor)
+        else:
+            self.setCursor(Qt.BlankCursor)
+
     def _apply_countdown_color(self, remaining_seconds: int):
         """Set countdown label color: more red as remaining time approaches 0."""
         total = max(1, self.timer_widget.total_seconds)
@@ -559,10 +716,16 @@ class SlideshowWindow(QMainWindow):
         """Handle timer completion: auto-advance to next image or end session."""
         self._next_image()
     
+    def showEvent(self, event):
+        """Re-fit when window is shown so viewport has final size."""
+        super().showEvent(event)
+        _dbg("showEvent: scheduling fitInView in 0ms")
+        QTimer.singleShot(0, self._fit_scene_in_view)
+
     def resizeEvent(self, event):
         """Handle resize events; container.resized will trigger re-scale and display."""
         super().resizeEvent(event)
-    
+
     def closeEvent(self, event):
         """Handle window close event: end session and notify parent to re-show main window."""
         if self.session_manager.session_run:

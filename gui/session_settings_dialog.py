@@ -1,7 +1,8 @@
 """
 Dialog for configuring session settings.
 """
-from typing import Dict, List
+from pathlib import Path
+from typing import Dict, List, Optional
 from qtpy.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -10,10 +11,11 @@ from qtpy.QtWidgets import (
     QComboBox,
     QSpinBox,
     QPushButton,
-    QMessageBox
+    QMessageBox,
 )
 from qtpy.QtCore import Qt
 from core.image_manager import ImageManager
+from core.session_manager import load_course_config
 
 
 class SessionSettingsDialog(QDialog):
@@ -76,8 +78,16 @@ class SessionSettingsDialog(QDialog):
         self.course_duration_spin.setSingleStep(10)
         self.course_duration_spin.setSuffix(" minutes")
         self.course_duration_spin.setValue(30)
+        self.course_duration_spin.valueChanged.connect(self._update_course_loop_message)
         course_duration_layout.addWidget(self.course_duration_spin)
         layout.addLayout(course_duration_layout)
+        
+        # Message when not enough images for course (will loop) - below course duration
+        self.course_loop_label = QLabel("")
+        self.course_loop_label.setStyleSheet("color: #888; font-style: italic; font-size: 11px;")
+        self.course_loop_label.setWordWrap(True)
+        self.course_loop_label.setVisible(False)
+        layout.addWidget(self.course_loop_label)
         
         # Constant interval duration (shown when "Constant interval" is selected) - horizontal layout
         interval_duration_layout = QHBoxLayout()
@@ -145,6 +155,31 @@ class SessionSettingsDialog(QDialog):
         # Initialize session type UI (default to "Course")
         self._on_session_type_changed("Course")
     
+    def _get_course_required_count(self, duration_minutes: int) -> Optional[int]:
+        """Return number of image slots required for the given course duration, or None if preset not found."""
+        config_path = Path(__file__).resolve().parent / "ressources" / "session_configs.json"
+        config = load_course_config(config_path)
+        presets = config.get("course_presets", [])
+        preset = next((p for p in presets if p.get("duration_minutes") == duration_minutes), None)
+        if not preset:
+            return None
+        return sum(phase.get("count", 0) for phase in preset.get("phases", []))
+
+    def _update_course_loop_message(self) -> None:
+        """Show message below course duration when there are not enough images (session will loop)."""
+        if self.session_type_combo.currentText() != "Course":
+            self.course_loop_label.setVisible(False)
+            return
+        duration = self.course_duration_spin.value()
+        required = self._get_course_required_count(duration)
+        if required is None or self.image_count >= required:
+            self.course_loop_label.setVisible(False)
+            return
+        self.course_loop_label.setText(
+            "There are not enough different images for this course; the session will loop over the available images."
+        )
+        self.course_loop_label.setVisible(True)
+
     def _on_session_type_changed(self, session_type: str):
         """
         Handle session type change.
@@ -159,10 +194,12 @@ class SessionSettingsDialog(QDialog):
             # Hide interval duration controls
             self.interval_duration_label.setVisible(False)
             self.interval_duration_combo.setVisible(False)
+            self._update_course_loop_message()
         else:  # Constant interval
-            # Hide course duration controls
+            # Hide course duration controls and loop message
             self.course_duration_label.setVisible(False)
             self.course_duration_spin.setVisible(False)
+            self.course_loop_label.setVisible(False)
             # Show interval duration controls
             self.interval_duration_label.setVisible(True)
             self.interval_duration_combo.setVisible(True)
