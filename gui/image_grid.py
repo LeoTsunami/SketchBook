@@ -131,6 +131,11 @@ class ImageGrid(QScrollArea):
         
         # Create context menu
         self.context_menu = QMenu(self)
+        self.rotate_cw_action = self.context_menu.addAction("Rotate 90° clockwise")
+        self.rotate_cw_action.triggered.connect(self._rotate_selected_clockwise)
+        self.rotate_ccw_action = self.context_menu.addAction("Rotate 90° counterclockwise")
+        self.rotate_ccw_action.triggered.connect(self._rotate_selected_counterclockwise)
+        self.context_menu.addSeparator()
         self.delete_action = self.context_menu.addAction("Delete from Library")
         self.delete_action.triggered.connect(self._delete_selected)
     
@@ -793,6 +798,38 @@ class ImageGrid(QScrollArea):
         if self.selected_images:  # Only show if there are selected images
             self.context_menu.popup(event.globalPos())
     
+    def _rotate_selected_clockwise(self):
+        """Rotate selected images 90° clockwise and refresh thumbnails."""
+        self._rotate_selected(clockwise=True)
+
+    def _rotate_selected_counterclockwise(self):
+        """Rotate selected images 90° counterclockwise and refresh thumbnails."""
+        self._rotate_selected(clockwise=False)
+
+    def _rotate_selected(self, clockwise: bool) -> None:
+        """
+        Rotate all selected images by 90° (clockwise or counterclockwise) and refresh display.
+
+        Args:
+            clockwise: If True, rotate 90° clockwise; if False, rotate 90° counterclockwise.
+        """
+        if not self.selected_images:
+            return
+        for image_id in list(self.selected_images):
+            if self.image_manager.rotate_image(image_id, clockwise=clockwise):
+                self.pixmap_cache.pop(image_id, None)
+                if image_id in self.thumbnails:
+                    self.thumbnails[image_id].clear_pixmap()
+                # Keep all_images in sync with new dimensions
+                meta = self.image_manager.get_image_metadata(image_id)
+                if meta:
+                    for i, m in enumerate(self.all_images):
+                        if m.id == image_id:
+                            self.all_images[i] = meta
+                            break
+        self._check_visible_thumbnails()
+        self.layout_timer.start()
+
     def _delete_selected(self):
         """Delete selected images after confirmation."""
         count = len(self.selected_images)

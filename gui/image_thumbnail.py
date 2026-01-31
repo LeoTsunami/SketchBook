@@ -332,12 +332,21 @@ class ImageThumbnail(QFrame):
             self.scene.setSceneRect(self.pixmap_item.boundingRect())
             self.graphics_view.setFixedHeight(new_height)
     
+    def clear_pixmap(self) -> None:
+        """Clear the displayed image (e.g. before reloading after rotate)."""
+        if self.scene:
+            self.scene.clear()
+        self.original_pixmap = None
+        self.pixmap_item = None
+
     def set_error(self, error_msg: str):
         """Show error message."""
         if not self.scene:
             return
         # Clear scene
         self.scene.clear()
+        self.original_pixmap = None
+        self.pixmap_item = None
         # Add error text
         self.scene.addText(f"Error: {error_msg}")
     

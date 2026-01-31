@@ -285,7 +285,42 @@ class ImageManager:
             True if successful, False if image not found
         """
         return self.db.update_image(image_id, **updates)
-    
+
+    def rotate_image(self, image_id: str, clockwise: bool = True) -> bool:
+        """
+        Rotate an image by 90° (clockwise or counterclockwise) and update file and metadata.
+
+        Args:
+            image_id: ID of the image to rotate.
+            clockwise: If True, rotate 90° clockwise; if False, rotate 90° counterclockwise.
+
+        Returns:
+            True if successful, False if image not found or rotation failed.
+        """
+        metadata = self.db.get_image(image_id)
+        if not metadata:
+            return False
+        path = self.image_dir / metadata.path
+        if not path.exists():
+            return False
+        try:
+            with Image.open(path) as img:
+                angle = -90 if clockwise else 90
+                rotated = img.rotate(angle, expand=True)
+                w, h = rotated.size
+                fmt = (metadata.format or "jpg").upper()
+                if fmt in ("JPG", "JPEG"):
+                    if rotated.mode in ("RGBA", "P"):
+                        rotated = rotated.convert("RGB")
+                    rotated.save(path, format="JPEG", quality=95)
+                else:
+                    rotated.save(path, format="PNG")
+                self.db.update_image(image_id, width=w, height=h)
+            return True
+        except Exception as e:
+            print(f"Error rotating image {path}: {e}")
+            return False
+
     def delete_image(self, image_id: str) -> bool:
         """
         Delete an image and its metadata.

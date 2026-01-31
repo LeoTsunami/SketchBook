@@ -137,6 +137,8 @@ class SessionManager:
         self._session_display_name: str = ""
         self._window_mode: str = "FullScreen"
         self.current_session: Optional[DrawingSession] = None
+        # Course only: (phase_name, start_index, count, duration_per_image) for each phase
+        self._course_phases: List[Tuple[str, int, int, int]] = []
 
     def start_session(
         self,
@@ -166,19 +168,53 @@ class SessionManager:
 
         if session_type == "Course" and course_duration_minutes is not None and course_config:
             presets = course_config.get("course_presets", [])
+            preset = next(
+                (p for p in presets if p["duration_minutes"] == course_duration_minutes),
+                None,
+            )
             self.session_run = build_course_run(image_ids, presets, course_duration_minutes)
             self._session_display_name = f"Course {course_duration_minutes} min"
+            self._course_phases = []
+            if preset and preset.get("phases"):
+                idx = 0
+                for ph in preset["phases"]:
+                    name = ph.get("name", "")
+                    count = ph.get("count", 0)
+                    sec = ph.get("duration_seconds_per_image", 30)
+                    if count > 0:
+                        self._course_phases.append((name, idx, count, sec))
+                    idx += count
         elif session_type == "Constant interval" and interval_seconds is not None and image_ids:
             ids = list(image_ids)
             random.shuffle(ids)
             self.session_run = [(iid, interval_seconds) for iid in ids]
             self._session_display_name = f"Constant {interval_seconds}s"
+            self._course_phases = []
         else:
             self.session_run = []
             self._session_display_name = ""
+            self._course_phases = []
 
         self._run_index = 0
         return len(self.session_run) > 0
+
+    def get_phase_info_at_index(self, index: int) -> Optional[Tuple[str, int, int]]:
+        """
+        For Course mode only: if index is the start of a phase, return (phase_name, count, duration_seconds).
+        Otherwise return None.
+        """
+        for name, start, count, sec in self._course_phases:
+            if index == start:
+                return (name, count, sec)
+        return None
+
+    def is_course_session(self) -> bool:
+        """True if current run is a course (has phases)."""
+        return len(self._course_phases) > 0
+
+    def get_run_index(self) -> int:
+        """Return current run index (0-based)."""
+        return self._run_index
 
     def get_current_image_id(self) -> Optional[str]:
         """Return the image ID for the current step, or None if no run."""
@@ -232,6 +268,7 @@ class SessionManager:
         self.session_run = []
         self._run_index = 0
         self._session_display_name = ""
+        self._course_phases = []
         self.current_session = None
 
     def get_current_session(self) -> Optional[Any]:

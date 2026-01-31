@@ -61,6 +61,26 @@ def test_update_metadata(image_manager, sample_image):
     metadata = image_manager.get_image_metadata(image_id)
     assert metadata.tags == {"test", "landscape"}
 
+def test_rotate_image(image_manager, sample_image):
+    """Test rotating image 90° clockwise and counterclockwise."""
+    result_path = image_manager.import_image(sample_image)
+    assert result_path is not None
+    image_id = result_path.stem
+    meta = image_manager.get_image_metadata(image_id)
+    assert meta is not None
+    w0, h0 = meta.width, meta.height
+
+    # Rotate 90° clockwise: dimensions swap
+    assert image_manager.rotate_image(image_id, clockwise=True)
+    meta = image_manager.get_image_metadata(image_id)
+    assert meta.width == h0 and meta.height == w0
+
+    # Rotate 90° counterclockwise: back to original dimensions
+    assert image_manager.rotate_image(image_id, clockwise=False)
+    meta = image_manager.get_image_metadata(image_id)
+    assert meta.width == w0 and meta.height == h0
+
+
 def test_delete_image(image_manager, sample_image):
     """Test deleting image and metadata."""
     # Import image

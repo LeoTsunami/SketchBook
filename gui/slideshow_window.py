@@ -45,6 +45,10 @@ _DEBUG_SLIDESHOW_DIMENSIONS = False
 _DEBUG_SPACE_PLAYPAUSE = False
 # UI auto-hide: show overlays + cursor on key/mouse, hide after inactivity
 _UI_HIDE_AFTER_MS = 2000
+# Get ready screen duration (seconds); countdown ticks 3, 2, 1
+_GET_READY_DURATION_SEC = 3
+# Course phase title screen duration (seconds); countdown ticks 5, 4, 3, 2, 1
+_PHASE_TITLE_DURATION_SEC = 5
 
 # --- Qui contient quoi (hiérarchie) ---
 # On utilise fitInView(scene.itemsBoundingRect(), KeepAspectRatio) pour un vrai fullscreen :
@@ -106,7 +110,7 @@ def _get_media_icons():
 
 
 class _OverlayContainer(QWidget):
-    """Container: image full area; countdown (top-left); fullscreen btn (top-right); controls (bottom)."""
+    """Container: image full area; countdown; fullscreen btn; controls; get_ready and phase_title overlays."""
 
     resized = Signal()
 
@@ -116,6 +120,8 @@ class _OverlayContainer(QWidget):
         self._countdown_frame = None
         self._fullscreen_btn = None
         self._controls_frame = None
+        self._get_ready_frame = None
+        self._phase_title_frame = None
 
     def set_content(
         self,
@@ -123,15 +129,23 @@ class _OverlayContainer(QWidget):
         countdown_frame: QFrame,
         fullscreen_btn: QPushButton,
         controls_frame: QFrame,
+        get_ready_frame: Optional[QFrame] = None,
+        phase_title_frame: Optional[QFrame] = None,
     ) -> None:
         self._graphics_view = graphics_view
         self._countdown_frame = countdown_frame
         self._fullscreen_btn = fullscreen_btn
         self._controls_frame = controls_frame
+        self._get_ready_frame = get_ready_frame
+        self._phase_title_frame = phase_title_frame
         graphics_view.setParent(self)
         countdown_frame.setParent(self)
         fullscreen_btn.setParent(self)
         controls_frame.setParent(self)
+        if get_ready_frame:
+            get_ready_frame.setParent(self)
+        if phase_title_frame:
+            phase_title_frame.setParent(self)
 
     def resizeEvent(self, event):
         super().resizeEvent(event)
@@ -144,7 +158,17 @@ class _OverlayContainer(QWidget):
             self._fullscreen_btn.setGeometry(r.width() - 116, 16, 100, 40)
         if self._controls_frame:
             self._controls_frame.setGeometry(0, r.height() - 70, r.width(), 70)
-        for w in (self._countdown_frame, self._fullscreen_btn, self._controls_frame):
+        if self._get_ready_frame:
+            self._get_ready_frame.setGeometry(r)
+        if self._phase_title_frame:
+            self._phase_title_frame.setGeometry(r)
+        for w in (
+            self._countdown_frame,
+            self._fullscreen_btn,
+            self._controls_frame,
+            self._get_ready_frame,
+            self._phase_title_frame,
+        ):
             if w:
                 w.raise_()
         self.resized.emit()
@@ -179,6 +203,8 @@ class SlideshowWindow(QMainWindow):
 
         self._setup_image_display()
         self._setup_countdown_overlay()
+        self._setup_get_ready_overlay()
+        self._setup_phase_title_overlay()
         self._setup_fullscreen_button()
         self._setup_controls()  # Previous, Next, Play/Pause (timer)
         self._overlay_container = _OverlayContainer(self)
@@ -187,6 +213,8 @@ class SlideshowWindow(QMainWindow):
             self.countdown_frame,
             self.fullscreen_btn,
             self.controls_frame,
+            self.get_ready_frame,
+            self.phase_title_frame,
         )
         self._overlay_container.resized.connect(self._on_container_resized)
         layout.addWidget(self._overlay_container, 1)
@@ -205,6 +233,13 @@ class SlideshowWindow(QMainWindow):
         self._fade_animation: Optional[QVariantAnimation] = None
         self._is_fullscreen = False
         self._last_play_pause_toggle_time: float = 0.0  # Debounce: avoid double toggle on one Space press
+        # Title screen countdown (Get ready / phase): ticks every second, then calls done callback
+        self._title_countdown_timer = QTimer(self)
+        self._title_countdown_timer.setInterval(1000)
+        self._title_countdown_timer.timeout.connect(self._on_title_countdown_tick)
+        self._title_countdown_remaining: int = 0
+        self._title_countdown_total: int = 1  # Duration (sec) for color ratio
+        self._title_countdown_done_callback = None  # Callable[[], None] when countdown reaches 0
 
         self._apply_theme()
     
@@ -248,6 +283,47 @@ class SlideshowWindow(QMainWindow):
         font.setBold(True)
         self.countdown_label.setFont(font)
         countdown_layout.addWidget(self.countdown_label)
+
+    def _setup_get_ready_overlay(self):
+        """Full-screen overlay: 'Get ready, your drawing session is about to begin' (3s at session start)."""
+        self.get_ready_frame = QFrame()
+        self.get_ready_frame.setObjectName("getReadyFrame")
+        self.get_ready_frame.setStyleSheet("background: rgba(0,0,0,0.85);")
+        lay = QVBoxLayout(self.get_ready_frame)
+        lay.setAlignment(Qt.AlignCenter)
+        self.get_ready_label = QLabel("Get ready, your drawing session is about to begin")
+        self.get_ready_label.setAlignment(Qt.AlignCenter)
+        self.get_ready_label.setWordWrap(True)
+        font = QFont()
+        font.setPointSize(44)
+        font.setBold(True)
+        self.get_ready_label.setFont(font)
+        lay.addWidget(self.get_ready_label)
+        self.get_ready_frame.setVisible(False)
+
+    def _setup_phase_title_overlay(self):
+        """Full-screen overlay for course phases: title (e.g. WarmUp) + 'X Images of Y'."""
+        self.phase_title_frame = QFrame()
+        self.phase_title_frame.setObjectName("phaseTitleFrame")
+        self.phase_title_frame.setStyleSheet("background: rgba(0,0,0,0.85);")
+        lay = QVBoxLayout(self.phase_title_frame)
+        lay.setSpacing(16)
+        lay.setAlignment(Qt.AlignCenter)
+        self.phase_title_label = QLabel("")
+        self.phase_title_label.setAlignment(Qt.AlignCenter)
+        font_title = QFont()
+        font_title.setPointSize(52)
+        font_title.setBold(True)
+        self.phase_title_label.setFont(font_title)
+        lay.addWidget(self.phase_title_label)
+        self.phase_subtitle_label = QLabel("")
+        self.phase_subtitle_label.setAlignment(Qt.AlignCenter)
+        self.phase_subtitle_label.setWordWrap(True)
+        font_sub = QFont()
+        font_sub.setPointSize(28)
+        self.phase_subtitle_label.setFont(font_sub)
+        lay.addWidget(self.phase_subtitle_label)
+        self.phase_title_frame.setVisible(False)
 
     def _setup_fullscreen_button(self):
         """Button to switch to fullscreen (visible only in windowed mode)."""
@@ -377,6 +453,9 @@ class SlideshowWindow(QMainWindow):
                 QPushButton#playPauseBtnPaused:hover {
                     background-color: #5a7fbf;
                 }
+                QFrame#getReadyFrame QLabel, QFrame#phaseTitleFrame QLabel {
+                    color: #ffffff;
+                }
             """)
         else:
             # Light theme
@@ -426,6 +505,9 @@ class SlideshowWindow(QMainWindow):
                 QPushButton#playPauseBtnPaused:hover {
                     background-color: #5a7fbf;
                 }
+                QFrame#getReadyFrame QLabel, QFrame#phaseTitleFrame QLabel {
+                    color: #ffffff;
+                }
             """)
     
     def start_session(
@@ -466,6 +548,11 @@ class SlideshowWindow(QMainWindow):
         if not ok:
             return False
 
+        self._session_type = session_type
+
+        # Always start in PLAY: clear previous timer state
+        self.timer_widget.stop_timer()
+
         # Window mode: FullScreen or Window always on top
         self._is_fullscreen = window_mode != "Window always on top"
         if self._is_fullscreen:
@@ -485,40 +572,102 @@ class SlideshowWindow(QMainWindow):
                 y = ag.y() + (ag.height() - h) // 2
                 self.setGeometry(x, y, w, h)
 
-        # Countdown + timer
+        # Countdown display for first image (timer starts after "Get ready")
         dur = self.session_manager.get_current_duration()
         self.timer_widget.set_duration(dur)
         m, s = dur // 60, dur % 60
         self.countdown_label.setText(f"{m:02d}:{s:02d}")
         self._apply_countdown_color(dur)
 
-        # Auto-start timer so countdown decreases immediately (no need to press S/Start)
-        self.timer_widget.start_timer()
-        self._sync_play_pause_button()  # Show "Pause" at open since timer is running
-
         self._first_image = True
-        self._load_current_image()
+        self.phase_title_frame.setVisible(False)
+        self.get_ready_frame.setVisible(True)
+        self.countdown_frame.raise_()  # Timer visible during title screens
 
-        # Show first, then set fullscreen (required on Windows for fullscreen to apply)
+        # Show window first; start 3s countdown (3, 2, 1) then hide "Get ready" and start timer + first image
         self.show()
         self.raise_()
         self.activateWindow()
-        # Defer focus to view so it wins after layout/default focus; avoids first Space going to a button
         QTimer.singleShot(0, self._give_focus_to_view)
         _dbg_space(f"session started, focusWidget={QApplication.focusWidget()}")
-        # Show overlays + cursor; hide after 2s inactivity (key/mouse restarts timer)
         self._show_ui_and_restart_timer()
         if self._is_fullscreen:
             self.setWindowState(Qt.WindowFullScreen)
-            # Re-layout after fullscreen: viewport size is only final after resize (Qt/Windows)
             def _delayed_fit_after_fullscreen():
                 _dbg("delayed (100ms) fitInView after setWindowState(WindowFullScreen)")
                 self._fit_scene_in_view()
             QTimer.singleShot(100, _delayed_fit_after_fullscreen)
+        self._start_title_countdown(_GET_READY_DURATION_SEC, self._on_get_ready_done)
         return True
+
+    def _start_title_countdown(self, duration_sec: int, on_done) -> None:
+        """Start countdown on title screen: update label every second, then call on_done."""
+        self._title_countdown_timer.stop()
+        self._title_countdown_total = max(1, duration_sec)
+        self._title_countdown_remaining = self._title_countdown_total
+        self._title_countdown_done_callback = on_done
+        self._update_title_countdown_label()
+        self._apply_countdown_color(self._title_countdown_remaining, self._title_countdown_total)
+        self._title_countdown_timer.start()
+
+    def _on_title_countdown_tick(self) -> None:
+        """Every second during title screen: decrement and update label; at 0 call done callback."""
+        self._title_countdown_remaining -= 1
+        if self._title_countdown_remaining <= 0:
+            self._title_countdown_timer.stop()
+            self._title_countdown_remaining = 0
+            cb = self._title_countdown_done_callback
+            self._title_countdown_done_callback = None
+            if cb:
+                cb()
+            return
+        self._update_title_countdown_label()
+        self._apply_countdown_color(self._title_countdown_remaining, self._title_countdown_total)
+
+    def _update_title_countdown_label(self) -> None:
+        """Set countdown label to current title countdown (e.g. 00:03)."""
+        s = self._title_countdown_remaining
+        self.countdown_label.setText(f"00:{s:02d}")
+
+    def _on_get_ready_done(self):
+        """After 3s countdown 'Get ready': hide overlay, start timer (PLAY), load first image (or phase title)."""
+        self.get_ready_frame.setVisible(False)
+        self.timer_widget.start_timer()
+        self._sync_play_pause_button()
+        self._load_current_image()
     
     def _load_current_image(self):
-        """Load the current image for display."""
+        """Load the current image; in Course mode show phase title first if at phase start."""
+        idx = self.session_manager.get_run_index()
+        phase_info = self.session_manager.get_phase_info_at_index(idx)
+        if phase_info is not None:
+            phase_name, count, duration_sec = phase_info
+            if duration_sec < 60:
+                timing = f"{duration_sec}s"
+            else:
+                timing = f"{duration_sec // 60} min"
+            self.phase_title_label.setText(phase_name)
+            self.phase_subtitle_label.setText(
+                f"{count} Images of {timing}"
+            )
+            self.phase_title_frame.setVisible(True)
+            self.phase_title_frame.raise_()
+            self.countdown_frame.raise_()  # Timer visible during phase title
+            self.timer_widget.pause_timer()  # Pause during title so first image gets full duration
+            self._start_title_countdown(_PHASE_TITLE_DURATION_SEC, self._on_phase_title_done)
+            return
+        self._do_load_current_image()
+
+    def _on_phase_title_done(self):
+        """After 2s phase title: hide overlay, sync timer to current image, resume, load image."""
+        self.phase_title_frame.setVisible(False)
+        self._sync_timer_to_current_image()
+        self.timer_widget.start_timer()
+        self._sync_play_pause_button()
+        self._do_load_current_image()
+
+    def _do_load_current_image(self):
+        """Load the current image for display (worker)."""
         image_id = self.session_manager.get_current_image_id()
         if not image_id:
             return
@@ -854,9 +1003,9 @@ class SlideshowWindow(QMainWindow):
         self._sync_play_pause_button()
         _dbg_space(f"after toggle | is_running={self.timer_widget.is_running} is_paused={self.timer_widget.is_paused}")
 
-    def _apply_countdown_color(self, remaining_seconds: int):
+    def _apply_countdown_color(self, remaining_seconds: int, total_seconds: Optional[int] = None):
         """Set countdown label color: more red as remaining time approaches 0."""
-        total = max(1, self.timer_widget.total_seconds)
+        total = max(1, total_seconds if total_seconds is not None else self.timer_widget.total_seconds)
         ratio = remaining_seconds / total  # 1 = full time left, 0 = no time
         from core.settings import settings
         dark = settings.get("ui.theme") == "dark"
