@@ -5,6 +5,9 @@ import os
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple, Set
+
+# Type alias for rotate_image_file result
+_RotateResult = Tuple[bool, int, int]
 from PIL import Image
 from core.settings import settings
 from core.image_db import ImageDatabase, ImageMetadata
@@ -286,6 +289,37 @@ class ImageManager:
         """
         return self.db.update_image(image_id, **updates)
 
+    def rotate_image_file(self, path: Path, clockwise: bool, format: str) -> _RotateResult:
+        """
+        Rotate an image file by 90° (file I/O only, no DB update). Safe to call from a worker thread.
+
+        Args:
+            path: Full path to the image file.
+            clockwise: If True, rotate 90° clockwise; if False, rotate 90° counterclockwise.
+            format: Image format ("JPEG", "PNG", etc.).
+
+        Returns:
+            Tuple (success, new_width, new_height). On failure, (False, 0, 0).
+        """
+        if not path.exists():
+            return (False, 0, 0)
+        try:
+            with Image.open(path) as img:
+                angle = -90 if clockwise else 90
+                rotated = img.rotate(angle, expand=True)
+                w, h = rotated.size
+                fmt = (format or "jpg").upper()
+                if fmt in ("JPG", "JPEG"):
+                    if rotated.mode in ("RGBA", "P"):
+                        rotated = rotated.convert("RGB")
+                    rotated.save(path, format="JPEG", quality=95)
+                else:
+                    rotated.save(path, format="PNG")
+            return (True, w, h)
+        except Exception as e:
+            print(f"Error rotating image {path}: {e}")
+            return (False, 0, 0)
+
     def rotate_image(self, image_id: str, clockwise: bool = True) -> bool:
         """
         Rotate an image by 90° (clockwise or counterclockwise) and update file and metadata.
@@ -301,25 +335,11 @@ class ImageManager:
         if not metadata:
             return False
         path = self.image_dir / metadata.path
-        if not path.exists():
-            return False
-        try:
-            with Image.open(path) as img:
-                angle = -90 if clockwise else 90
-                rotated = img.rotate(angle, expand=True)
-                w, h = rotated.size
-                fmt = (metadata.format or "jpg").upper()
-                if fmt in ("JPG", "JPEG"):
-                    if rotated.mode in ("RGBA", "P"):
-                        rotated = rotated.convert("RGB")
-                    rotated.save(path, format="JPEG", quality=95)
-                else:
-                    rotated.save(path, format="PNG")
-                self.db.update_image(image_id, width=w, height=h)
-            return True
-        except Exception as e:
-            print(f"Error rotating image {path}: {e}")
-            return False
+        fmt = (metadata.format or "jpg").upper()
+        success, w, h = self.rotate_image_file(path, clockwise, fmt)
+        if success:
+            self.db.update_image(image_id, width=w, height=h)
+        return success
 
     def delete_image(self, image_id: str) -> bool:
         """

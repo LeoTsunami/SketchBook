@@ -375,6 +375,14 @@ The `ImageGrid` class manages the display of image thumbnails in a responsive gr
 - Efficient thumbnail resizing with proper scaling
 - Viewport-based loading for visible thumbnails only
 
+### Tag operations (apply / remove)
+- Applying a tag to many images (from main window) uses `TagApplyWorker` in the thread pool; progress and completion are handled on the main thread.
+- Removing a tag from selected images (× on a tag chip in the grid) uses the same `TagApplyWorker` with `operation="remove"`; `ImageGrid._remove_tag_from_selection` starts the worker and connects `tag_remove_progress`, `tag_remove_finished`, `tag_remove_error` so the main window can show status/progress.
+
+### Tag filtering (category vs label)
+- **Regular categories** (Human, Animal, etc.): OR between categories; AND between sub-tags within a category. Example: Human + Portrait = images with Human and Portrait.
+- **Label categories** ("Camera-Angle:", "Miscellaneous:"): their sub-tags are applied as a **global AND** on top of the category result. Example: Human + Wide-Angle = images that are Human *and* Wide-Angle. Logic in `MainWindow._filter_images_by_category`: first filter by regular categories, then keep only images that also have all selected label-category tags.
+
 ### Key Methods
 ```python
 def set_columns(self, columns: int):

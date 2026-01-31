@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-01-30 (Camera-Angle as global AND constraint)
+### ✅ Tasks:
+- Camera-Angle and label categories constrain all category filters (AND)
+
+- Label categories (e.g. "Camera-Angle:", "Miscellaneous:") are now applied as a **global AND** on top of the category filter. Example: Human + Wide-Angle shows only images that are both Human and Wide-Angle.
+- Logic in `_filter_images_by_category`: first compute images matching any active regular category (with subtags); then keep only those that also have all selected label-category tags (constraining_tags). If no category is selected, only constraining tags are applied (e.g. Wide-Angle alone = all images with Wide-Angle).
+ → Result: Selecting a category then a camera angle (or other label tag) correctly narrows results to that combination.
+---
+
+## 2026-01-30 (tag removal in background)
+### ✅ Tasks:
+- Tag removal on one or many images moved to background thread
+
+- Remove-tag action (from tag chip × on selected images) now uses the same worker as tag assignment: `TagApplyWorker` with `operation="remove"` runs in the thread pool.
+- `ImageGrid._remove_tag_from_selection` creates a `TagApplyWorker`, connects progress/finished/error, and starts it in `thread_pool`; handlers `_on_remove_tag_finished` and `_on_remove_tag_error` run on the main thread and refresh thumbnails or emit errors.
+- New signals on `ImageGrid`: `tag_remove_progress`, `tag_remove_finished`, `tag_remove_error` so the main window can show status/progress (same UX as "Applying tag...").
+- Main window connects to these signals and shows "Removing tag 'X'..." with progress bar, then cleans up on finished/error.
+- Unit tests in `tests/test_tag_apply_worker.py` for remove operation, empty list, and error path.
+ → Result: Removing a tag from many images no longer blocks the UI; same threading model as assigning a tag.
+---
+
 ## 2026-01-30
 ### ✅ Tasks:
 - Session countdown: second-by-second and red gradient toward 0

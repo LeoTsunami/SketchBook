@@ -1,5 +1,26 @@
 # Journal des modifications
 
+## 2026-01-30 (Camera-Angle comme contrainte AND globale)
+### ✅ Tâches :
+- Camera-Angle et catégories « label » contraignent toutes les catégories (AND)
+
+- Les catégories label (ex. « Camera-Angle: », « Miscellaneous: ») sont appliquées comme **AND global** en plus du filtre de catégorie. Exemple : Humain + Wide-Angle n’affiche que les images à la fois Humain et Wide-Angle.
+- Logique dans `_filter_images_by_category` : d’abord les images qui matchent une catégorie active (avec sous-tags), puis on ne garde que celles qui ont aussi tous les tags des catégories label (constraining_tags). Sans catégorie sélectionnée, seuls ces tags s’appliquent (ex. Wide-Angle seul = toutes les images avec Wide-Angle).
+ → Résultat : En choisissant une catégorie puis un angle de caméra, les résultats sont bien restreints à cette combinaison.
+---
+
+## 2026-01-30 (suppression de tag en arrière-plan)
+### ✅ Tâches :
+- Suppression de tag sur une ou plusieurs images déplacée en arrière-plan
+
+- L’action « supprimer un tag » (bouton × sur les chips de tag des images sélectionnées) utilise maintenant le même worker que l’assignation : `TagApplyWorker` avec `operation="remove"` s’exécute dans le thread pool.
+- `ImageGrid._remove_tag_from_selection` crée un `TagApplyWorker`, connecte progress/finished/error et le lance dans `thread_pool` ; les handlers `_on_remove_tag_finished` et `_on_remove_tag_error` s’exécutent sur le thread principal et rafraîchissent les miniatures ou émettent les erreurs.
+- Nouveaux signaux sur `ImageGrid` : `tag_remove_progress`, `tag_remove_finished`, `tag_remove_error` pour que la fenêtre principale puisse afficher statut et progression (même UX que « Applying tag... »).
+- La fenêtre principale se connecte à ces signaux et affiche « Removing tag 'X'... » avec barre de progression, puis nettoie à la fin ou en cas d’erreur.
+- Tests unitaires dans `tests/test_tag_apply_worker.py` pour l’opération remove, liste vide et cas d’erreur.
+ → Résultat : Supprimer un tag sur beaucoup d’images ne bloque plus l’interface ; même modèle de threading que pour l’assignation de tag.
+---
+
 ## 2026-01-30
 ### ✅ Tâches :
 - Décompte de session : seconde par seconde et dégradé rouge vers 0

@@ -18,6 +18,8 @@ Update this file via prompt:
 - [x] Display tags on selected images in grid with icons and remove buttons (2026-01-27)
 - [x] Session countdown: second-by-second tick, top-left position, red gradient toward 0 (2026-01-30)
 - [x] Slideshow fullscreen avec fitInView (scene.itemsBoundingRect, KeepAspectRatio) ; crossfade avec workaround (repaint + processEvents + délai 80 ms) pour éviter le resize pendant le fondu (2026-01-30)
+- [x] Tag removal on selection moved to background thread (same TagApplyWorker as assign) (2026-01-30)
+- [x] Camera-Angle (and label categories) as global AND constraint for all category filters (2026-01-30)
 
 ### Phase 1: Basic Structure ✅ (Completed: 2024-03-06)
 - [x] Set up base Python project with multi-file structure

@@ -1,14 +1,18 @@
-feat: session countdown second-by-second and red gradient toward zero
+feat: tag removal on selection in background thread (same worker as assign)
 
 Description:
-- Timer ticks every second (interval 1s) instead of 100ms; countdown decreases second by second
-- Countdown overlay moved from top-right to top-left in session window
-- Countdown label color interpolates toward red as remaining time approaches 0 (dark: white→red, light: black→red); color reset on image change or session start
+- Remove-tag action (× on tag chip for selected images) now runs in background via TagApplyWorker with operation="remove"
+- ImageGrid._remove_tag_from_selection creates worker, connects progress/finished/error, starts in thread_pool; handlers refresh thumbnails on main thread
+- New signals on ImageGrid: tag_remove_progress, tag_remove_finished, tag_remove_error for main window status/progress
+- Main window connects to these signals and shows "Removing tag 'X'..." with progress bar, cleanup on finished/error
+- Unit tests in tests/test_tag_apply_worker.py for remove operation, empty list, error path
 
 Affected files:
-- gui/session_timer.py
-- gui/slideshow_window.py
+- gui/image_grid.py
+- gui/main_window.py
+- tests/test_tag_apply_worker.py
 - docs/CHANGELOG.md
 - docs/CHANGELOG_FR.md
+- docs/DOC_DEV.md
 - docs/DOC_USER.md
 - .cursor/TASKS.md

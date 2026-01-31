@@ -453,6 +453,18 @@ class MainWindow(QMainWindow):
         self.image_grid = ImageGrid(self.image_manager)
         self.image_grid.set_columns(self.columns_slider.value())
         self.image_grid.image_double_clicked.connect(self._on_image_clicked)
+        self.image_grid.tag_remove_progress.connect(
+            self._handle_tag_remove_progress,
+            Qt.QueuedConnection,
+        )
+        self.image_grid.tag_remove_finished.connect(
+            self._handle_tag_remove_finished,
+            Qt.QueuedConnection,
+        )
+        self.image_grid.tag_remove_error.connect(
+            self._handle_tag_remove_error,
+            Qt.QueuedConnection,
+        )
         middle_layout.addWidget(self.image_grid)
 
         # Lazy-created image viewer window (one window, reused)
@@ -1032,6 +1044,8 @@ class MainWindow(QMainWindow):
     def _filter_images_by_category(self) -> List:
         """
         Filter images by category (OR) and sub-tags (AND within category).
+        Label categories (e.g. Camera-Angle) are applied as a global AND constraint:
+        e.g. Human + Wide-Angle => images that are Human AND Wide-Angle.
 
         Returns:
             List: Filtered image metadata list.
@@ -1040,42 +1054,40 @@ class MainWindow(QMainWindow):
         sort_by = self._get_current_sort_order()
         all_images = self.image_manager.db.list_images(sort_by)
         
-        # Label categories are not real tags, they're just organizational labels
+        # Label categories are not real tags; their sub-tags constrain all category results (AND)
         label_categories = ["Miscellaneous:", "Camera-Angle:"]
+        constraining_tags: Set[str] = set()
+        for label_cat in label_categories:
+            constraining_tags.update(self._active_subtags.get(label_cat, set()))
         
-        # Check if there are any active filters (regular categories or label category sub-tags)
-        has_active_filters = bool(self._active_categories)
-        if not has_active_filters:
-            # Check if there are active sub-tags in label categories
-            for label_cat in label_categories:
-                if self._active_subtags.get(label_cat):
-                    has_active_filters = True
-                    break
-        
+        # Check if there are any active filters (regular categories or constraining tags)
+        has_active_filters = bool(self._active_categories) or bool(constraining_tags)
         if not has_active_filters:
             return all_images
         
-        filtered_images = []
-        for metadata in all_images:
-            image_tags = set(metadata.tags)
-            
-            # Check regular categories first
-            for category in self._active_categories:
-                # For regular categories, check if category tag exists and sub-tags match
-                if category not in image_tags:
-                    continue
-                required = self._active_subtags.get(category, set())
-                if required.issubset(image_tags):
-                    filtered_images.append(metadata)
-                    break
-            else:
-                # If no regular category matched, check label categories
-                for label_cat in label_categories:
-                    required = self._active_subtags.get(label_cat, set())
-                    if required and required.issubset(image_tags):
-                        filtered_images.append(metadata)
+        # Step 1: images matching at least one active regular category (with its sub-tags)
+        if self._active_categories:
+            category_matched = []
+            for metadata in all_images:
+                image_tags = set(metadata.tags)
+                for category in self._active_categories:
+                    if category not in image_tags:
+                        continue
+                    required = self._active_subtags.get(category, set())
+                    if required.issubset(image_tags):
+                        category_matched.append(metadata)
                         break
+        else:
+            # No category selected: start from all images (then apply constraining tags only)
+            category_matched = list(all_images)
         
+        # Step 2: apply constraining tags (label categories) as global AND
+        if not constraining_tags:
+            return category_matched
+        filtered_images = [
+            m for m in category_matched
+            if constraining_tags.issubset(set(m.tags))
+        ]
         return filtered_images
 
     def _set_button_active(self, button: QPushButton, active: bool) -> None:
@@ -1445,7 +1457,45 @@ class MainWindow(QMainWindow):
         """Handle error during tag application."""
         self._cleanup_progress_bars()
         self.add_log_message(f"Error while applying tag: {error_msg}", "ERROR")
-    
+
+    def _handle_tag_remove_progress(self, tag: str, current: int, total: int) -> None:
+        """Update progress bar while removing tag (worker runs in grid)."""
+        if total <= 0:
+            return
+        if self.status_progress_bar is None:
+            self._create_status_progress_bar()
+            self.status_progress_bar.setFormat(f"Removing tag '{tag}'...")
+        progress = int(current * 100 / total)
+        self.status_progress_bar.setValue(progress)
+        self.status_progress_bar.setFormat(
+            f"Removing tag '{tag}': {current}/{total} ({progress}%)"
+        )
+        if self.dev_mode:
+            self.update_dev_progress_bar(progress)
+            self.update_dev_progress_label(
+                f"Removing tag '{tag}': {current}/{total} images updated"
+            )
+
+    def _handle_tag_remove_finished(
+        self, tag: str, image_ids: List[str], total: int
+    ) -> None:
+        """Handle completion of tag removal (thumbnails refreshed by grid)."""
+        try:
+            if self.status_progress_bar is not None:
+                self.status_progress_bar.setValue(100)
+                self.status_progress_bar.setFormat(
+                    f"Removing tag '{tag}': completed"
+                )
+                self.status_progress_bar.repaint()
+            self._cleanup_progress_bars()
+        except Exception:
+            self._cleanup_progress_bars()
+
+    def _handle_tag_remove_error(self, error_msg: str) -> None:
+        """Handle error during tag removal."""
+        self._cleanup_progress_bars()
+        self.add_log_message(f"Error while removing tag: {error_msg}", "ERROR")
+
     def _handle_progress_update(self, current: int, total: int):
         """Handle progress update from worker thread."""
         progress = int(current * 100 / total)

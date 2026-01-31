@@ -27,6 +27,8 @@ from qtpy.QtGui import QPixmap, QImage, QResizeEvent, QIcon
 from core.image_manager import ImageManager
 from core.image_db import ImageMetadata
 from gui.image_loader_worker import ImageLoaderWorker
+from gui.image_rotate_worker import RotateImageWorker
+from gui.tag_apply_worker import TagApplyWorker
 from gui.image_thumbnail import ImageThumbnail, TagChip
 from qtpy.QtWidgets import QCompleter
 import json
@@ -41,6 +43,9 @@ class ImageGrid(QScrollArea):
     image_clicked = Signal(str)  # Emits image ID when clicked (single click)
     image_double_clicked = Signal(str)  # Emits image ID when double-clicked (open viewer)
     selection_changed = Signal(list)  # Emits list of selected image IDs
+    tag_remove_progress = Signal(str, int, int)  # tag, current, total
+    tag_remove_finished = Signal(str, list, int)  # tag, image_ids, total
+    tag_remove_error = Signal(str)  # error message
     BASE_BATCH_SIZE = 20
     MIN_ROWS_LOADED = 5
     MIN_THUMBNAIL_HEIGHT = 150
@@ -808,7 +813,7 @@ class ImageGrid(QScrollArea):
 
     def _rotate_selected(self, clockwise: bool) -> None:
         """
-        Rotate all selected images by 90° (clockwise or counterclockwise) and refresh display.
+        Rotate all selected images by 90° in background threads; refresh display when each completes.
 
         Args:
             clockwise: If True, rotate 90° clockwise; if False, rotate 90° counterclockwise.
@@ -816,19 +821,38 @@ class ImageGrid(QScrollArea):
         if not self.selected_images:
             return
         for image_id in list(self.selected_images):
-            if self.image_manager.rotate_image(image_id, clockwise=clockwise):
-                self.pixmap_cache.pop(image_id, None)
-                if image_id in self.thumbnails:
-                    self.thumbnails[image_id].clear_pixmap()
-                # Keep all_images in sync with new dimensions
-                meta = self.image_manager.get_image_metadata(image_id)
-                if meta:
-                    for i, m in enumerate(self.all_images):
-                        if m.id == image_id:
-                            self.all_images[i] = meta
-                            break
+            metadata = self.image_manager.get_image_metadata(image_id)
+            if not metadata:
+                continue
+            path = self.image_manager.image_dir / metadata.path
+            fmt = (metadata.format or "jpg").upper()
+            worker = RotateImageWorker(
+                image_id, path, clockwise, fmt, self.image_manager
+            )
+            worker.signals.finished.connect(self._on_rotate_finished)
+            worker.signals.error.connect(self._on_rotate_error)
+            self.thread_pool.start(worker)
+
+    def _on_rotate_finished(self, image_id: str, success: bool, w: int, h: int) -> None:
+        """Update metadata and UI after a rotation completes (main thread)."""
+        if not success:
+            return
+        self.image_manager.update_image_metadata(image_id, width=w, height=h)
+        self.pixmap_cache.pop(image_id, None)
+        if image_id in self.thumbnails:
+            self.thumbnails[image_id].clear_pixmap()
+        meta = self.image_manager.get_image_metadata(image_id)
+        if meta:
+            for i, m in enumerate(self.all_images):
+                if m.id == image_id:
+                    self.all_images[i] = meta
+                    break
         self._check_visible_thumbnails()
         self.layout_timer.start()
+
+    def _on_rotate_error(self, image_id: str, error_msg: str) -> None:
+        """Log rotation error (main thread)."""
+        print(f"Rotate failed for {image_id}: {error_msg}")
 
     def _delete_selected(self):
         """Delete selected images after confirmation."""
@@ -849,27 +873,48 @@ class ImageGrid(QScrollArea):
     
     def _remove_tag_from_selection(self, tag: str):
         """
-        Remove a tag from all selected images.
+        Remove a tag from all selected images using the same background worker as tag assignment.
         
         Args:
             tag: Tag to remove from selected images
         """
         if not self.selected_images:
             return
-        
-        # Remove tag from all selected images
-        for image_id in self.selected_images:
-            metadata = self.image_manager.get_image_metadata(image_id)
-            if metadata and tag in metadata.tags:
-                new_tags = metadata.tags.copy()
-                new_tags.discard(tag)
-                self.image_manager.update_image_metadata(image_id, tags=new_tags)
-        
-        # Refresh tags display on all selected thumbnails
-        for image_id in self.selected_images:
+
+        image_ids = list(self.selected_images)
+        worker = TagApplyWorker(
+            self.image_manager,
+            image_ids,
+            tag,
+            operation="remove",
+        )
+
+        worker.signals.progress.connect(
+            lambda cur, tot: self.tag_remove_progress.emit(tag, cur, tot),
+            Qt.QueuedConnection,
+        )
+        worker.signals.finished.connect(
+            lambda total: self._on_remove_tag_finished(tag, image_ids, total),
+            Qt.QueuedConnection,
+        )
+        worker.signals.error.connect(
+            self._on_remove_tag_error,
+            Qt.QueuedConnection,
+        )
+
+        self.thread_pool.start(worker)
+
+    def _on_remove_tag_finished(self, tag: str, image_ids: List[str], total: int) -> None:
+        """Refresh thumbnails after tag removal completes (main thread)."""
+        for image_id in image_ids:
             if image_id in self.thumbnails:
                 self.thumbnails[image_id].refresh_tags()
-    
+        self.tag_remove_finished.emit(tag, image_ids, total)
+
+    def _on_remove_tag_error(self, error_msg: str) -> None:
+        """Handle tag removal error (main thread)."""
+        self.tag_remove_error.emit(error_msg)
+
     def _add_tag_to_images(self, tag: str, image_ids: List[str]):
         """
         Add a tag to multiple images and refresh their display.

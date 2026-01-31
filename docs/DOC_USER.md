@@ -47,7 +47,7 @@ You can add tags and notes to your images to help organize and find them later:
 ### Viewing Tags on Selected Images
 When you select an image in the gallery, its tags are automatically displayed at the bottom of the thumbnail:
 - Each tag appears as a small chip with its icon (if available)
-- Click the × button on any tag chip to remove that tag from all selected images
+- Click the × button on any tag chip to remove that tag from all selected images (removal runs in the background; a progress indicator may appear when many images are updated)
 - Tags are displayed in a grid layout that wraps automatically
 - You can drag and drop tags from the tag library directly onto images to add them
 - The tags display updates automatically when you modify tags
@@ -57,7 +57,8 @@ You can filter your image collection using the tag buttons:
 
 1. Click one or more category buttons (e.g., "Human", "Animal")
 2. Optionally click sub-tags under each category (e.g., "Male", "Portrait")
-3. The gallery updates automatically
+3. **Camera-Angle** and similar label tags (e.g. "Wide-Angle", "Close-Up") apply as an extra constraint: only images that match the selected category *and* the selected angle are shown (e.g. Human + Wide-Angle = humans in wide angle only).
+4. The gallery updates automatically
 
 Categories act as a global OR (Human OR Animal). Sub-tags act as AND within their category (Human + Male + Portrait).
 
