@@ -1550,8 +1550,10 @@ class MainWindow(QMainWindow):
             self.update_dev_progress_label(f"Importing: {current}/{total} images processed")
     
     def _on_image_imported(self, image_id: str) -> None:
-        """Refresh grid after each imported image so new images appear progressively."""
-        self._apply_category_filters()
+        """Add the newly imported image at the top of the grid (no full refresh)."""
+        meta = self.image_manager.get_image_metadata(image_id)
+        if meta:
+            self.image_grid.prepend_image(meta)
 
     def _handle_import_finished(self, successful: int, duplicates: int, total: int):
         """Handle import completion from worker thread."""
@@ -1588,7 +1590,8 @@ class MainWindow(QMainWindow):
             
             # Clean up all progress bars
             self._cleanup_progress_bars()
-            # Grid already refreshed progressively via image_imported; just update tags list
+            # Refresh grid once at end of import
+            self._apply_category_filters()
             self._update_available_tags()
             
         except Exception as e:

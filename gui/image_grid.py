@@ -392,7 +392,44 @@ class ImageGrid(QScrollArea):
         
         # Trigger layout update
         self.layout_timer.start()
-    
+
+    def prepend_image(self, metadata: ImageMetadata) -> None:
+        """
+        Add a single image at the top of the grid without full refresh.
+        Used when a new image is imported so it appears immediately at the top.
+        """
+        self.all_images.insert(0, metadata)
+        thumbnail_width, thumbnail_height = self._calculate_optimal_dimensions()
+        thumbnail = ImageThumbnail(
+            metadata.id,
+            metadata.original_filename,
+            self,
+            self.image_manager,
+            remove_tag_callback=self._remove_tag_from_selection,
+            get_selected_images_callback=lambda: self.selected_images,
+        )
+        thumbnail.setFixedWidth(thumbnail_width)
+        thumbnail.setFixedHeight(thumbnail_height)
+        thumbnail.image_container.setFixedSize(thumbnail_width - 4, thumbnail_height - 4)
+        thumbnail.graphics_view.setFixedSize(thumbnail_width - 4, thumbnail_height - 4)
+        self.thumbnails[metadata.id] = thumbnail
+        thumbnail.clicked.connect(self.image_clicked.emit)
+        self.loaded_count += 1
+
+        # Remove all widgets from grid and re-add with new one at (0,0)
+        old_widgets: List[QWidget] = []
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            if item.widget():
+                old_widgets.append(item.widget())
+        self.grid.addWidget(thumbnail, 0, 0)
+        for i, w in enumerate(old_widgets):
+            row = (i + 1) // self.columns
+            col = (i + 1) % self.columns
+            self.grid.addWidget(w, row, col)
+        self.layout_timer.start()
+        self.visibility_timer.start()
+
     def _check_visible_thumbnails(self):
         """Check which thumbnails are visible and load their images."""
         viewport_rect = QRect(
