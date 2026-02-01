@@ -43,6 +43,7 @@ class ImageGrid(QScrollArea):
     image_clicked = Signal(str)  # Emits image ID when clicked (single click)
     image_double_clicked = Signal(str)  # Emits image ID when double-clicked (open viewer)
     selection_changed = Signal(list)  # Emits list of selected image IDs
+    grid_needs_refresh = Signal()  # Emits when DB changed (delete, etc.) so main window can reload
     tag_remove_progress = Signal(str, int, int)  # tag, current, total
     tag_remove_finished = Signal(str, list, int)  # tag, image_ids, total
     tag_remove_error = Signal(str)  # error message
@@ -870,6 +871,7 @@ class ImageGrid(QScrollArea):
                 self.image_manager.delete_image(image_id)
             self.selected_images.clear()
             self._update_selection()
+            self.grid_needs_refresh.emit()
     
     def _remove_tag_from_selection(self, tag: str):
         """
@@ -973,12 +975,14 @@ class ImageGrid(QScrollArea):
             images: List of image metadata to display.
             filter_key: Key used to detect filter changes.
         """
-        if self.current_filter != filter_key:
+        list_changed = (
+            len(images) != len(self.all_images)
+            or (self.all_images and set(m.id for m in images) != set(m.id for m in self.all_images))
+        )
+        if self.current_filter != filter_key or list_changed:
             self.clear()
-            # Force grid layout update after clear to remove empty slots
             self.grid.update()
             self.content.update()
-            # Process events to ensure clear is complete
             QApplication.processEvents()
 
         self.current_filter = filter_key
@@ -986,7 +990,6 @@ class ImageGrid(QScrollArea):
 
         self._load_next_batch()
         self.layout_timer.start()
-        
-        # Force immediate layout update to ensure thumbnails are positioned correctly
+        self.visibility_timer.start()
         self.grid.update()
         self.content.update()

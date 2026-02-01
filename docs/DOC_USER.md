@@ -16,7 +16,7 @@ Simply drag image files from your file explorer and drop them into the SketchBoo
 
 ### Image Processing
 When you import images, SketchBook automatically:
-- Resizes large images to a maximum width of 1920 pixels (preserving aspect ratio)
+- Resizes large images to fit within the maximum width and height set in **Settings** (File > Settings > Image Import Compression). Defaults: 1920 px width, 1080 px height. Aspect ratio is preserved.
 - Optimizes the file size for better performance
 - Converts images to a consistent format
 

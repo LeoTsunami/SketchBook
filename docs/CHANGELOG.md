@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-01-30 (max width in import settings)
+### ✅ Tasks:
+- Add Maximum Width to image import settings
+
+- Settings dialog: new "Maximum Width" spin box (360–4320 px, default 1920) in Image Import Compression section, alongside Maximum Height.
+- Import resize logic: images are now fitted within both max_width and max_height (smaller of the two ratios is used so neither dimension is exceeded). Aspect ratio is preserved.
+- Tests: `test_import_image_with_metadata` updated to assert dimensions within default limits and aspect ratio preserved (no longer uses removed MAX_WIDTH constant).
+ → Result: Users can cap both width and height for imported images.
+---
+
 ## 2026-01-30 (Camera-Angle as global AND constraint)
 ### ✅ Tasks:
 - Camera-Angle and label categories constrain all category filters (AND)

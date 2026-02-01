@@ -215,7 +215,7 @@ class MainWindow(QMainWindow):
         
         # Update session images count with initial filters
         self._apply_category_filters()
-    
+
     def _setup_image_browser(self):
         """Set up the Image Browser with 2-panel splitter layout."""
         # Create main splitter (horizontal)
@@ -404,10 +404,13 @@ class MainWindow(QMainWindow):
         grid_controls = QHBoxLayout()
         grid_controls.setContentsMargins(0, 0, 10, 0)
         
-        # Label for number of images (left side)
+        # Label for number of images and selection info (left side)
         self.session_images_count_label = QLabel("Images: 0")
         self.session_images_count_label.setStyleSheet("font-size: 12px; font-weight: bold;")
         grid_controls.addWidget(self.session_images_count_label)
+        self.selection_info_label = QLabel("")
+        self.selection_info_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #7eb8da;")
+        grid_controls.addWidget(self.selection_info_label)
         
         # Add sort combo box
         grid_controls.addStretch()
@@ -418,7 +421,9 @@ class MainWindow(QMainWindow):
             "Most Recent First",
             "Oldest First",
             "Filename A→Z",
-            "Filename Z→A"
+            "Filename Z→A",
+            "Lightest First",
+            "Heaviest First"
         ])
         self.sort_combo.setCurrentIndex(0)  # Default: Most Recent First
         self.sort_combo.setFixedWidth(150)
@@ -465,6 +470,8 @@ class MainWindow(QMainWindow):
             self._handle_tag_remove_error,
             Qt.QueuedConnection,
         )
+        self.image_grid.selection_changed.connect(self._on_selection_changed)
+        self.image_grid.grid_needs_refresh.connect(self._apply_category_filters)
         middle_layout.addWidget(self.image_grid)
 
         # Lazy-created image viewer window (one window, reused)
@@ -577,6 +584,8 @@ class MainWindow(QMainWindow):
             1: "import_date_asc",   # Oldest First
             2: "filename_asc",      # Filename A→Z
             3: "filename_desc",     # Filename Z→A
+            4: "file_size_asc",     # Lightest First
+            5: "file_size_desc",    # Heaviest First
         }
         return sort_map.get(self.sort_combo.currentIndex(), "import_date_desc")
     
@@ -631,6 +640,41 @@ class MainWindow(QMainWindow):
         """
         count = len(filtered_images)
         self.session_images_count_label.setText(f"Images: {count}")
+        # Refresh selection info (in case filtered list changed)
+        self._update_selection_info_label(list(self.image_grid.selected_images))
+
+    def _on_selection_changed(self, image_ids: List[str]) -> None:
+        """Update selection info label when grid selection changes."""
+        self._update_selection_info_label(image_ids)
+
+    def _update_selection_info_label(self, image_ids: List[str]) -> None:
+        """
+        Update the label showing selected count and total size in MB.
+        Uses actual file size on disk (not DB cache) so the displayed weight is real.
+        
+        Args:
+            image_ids: List of selected image IDs.
+        """
+        if not image_ids:
+            self.selection_info_label.setText("")
+            return
+        total_bytes = 0
+        image_dir = self.image_manager.image_dir
+        for image_id in image_ids:
+            meta = self.image_manager.get_image_metadata(image_id)
+            if not meta:
+                continue
+            # Use current file size on disk so displayed weight matches Explorer
+            file_path = image_dir / meta.path
+            if file_path.exists():
+                try:
+                    total_bytes += file_path.stat().st_size
+                except OSError:
+                    total_bytes += meta.file_size  # fallback to DB value
+            else:
+                total_bytes += meta.file_size
+        total_mb = total_bytes / (1024 * 1024)
+        self.selection_info_label.setText(f"  |  Selected: {len(image_ids)} | {total_mb:.2f} MB")
     
     def _on_session_settings_clicked(self):
         """Handle Session Settings button click: open dialog then start session window."""
@@ -727,22 +771,18 @@ class MainWindow(QMainWindow):
 
                 # Process each category at root level
                 categories_list = list(default_tags.items())
-                
-                # Calculate maximum number of columns needed
-                # Max 3 subtags per row (subtags start at column 0)
+                # User tags (tags in DB not in default) shown under Miscellaneous:
+                user_tags = sorted(self._get_user_tags())
                 max_cols = 3
                 max_tags_per_row = 3
-                
-                # First pass: calculate number of rows needed for each category
-                # Each category takes 1 row for the category button/label + rows for subtags
                 category_row_counts: List[int] = []
                 for category, tags in categories_list:
                     subtags: List[str] = []
                     collect_subtags(tags, subtags)
                     unique_subtags = list(dict.fromkeys(subtags))
-                    # Calculate number of rows needed for subtags (max 3 tags per row)
+                    if category == "Miscellaneous:":
+                        unique_subtags = list(dict.fromkeys(unique_subtags + user_tags))
                     subtag_rows = max(1, (len(unique_subtags) + max_tags_per_row - 1) // max_tags_per_row) if unique_subtags else 0
-                    # Total rows: 1 for category + subtag rows
                     num_rows = 1 + subtag_rows
                     category_row_counts.append(num_rows)
                 
@@ -781,15 +821,13 @@ class MainWindow(QMainWindow):
                         self.tags_grid_layout.addWidget(category_button, row, 0, 1, max_cols)
                         self._category_buttons[category] = category_button
 
-                    # Collect subtags
+                    # Collect subtags (for Miscellaneous: include user tags)
                     subtags: List[str] = []
                     collect_subtags(tags, subtags)
                     unique_subtags = list(dict.fromkeys(subtags))
-                    
-                    # Place subtags below the category, starting from row+1, column 0
-                    # Split subtags into groups of 3 per row (max 3 per line)
+                    if category == "Miscellaneous:":
+                        unique_subtags = list(dict.fromkeys(unique_subtags + user_tags))
                     subtag_buttons: Dict[str, QPushButton] = {}
-                    
                     for idx, tag in enumerate(unique_subtags):
                         tag_button = self._build_tag_button(tag)
                         tag_button.clicked.connect(
@@ -1038,8 +1076,6 @@ class MainWindow(QMainWindow):
                 for tag, tag_button in self._subcategory_buttons[label_category].items():
                     tag_button.setVisible(True)
                     self._set_button_active(tag_button, tag in active_tags)
-        
-        # User tags are intentionally omitted from the grid for now.
 
     def _filter_images_by_category(self) -> List:
         """
@@ -1358,6 +1394,10 @@ class MainWindow(QMainWindow):
             self._handle_import_error,
             Qt.QueuedConnection
         )
+        worker.signals.image_imported.connect(
+            self._on_image_imported,
+            Qt.QueuedConnection
+        )
         
         # Start worker
         if self.dev_mode:
@@ -1445,11 +1485,10 @@ class MainWindow(QMainWindow):
             # Clean up progress bar
             self._cleanup_progress_bars()
 
-            # Refresh thumbnails for affected images
+            # Refresh thumbnails for affected images only (no full grid refresh)
             for image_id in image_ids:
                 if image_id in self.image_grid.thumbnails:
                     self.image_grid.thumbnails[image_id].refresh_tags()
-
         except Exception:
             self._cleanup_progress_bars()
 
@@ -1510,6 +1549,10 @@ class MainWindow(QMainWindow):
             self.update_dev_progress_bar(progress)
             self.update_dev_progress_label(f"Importing: {current}/{total} images processed")
     
+    def _on_image_imported(self, image_id: str) -> None:
+        """Refresh grid after each imported image so new images appear progressively."""
+        self._apply_category_filters()
+
     def _handle_import_finished(self, successful: int, duplicates: int, total: int):
         """Handle import completion from worker thread."""
         try:
@@ -1545,10 +1588,7 @@ class MainWindow(QMainWindow):
             
             # Clean up all progress bars
             self._cleanup_progress_bars()
-            
-            # Reload images and update tags (with current sort order)
-            sort_by = self._get_current_sort_order()
-            self.image_grid.load_images(sort_by=sort_by)
+            # Grid already refreshed progressively via image_imported; just update tags list
             self._update_available_tags()
             
         except Exception as e:
@@ -1793,7 +1833,7 @@ class MainWindow(QMainWindow):
                 )
                 
                 self.statusBar().showMessage("Library purged successfully")
-                
+                self._apply_category_filters()
             except Exception as e:
                 QMessageBox.critical(
                     self,

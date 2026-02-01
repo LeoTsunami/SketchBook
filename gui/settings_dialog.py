@@ -34,6 +34,7 @@ class SettingsDialog(QDialog):
         
         # Store current values
         self.theme_value = settings.get("ui.theme", "dark")
+        self.max_width_value = settings.get("images.max_width", 1920)
         self.max_height_value = settings.get("images.max_height", 1080)
         self.compression_quality_value = settings.get("images.compression.quality", 75)
         
@@ -60,6 +61,15 @@ class SettingsDialog(QDialog):
         # Image compression section
         compression_group = QGroupBox("Image Import Compression")
         compression_layout = QFormLayout()
+        
+        # Max width
+        self.max_width_spin = QSpinBox()
+        self.max_width_spin.setMinimum(360)  # Minimum 360p
+        self.max_width_spin.setMaximum(4320)  # Maximum 4K
+        self.max_width_spin.setSingleStep(180)  # Step by 180p (common resolutions)
+        self.max_width_spin.setSuffix(" px")
+        self.max_width_spin.setValue(self.max_width_value)
+        compression_layout.addRow("Maximum Width:", self.max_width_spin)
         
         # Max height
         self.max_height_spin = QSpinBox()
@@ -143,6 +153,15 @@ class SettingsDialog(QDialog):
         """
         return self.theme_combo.currentText().lower()
     
+    def get_max_width(self) -> int:
+        """
+        Get maximum width setting.
+        
+        Returns:
+            Maximum width in pixels
+        """
+        return self.max_width_spin.value()
+    
     def get_max_height(self) -> int:
         """
         Get maximum height setting.
@@ -165,6 +184,7 @@ class SettingsDialog(QDialog):
         """Save settings and close dialog."""
         # Save settings
         settings.set("ui.theme", self.get_theme())
+        settings.set("images.max_width", self.get_max_width())
         settings.set("images.max_height", self.get_max_height())
         settings.set("images.compression.quality", self.get_compression_quality())
         settings.save()

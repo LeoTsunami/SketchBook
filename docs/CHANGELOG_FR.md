@@ -1,5 +1,15 @@
 # Journal des modifications
 
+## 2026-01-30 (largeur max dans les paramètres d'import)
+### ✅ Tâches :
+- Ajout de la largeur max dans les paramètres d'import d'images
+
+- Fenêtre Paramètres : nouveau champ « Maximum Width » (360–4320 px, défaut 1920) dans la section Image Import Compression, à côté de Maximum Height.
+- Redimensionnement à l'import : les images sont maintenant bornées par max_width et max_height (on utilise le plus petit des deux ratios pour ne dépasser aucune dimension). Le ratio d'aspect est conservé.
+- Tests : `test_import_image_with_metadata` mis à jour pour vérifier les dimensions dans les limites par défaut et le ratio conservé (plus de constante MAX_WIDTH).
+ → Résultat : L'utilisateur peut limiter largeur et hauteur des images importées.
+---
+
 ## 2026-01-30 (Camera-Angle comme contrainte AND globale)
 ### ✅ Tâches :
 - Camera-Angle et catégories « label » contraignent toutes les catégories (AND)

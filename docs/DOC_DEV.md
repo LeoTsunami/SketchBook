@@ -229,7 +229,7 @@ The image import system is implemented in `core/image_manager.py` and provides t
 
 - Supported formats: JPG, JPEG, PNG
 - Automatic image processing:
-  - Resizing to max width of 1920px (preserving aspect ratio)
+  - Resizing to fit within max width and max height (settings: `images.max_width`, `images.max_height`; aspect ratio preserved)
   - Conversion to RGB color space
   - JPEG compression with configurable quality
   - Unique filename generation to prevent conflicts
@@ -271,7 +271,9 @@ The main window (`gui/main_window.py`) implements image import via:
 Image processing settings can be customized via the settings system:
 
 - `images.storage_path`: Directory for imported images (default: user data directory + "/images")
-- `images.compression.quality`: JPEG compression quality (default: 85)
+- `images.max_width`: Maximum width for imported images in pixels (default: 1920)
+- `images.max_height`: Maximum height for imported images in pixels (default: 1080)
+- `images.compression.quality`: JPEG compression quality (default: 75)
 
 ### Image Database
 The image database system is implemented in `core/image_db.py` and provides a JSON-based storage solution for image metadata.

@@ -175,13 +175,17 @@ class ImageManager:
                 if img.mode != "RGB":
                     img = img.convert("RGB")
                 
-                # Resize if needed (based on max_height setting from user settings)
+                # Resize if needed (fit within max_width x max_height from user settings)
                 # Note: Settings are read fresh on each import to ensure user preferences are applied
+                max_width = settings.get("images.max_width", 1920)
                 max_height = settings.get("images.max_height", 1080)
-                if img.height > max_height:
-                    ratio = max_height / img.height
-                    new_width = int(img.width * ratio)
-                    new_height = max_height
+                w, h = img.width, img.height
+                if w > max_width or h > max_height:
+                    ratio_w = max_width / w if w > max_width else 1.0
+                    ratio_h = max_height / h if h > max_height else 1.0
+                    ratio = min(ratio_w, ratio_h)
+                    new_width = int(w * ratio)
+                    new_height = int(h * ratio)
                     img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
                 
                 # Save with compression using user-defined quality setting
@@ -193,8 +197,7 @@ class ImageManager:
                     quality=compression_quality,
                     optimize=True
                 )
-                
-                # Create and save metadata
+                # Metadata must reflect the final file on disk (compressed, resized)
                 import_date = datetime.now().isoformat()
                 metadata = ImageMetadata(
                     id=dest_path.stem,
@@ -202,10 +205,10 @@ class ImageManager:
                     original_filename=source_path.name,
                     width=img.width,
                     height=img.height,
-                    file_size=dest_path.stat().st_size,
+                    file_size=dest_path.stat().st_size,  # actual size after save
                     format=img.format or "JPEG",
                     original_path=str(source_path),
-                    import_date=import_date
+                    import_date=import_date,
                 )
                 self.db.add_image(metadata)
             
@@ -343,27 +346,26 @@ class ImageManager:
 
     def delete_image(self, image_id: str) -> bool:
         """
-        Delete an image and its metadata.
+        Delete an image and its metadata. If the file was already removed by hand,
+        only the metadata is removed from the DB.
         
         Args:
             image_id: ID of the image to delete
             
         Returns:
-            True if successful, False if image not found
+            True if metadata was found and removed, False if image not found in DB
         """
         metadata = self.db.get_image(image_id)
         if not metadata:
             return False
-        
-        # Delete file
+        # Delete file if it still exists (ignore if already removed manually)
         image_path = self.image_dir / metadata.path
-        try:
-            image_path.unlink()
-        except OSError:
-            print(f"Error deleting image file: {image_path}")
-            return False
-        
-        # Delete metadata
+        if image_path.exists():
+            try:
+                image_path.unlink()
+            except OSError as e:
+                print(f"Error deleting image file: {image_path}: {e}")
+        # Always remove metadata from DB
         return self.db.delete_image(image_id)
     
     def search_images(self, tags: Optional[List[str]] = None, sort_by: str = "import_date_desc") -> List[ImageMetadata]:

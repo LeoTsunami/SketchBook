@@ -8,6 +8,7 @@ from qtpy.QtWidgets import (
     QVBoxLayout,
     QHBoxLayout,
     QLabel,
+    QLineEdit,
     QPushButton,
     QScrollArea,
     QWidget,
@@ -107,6 +108,29 @@ class ImportDialog(QDialog):
         tags_title = QLabel("Tags Library")
         tags_title.setStyleSheet("font-size: 12px; font-weight: bold; padding-bottom: 5px;")
         tags_layout.addWidget(tags_title)
+        
+        # Add user tag (Miscellaneous) - for this import only; can later be moved to default categories
+        add_user_tag_row = QHBoxLayout()
+        add_user_tag_row.setSpacing(8)
+        add_user_tag_label = QLabel("Add user tag (Miscellaneous):")
+        add_user_tag_label.setStyleSheet("font-size: 11px; color: #888;")
+        self._add_user_tag_input = QLineEdit()
+        self._add_user_tag_input.setPlaceholderText("Type a tag name and press Add or Enter")
+        self._add_user_tag_input.setMaximumWidth(280)
+        self._add_user_tag_input.returnPressed.connect(self._on_add_user_tag_clicked)
+        add_user_tag_btn = QPushButton("Add")
+        add_user_tag_btn.clicked.connect(self._on_add_user_tag_clicked)
+        add_user_tag_row.addWidget(add_user_tag_label)
+        add_user_tag_row.addWidget(self._add_user_tag_input)
+        add_user_tag_row.addWidget(add_user_tag_btn)
+        add_user_tag_row.addStretch()
+        tags_layout.addLayout(add_user_tag_row)
+        # Container for dynamically added user tag buttons (for this import)
+        self._added_user_tags_widget = QWidget()
+        self._added_user_tags_layout = QHBoxLayout(self._added_user_tags_widget)
+        self._added_user_tags_layout.setContentsMargins(0, 4, 0, 4)
+        self._added_user_tags_layout.setSpacing(6)
+        tags_layout.addWidget(self._added_user_tags_widget)
         
         # Scrollable tags grid
         self.tags_scroll_area = QScrollArea()
@@ -392,6 +416,31 @@ class ImportDialog(QDialog):
         button.setStyleSheet("QPushButton { text-align: left; padding: 2px 4px; }")
         return button
     
+    def _on_add_user_tag_clicked(self) -> None:
+        """Add a new user tag (Miscellaneous) for this import."""
+        text = self._add_user_tag_input.text().strip()
+        if not text:
+            return
+        tag = text
+        self._add_user_tag_input.clear()
+        if tag in self.selected_tags:
+            return
+        # If tag already exists in grid (e.g. existing user tag), just select it
+        if tag in self._user_tag_buttons:
+            button = self._user_tag_buttons[tag]
+            self.selected_tags.add(tag)
+            button.setChecked(True)
+            self._update_button_style(button, True)
+            return
+        self.selected_tags.add(tag)
+        tag_button = self._build_tag_button(tag)
+        tag_button.setCheckable(True)
+        tag_button.setChecked(True)
+        tag_button.clicked.connect(lambda _, name=tag: self._on_tag_button_clicked(name))
+        self._user_tag_buttons[tag] = tag_button
+        self._added_user_tags_layout.addWidget(tag_button)
+        self._update_button_style(tag_button, True)
+
     def _on_tag_button_clicked(self, tag: str):
         """Handle tag button click - toggle selection."""
         button = self._get_tag_button(tag)

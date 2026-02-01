@@ -29,19 +29,21 @@ def sample_image(tmp_path):
     return image_path
 
 def test_import_image_with_metadata(image_manager, sample_image):
-    """Test image importing with metadata creation."""
-    # Import the image
+    """Test image importing with metadata creation (resize respects max_width/max_height from settings)."""
+    # Import the image (2000x1500); default settings limit to 1920x1080
     result_path = image_manager.import_image(sample_image)
     assert result_path is not None
     assert result_path.exists()
-    
+
     # Get metadata
     image_id = result_path.stem
     metadata = image_manager.get_image_metadata(image_id)
     assert metadata is not None
     assert metadata.original_filename == sample_image.name
-    assert metadata.width <= ImageManager.MAX_WIDTH
-    assert metadata.height == int(1500 * (ImageManager.MAX_WIDTH / 2000))
+    # Resize fits within max_width x max_height (default 1920x1080), aspect ratio preserved
+    assert metadata.width <= 1920
+    assert metadata.height <= 1080
+    assert abs(metadata.width / metadata.height - 2000 / 1500) < 0.01  # aspect ratio preserved
     assert metadata.format == "JPEG"
     assert metadata.file_size > 0
 

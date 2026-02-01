@@ -2,6 +2,7 @@
 Local database for image metadata management.
 """
 import json
+import re
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set
@@ -35,26 +36,73 @@ class ImageDatabase:
         self._load_db()
     
     def _load_db(self):
-        """Load the database from disk."""
+        """Load the database from disk. Tries to repair common JSON errors (e.g. trailing commas)."""
+        if not self._db_path.exists():
+            return
         try:
-            if self._db_path.exists():
-                with open(self._db_path, "r") as f:
-                    data = json.load(f)
-                    self._images = {
-                        id: ImageMetadata(**{
-                            k: set(v) if k == "tags" else v
-                            for k, v in metadata.items()
-                        })
-                        for id, metadata in data.items()
-                    }
+            with open(self._db_path, "r", encoding="utf-8") as f:
+                data = json.load(f)
+            self._images = {
+                id: ImageMetadata(**{
+                    k: set(v) if k == "tags" else v
+                    for k, v in metadata.items()
+                })
+                for id, metadata in data.items()
+            }
+        except json.JSONDecodeError as e:
+            # Try to repair: trailing commas, then truncated last entry
+            with open(self._db_path, "r", encoding="utf-8") as f:
+                raw = f.read()
+            repaired = None
+            try:
+                repaired = re.sub(r",(\s*})", r"\1", raw)
+                repaired = re.sub(r",(\s*])", r"\1", repaired)
+                data = json.loads(repaired)
+            except json.JSONDecodeError:
+                repaired = None
+            if repaired is None:
+                # Truncated file: remove last incomplete entry (root entries end with "  },")
+                last_complete = raw.rfind("\n  },")
+                if last_complete >= 0:
+                    # Keep content up to "  }" (no trailing comma), then close root
+                    repaired = raw[: last_complete + 4] + "\n}\n"
+                    try:
+                        data = json.loads(repaired)
+                        self._images = {
+                            id: ImageMetadata(**{
+                                k: set(v) if k == "tags" else v
+                                for k, v in metadata.items()
+                            })
+                            for id, metadata in data.items()
+                        }
+                        self._save_db()
+                        print(
+                            "Image database repaired (truncated last entry removed) and saved."
+                        )
+                        return
+                    except json.JSONDecodeError:
+                        pass
+                print(f"Error loading image database: {e}")
+                self._images = {}
+                return
+            self._images = {
+                id: ImageMetadata(**{
+                    k: set(v) if k == "tags" else v
+                    for k, v in metadata.items()
+                })
+                for id, metadata in data.items()
+            }
+            self._save_db()
+            print("Image database repaired (trailing commas removed) and saved.")
         except Exception as e:
             print(f"Error loading image database: {str(e)}")
             self._images = {}
     
     def _save_db(self):
-        """Save the database to disk."""
+        """Save the database to disk (atomic write to avoid corruption)."""
         try:
-            with open(self._db_path, "w") as f:
+            tmp_path = self._db_path.with_suffix(self._db_path.suffix + ".tmp")
+            with open(tmp_path, "w", encoding="utf-8") as f:
                 json.dump(
                     {
                         id: {
@@ -64,8 +112,9 @@ class ImageDatabase:
                         for id, metadata in self._images.items()
                     },
                     f,
-                    indent=2
+                    indent=2,
                 )
+            tmp_path.replace(self._db_path)
         except Exception as e:
             print(f"Error saving image database: {str(e)}")
     
@@ -144,6 +193,8 @@ class ImageDatabase:
                 - "import_date_asc": Oldest first
                 - "filename_asc": Filename A→Z
                 - "filename_desc": Filename Z→A
+                - "file_size_asc": Lightest first (smallest file size)
+                - "file_size_desc": Heaviest first (largest file size)
         
         Returns:
             List of all image metadata, sorted
@@ -194,6 +245,10 @@ class ImageDatabase:
                 key=lambda m: m.original_filename.lower(),
                 reverse=True
             )
+        elif sort_by == "file_size_asc":
+            return sorted(images, key=lambda m: m.file_size)
+        elif sort_by == "file_size_desc":
+            return sorted(images, key=lambda m: m.file_size, reverse=True)
         else:
             # Default fallback: most recent first
             return sorted(
