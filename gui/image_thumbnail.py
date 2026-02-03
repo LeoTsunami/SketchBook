@@ -3,7 +3,7 @@ Image thumbnail widget for displaying individual images in the grid.
 """
 import sys
 from pathlib import Path
-from typing import Optional
+from typing import Callable, Optional, Set
 from qtpy.QtWidgets import (
     QFrame,
     QVBoxLayout,
@@ -77,16 +77,18 @@ class TagChip(QFrame):
     
     removed = Signal(str)  # Emits tag text when removed
     
-    def __init__(self, text: str, parent=None):
+    def __init__(self, text: str, parent=None, elide: bool = True):
         """
         Initialize the tag chip.
 
         Args:
             text: Tag text to display
             parent: Parent widget
+            elide: If True, elide text when space is limited; if False, show full text (e.g. in popover).
         """
         super().__init__(parent)
         self.text = text
+        self._elide = elide
         self.setObjectName("TagChip")
         # CRITICAL: Force enable mouse events - override parent's transparent setting
         self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -139,17 +141,20 @@ class TagChip(QFrame):
         
         layout.addWidget(remove_btn)
         
-        # Update elided text after layout is calculated
-        QTimer.singleShot(0, self._update_elided_text)
+        if not self._elide:
+            self.text_label.setText(text)
+        else:
+            QTimer.singleShot(0, self._update_elided_text)
     
     def resizeEvent(self, event):
-        """Update elided text when chip is resized."""
+        """Update elided text when chip is resized (only if elide is enabled)."""
         super().resizeEvent(event)
-        self._update_elided_text()
+        if self._elide:
+            self._update_elided_text()
     
     def _update_elided_text(self):
         """Update the text label with elided text based on available width."""
-        if not hasattr(self, 'text_label') or not self.text_label:
+        if not self._elide or not hasattr(self, 'text_label') or not self.text_label:
             return
         
         # Calculate available width for text label
@@ -178,10 +183,19 @@ class ImageThumbnail(QFrame):
     clicked = Signal(str)  # Emits image ID when clicked
     tag_removed = Signal(str, str)  # Emits (image_id, tag) when a tag is removed
     
-    def __init__(self, image_id: str, label: str, parent=None, image_manager=None, remove_tag_callback=None, get_selected_images_callback=None):
+    def __init__(
+        self,
+        image_id: str,
+        label: str,
+        parent=None,
+        image_manager=None,
+        remove_tag_callback=None,
+        get_selected_images_callback=None,
+        show_tag_popover_callback: Optional[Callable[["ImageThumbnail", str, Set[str]], None]] = None,
+    ):
         """
         Initialize the thumbnail widget.
-        
+
         Args:
             image_id: Unique identifier of the image
             label: Text to display under the image (not used anymore)
@@ -189,12 +203,15 @@ class ImageThumbnail(QFrame):
             image_manager: ImageManager instance for accessing tags
             remove_tag_callback: Optional callback function(tag: str) to remove tag from selected images
             get_selected_images_callback: Optional callback function() -> Set[str] to get selected image IDs
+            show_tag_popover_callback: If set, tags are shown in a floating popover below the thumbnail
+                instead of on the image. Called with (thumbnail_widget, image_id, tags).
         """
         super().__init__(parent)
         self.image_id = image_id
         self.image_manager = image_manager
         self.remove_tag_callback = remove_tag_callback
         self.get_selected_images_callback = get_selected_images_callback
+        self.show_tag_popover_callback = show_tag_popover_callback
         self.setObjectName("ImageThumbnail")
         self.setFrameStyle(QFrame.NoFrame)
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -420,36 +437,39 @@ class ImageThumbnail(QFrame):
 
     def refresh_tags(self):
         """Refresh tags display (used after external tag updates)."""
-        # Tags ne sont rafraîchis que si le conteneur est visible
-        if self.tags_container.isVisible():
+        if self.image_manager:
             self._load_and_display_tags()
     
     def _load_and_display_tags(self):
-        """Load and display tags for this image."""
+        """Load and display tags for this image (on-image container or floating popover)."""
         if not self.image_manager:
             return
-        
-        # Get image metadata
+
         metadata = self.image_manager.get_image_metadata(self.image_id)
         if not metadata:
             return
-        
-        # Clear existing tags
-        self._clear_tags()
-        
-        # Add tags
-        for tag in sorted(metadata.tags):
-            self._add_tag_chip(tag)
-        
-        # Show tags container if there are tags
-        if self.tag_chips:
-            self.tags_container.show()
-            self.tags_container.raise_()  # Ensure tags container is on top
-            # Ensure all chips are on top
-            for chip in self.tag_chips.values():
-                chip.raise_()
-        else:
+
+        tags = metadata.tags
+        if not tags:
+            if self.show_tag_popover_callback:
+                return  # Popover will be hidden by grid
+            self._clear_tags()
             self.tags_container.hide()
+            return
+
+        # If popover callback is set, show tags in floating popover below thumbnail (full text)
+        if self.show_tag_popover_callback:
+            self.show_tag_popover_callback(self, self.image_id, tags)
+            return
+
+        # Otherwise show tags on the image (elided)
+        self._clear_tags()
+        for tag in sorted(tags):
+            self._add_tag_chip(tag)
+        self.tags_container.show()
+        self.tags_container.raise_()
+        for chip in self.tag_chips.values():
+            chip.raise_()
     
     def _hide_tags(self):
         """Hide the tags container."""

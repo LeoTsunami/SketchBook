@@ -31,6 +31,7 @@ from gui.image_rotate_worker import RotateImageWorker
 from gui.tag_apply_worker import TagApplyWorker
 from gui.image_thumbnail import ImageThumbnail, TagChip
 from gui.scroll_preview_overlay import ScrollPreviewOverlay
+from gui.tag_hover_popover import TagHoverPopover
 from qtpy.QtWidgets import QCompleter
 import json
 
@@ -107,6 +108,9 @@ class ImageGrid(QScrollArea):
         # Scroll preview overlay: above grid, follows scrollbar thumb; shown when scrolling fast
         self._scroll_preview = ScrollPreviewOverlay(self.viewport())
         self._scroll_preview.raise_()
+        # Tag hover popover: floating panel below hovered thumbnail, shows full tag names
+        self._tag_popover = TagHoverPopover(self.viewport())
+        self._tag_popover.raise_()
         self._last_scroll_value = 0
         self._overlay_hide_timer = QTimer(self)
         self._overlay_hide_timer.setSingleShot(True)
@@ -321,6 +325,7 @@ class ImageGrid(QScrollArea):
                 self.image_manager,
                 remove_tag_callback=self._remove_tag_from_selection,
                 get_selected_images_callback=lambda: self.selected_images,
+                show_tag_popover_callback=self._show_tag_popover,
             )
             thumb.setFixedWidth(thumbnail_width)
             thumb.setFixedHeight(row_height)
@@ -521,6 +526,7 @@ class ImageGrid(QScrollArea):
         self.load_ticker_timer.stop()
         self._overlay_hide_timer.stop()
         self._scroll_preview.hide_immediate()
+        self._tag_popover.hide_popover()
         self._extract_preload_timer.stop()
         self._extract_indices.clear()
         self._image_id_to_extract_index.clear()
@@ -600,12 +606,13 @@ class ImageGrid(QScrollArea):
             
             # Create thumbnail with callback to remove tags from selected images
             thumbnail = ImageThumbnail(
-                metadata.id, 
-                metadata.original_filename, 
-                self, 
+                metadata.id,
+                metadata.original_filename,
+                self.content,
                 self.image_manager,
                 remove_tag_callback=self._remove_tag_from_selection,
-                get_selected_images_callback=lambda: self.selected_images
+                get_selected_images_callback=lambda: self.selected_images,
+                show_tag_popover_callback=self._show_tag_popover,
             )
             
             # Set initial size
@@ -641,6 +648,7 @@ class ImageGrid(QScrollArea):
             self.image_manager,
             remove_tag_callback=self._remove_tag_from_selection,
             get_selected_images_callback=lambda: self.selected_images,
+            show_tag_popover_callback=self._show_tag_popover,
         )
         thumbnail.setFixedWidth(thumbnail_width)
         thumbnail.setFixedHeight(thumbnail_height)
@@ -1071,15 +1079,30 @@ class ImageGrid(QScrollArea):
         if image_id == self.active_image_id:
             return
 
-        # Hide tags on previous active image
+        # Hide tags on previous active image and hide floating popover
         if self.active_image_id and self.active_image_id in self.thumbnails:
             self.thumbnails[self.active_image_id].set_tags_visible(False)
+        self._tag_popover.hide_popover()
 
         self.active_image_id = image_id
 
         # Show tags on new active image (thumbnails dict holds visible pool in virtualized mode)
         if self.active_image_id and self.active_image_id in self.thumbnails:
             self.thumbnails[self.active_image_id].set_tags_visible(True)
+        else:
+            self._tag_popover.hide_popover()
+
+    def _show_tag_popover(
+        self, thumbnail: ImageThumbnail, image_id: str, tags: Set[str]
+    ) -> None:
+        """Show the floating tag popover below the given thumbnail with full tag names."""
+        self._tag_popover.show_below(
+            thumbnail,
+            self.viewport(),
+            tags,
+            image_id,
+            remove_tag_callback=self._remove_tag_from_selection,
+        )
 
     def contextMenuEvent(self, event):
         """Show context menu."""
