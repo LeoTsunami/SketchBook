@@ -8,7 +8,6 @@ from qtpy.QtWidgets import (
     QWidget,
     QScrollArea,
     QGridLayout,
-    QLabel,
     QVBoxLayout,
     QHBoxLayout,
     QFrame,
@@ -31,6 +30,7 @@ from gui.image_loader_worker import ImageLoaderWorker
 from gui.image_rotate_worker import RotateImageWorker
 from gui.tag_apply_worker import TagApplyWorker
 from gui.image_thumbnail import ImageThumbnail, TagChip
+from gui.scroll_preview_overlay import ScrollPreviewOverlay
 from qtpy.QtWidgets import QCompleter
 import json
 
@@ -55,8 +55,13 @@ class ImageGrid(QScrollArea):
     ASPECT_RATIO = 1.2
     # Virtualization: above this count we use a fixed pool of widgets (smooth scroll with 20k+ images)
     VIRTUALIZATION_THRESHOLD = 400
-    VIRTUALIZED_POOL_EXTRA_ROWS = 3  # Rows above/below viewport to render
-    
+    VIRTUALIZED_POOL_EXTRA_ROWS = 10  # Rows above/below viewport so more images load ahead
+    SCROLL_FAST_THRESHOLD = 104  # Pixel delta above this = show scroll preview overlay (higher = need faster scroll)
+    SCROLL_PREVIEW_HIDE_MS = 650  # Hide overlay after this ms without fast scroll (longer so user can see it)
+    EXTRACT_STEP_FACTOR = 4  # One extract every (EXTRACT_STEP_FACTOR * columns) images (e.g. 10 cols -> every 40)
+    EXTRACT_LOAD_SIZE = 240  # Size for preloaded extract thumbnails (matches overlay 240x240)
+    EXTRACT_PRELOAD_PER_TICK = 2  # How many extract images to start loading per timer tick
+
     def __init__(self, image_manager: ImageManager, parent=None):
         """
         Initialize the image grid.
@@ -98,7 +103,26 @@ class ImageGrid(QScrollArea):
         """)
         # Ensure rubber band is always on top
         self.rubber_band.raise_()
-        
+
+        # Scroll preview overlay: above grid, follows scrollbar thumb; shown when scrolling fast
+        self._scroll_preview = ScrollPreviewOverlay(self.viewport())
+        self._scroll_preview.raise_()
+        self._last_scroll_value = 0
+        self._overlay_hide_timer = QTimer(self)
+        self._overlay_hide_timer.setSingleShot(True)
+        self._overlay_hide_timer.setInterval(self.SCROLL_PREVIEW_HIDE_MS)
+        self._overlay_hide_timer.timeout.connect(self._hide_scroll_preview)
+        # Extract strip for scroll preview: indices into all_images (1 every N), preloaded in background
+        self._extract_indices: List[int] = []
+        self._image_id_to_extract_index: Dict[str, int] = {}
+        self._extract_pixmaps: Dict[int, QPixmap] = {}  # extract list index -> pixmap
+        self._extract_pending_indices: List[int] = []
+        self._extract_loading: Set[str] = set()
+        self._extract_preload_timer = QTimer(self)
+        self._extract_preload_timer.setSingleShot(False)
+        self._extract_preload_timer.setInterval(55)
+        self._extract_preload_timer.timeout.connect(self._process_extract_preload)
+
         # Apply theme-aware styles
         self._apply_theme()
         self.content.setObjectName("content")
@@ -128,17 +152,17 @@ class ImageGrid(QScrollArea):
         # Set up separate timer for checking visible thumbnails (debounce scroll)
         self.visibility_timer = QTimer(self)
         self.visibility_timer.setSingleShot(True)
-        self.visibility_timer.setInterval(50)  # Reason: short debounce so images appear quickly
+        self.visibility_timer.setInterval(40)  # Reason: faster reaction on scroll
         self.visibility_timer.timeout.connect(self._check_visible_thumbnails)
 
-        # Pending pixmap loads: only process a few per tick to avoid main-thread lag
+        # Pending pixmap loads: process several per tick for snappy feel with virtualization
         self.pending_load_queue: deque = deque()
         self.load_ticker_timer = QTimer(self)
         self.load_ticker_timer.setSingleShot(False)
-        self.load_ticker_timer.setInterval(40)  # Reason: faster ticks so pixmaps show up sooner
+        self.load_ticker_timer.setInterval(15)  # Reason: faster ticks = images appear sooner
         self.load_ticker_timer.timeout.connect(self._process_pending_loads)
-        self.MAX_LOADS_PER_TICK = 3  # Reason: balance between responsiveness and main-thread load
-        self.PENDING_QUEUE_MAX = 60  # Cap queue to avoid loading too many off-screen items
+        self.MAX_LOADS_PER_TICK = 8  # Reason: load more images per tick for snappier grid
+        self.PENDING_QUEUE_MAX = 220  # Larger preload queue (extra rows = more items to load)
         
         # Connect scroll bar
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
@@ -148,7 +172,7 @@ class ImageGrid(QScrollArea):
         # Virtualized mode: fixed pool of thumbnails reused for visible range only
         self.thumbnail_pool: List[ImageThumbnail] = []
         self._virtualized_content_height = 0  # Content height when virtualized (total_rows * row_height)
-        
+
         self.is_layout_locked = False  # Add lock to prevent concurrent layout updates
         self.pending_column_change = None  # Store pending column change
         
@@ -172,14 +196,102 @@ class ImageGrid(QScrollArea):
     
     def _on_scroll(self, value):
         """Handle scroll events. Visibility check is debounced via visibility_timer."""
-        # Debounce: only schedule visibility check; avoids running on every scroll tick
+        delta = abs(value - self._last_scroll_value)
+        if delta >= self.SCROLL_FAST_THRESHOLD:
+            self._show_scroll_preview(value)
+            self._overlay_hide_timer.start()
+        elif self._scroll_preview.isVisible():
+            self._update_scroll_preview_position()
+            self._update_scroll_preview_image()
+        self._last_scroll_value = value
         self.visibility_timer.start()
-
-        # Check if we need to load more thumbnail widgets (infinite scroll); larger margin = request sooner
         viewport_bottom = value + self.viewport().height()
         content_bottom = self.content.height()
         if not self._is_virtualized() and content_bottom - viewport_bottom < 1200 and self.loaded_count < len(self.all_images):
             self._load_next_batch()
+
+    def _update_scroll_preview_position(self) -> None:
+        """Update overlay position to follow the scrollbar thumb."""
+        v = self.verticalScrollBar()
+        self._scroll_preview.update_geometry_from_scroll(
+            self.viewport().width(),
+            self.viewport().height(),
+            v.value(),
+            v.maximum(),
+        )
+
+    def _rebuild_extract_indices(self) -> None:
+        """Build list of indices for the extract strip (1 every N images) and start preloading."""
+        self._extract_preload_timer.stop()
+        self._extract_loading.clear()
+        self._extract_pixmaps.clear()
+        self._extract_indices.clear()
+        self._image_id_to_extract_index.clear()
+        if not self.all_images:
+            self._extract_pending_indices.clear()
+            return
+        step = max(1, self.EXTRACT_STEP_FACTOR * self.columns)
+        idx = 0
+        while idx < len(self.all_images):
+            self._extract_indices.append(idx)
+            self._image_id_to_extract_index[self.all_images[idx].id] = len(self._extract_indices) - 1
+            idx += step
+        self._extract_pending_indices = list(range(len(self._extract_indices)))
+        if self._extract_pending_indices:
+            self._extract_preload_timer.start()
+
+    def _process_extract_preload(self) -> None:
+        """Start loading a few extract images per tick."""
+        for _ in range(self.EXTRACT_PRELOAD_PER_TICK):
+            if not self._extract_pending_indices or not self.all_images:
+                if not self._extract_pending_indices:
+                    self._extract_preload_timer.stop()
+                break
+            extract_i = self._extract_pending_indices.pop(0)
+            if extract_i >= len(self._extract_indices):
+                continue
+            img_idx = self._extract_indices[extract_i]
+            if img_idx >= len(self.all_images):
+                continue
+            meta = self.all_images[img_idx]
+            if meta.id in self._extract_pixmaps or meta.id in self._extract_loading:
+                continue
+            self._extract_loading.add(meta.id)
+            path = self.image_manager.image_dir / meta.path
+            worker = ImageLoaderWorker(meta.id, path, (self.EXTRACT_LOAD_SIZE, self.EXTRACT_LOAD_SIZE))
+            worker.signals.finished.connect(self._on_image_loaded)
+            worker.signals.error.connect(self._on_image_error)
+            self.thread_pool.start(worker)
+        if not self._extract_pending_indices:
+            self._extract_preload_timer.stop()
+
+    def _update_scroll_preview_image(self) -> None:
+        """Set overlay image from preloaded extract corresponding to current scroll position.
+        Use index+1 so the preview matches what appears slightly below center in the grid."""
+        if not self._extract_indices or not self._scroll_preview.isVisible():
+            return
+        v = self.verticalScrollBar()
+        scroll_max = max(1, v.maximum())
+        ratio = v.value() / scroll_max
+        n = len(self._extract_indices)
+        base_i = int(ratio * (n - 1)) if n > 1 else 0
+        extract_i = max(0, min(n - 1, base_i + 1))
+        pixmap = self._extract_pixmaps.get(extract_i)
+        if pixmap is not None and not pixmap.isNull():
+            self._scroll_preview.set_image(pixmap)
+        else:
+            self._scroll_preview.clear_image()
+
+    def _show_scroll_preview(self, scroll_value: int) -> None:
+        """Show the scroll preview overlay with fade-in and set its image from extract strip."""
+        self._update_scroll_preview_position()
+        self._scroll_preview.show_animated()
+        self._scroll_preview.raise_()
+        self._update_scroll_preview_image()
+
+    def _hide_scroll_preview(self) -> None:
+        """Hide the scroll preview overlay with fade-out (called when scroll has slowed or stopped)."""
+        self._scroll_preview.hide_animated()
 
     def _is_virtualized(self) -> bool:
         """True when we have too many images and use a fixed pool of widgets."""
@@ -260,7 +372,7 @@ class ImageGrid(QScrollArea):
             thumb.setGeometry(x, y, thumbnail_width, row_height)
             thumb.show()
             self.thumbnails[meta.id] = thumb
-        # Enqueue pixmap loads for visible items
+        # Enqueue pixmap loads for visible range
         self.pending_load_queue.clear()
         for idx in range(start_index, end_index):
             if idx >= len(self.all_images):
@@ -300,10 +412,8 @@ class ImageGrid(QScrollArea):
             
         self.columns = columns
         self.needs_relayout = True
-        
-        # Clear cache to force proper image reloading
         self.pixmap_cache.clear()
-        
+        self._rebuild_extract_indices()
         self.layout_timer.start()
         if not self._is_virtualized() and self.loaded_count < len(self.all_images):
             self._load_next_batch()
@@ -409,6 +519,14 @@ class ImageGrid(QScrollArea):
         self.layout_timer.stop()
         self.visibility_timer.stop()
         self.load_ticker_timer.stop()
+        self._overlay_hide_timer.stop()
+        self._scroll_preview.hide_immediate()
+        self._extract_preload_timer.stop()
+        self._extract_indices.clear()
+        self._image_id_to_extract_index.clear()
+        self._extract_pixmaps.clear()
+        self._extract_pending_indices.clear()
+        self._extract_loading.clear()
         self.pending_load_queue.clear()
         self.loading_images.clear()
         if self.thumbnail_pool:
@@ -447,6 +565,7 @@ class ImageGrid(QScrollArea):
         self.sort_by = sort_by
         
         self.all_images = self.image_manager.db.search_images(filter_tags, sort_by)
+        self._rebuild_extract_indices()
         if not self._is_virtualized():
             self._load_next_batch()
         self.layout_timer.start()
@@ -632,8 +751,6 @@ class ImageGrid(QScrollArea):
             thumbnail_width, thumbnail_height = self._calculate_optimal_dimensions()
             target_width = thumbnail_width - 4
             target_height = thumbnail_height - 4
-        
-        # Create and start worker with actual thumbnail dimensions
         image_path = self.image_manager.image_dir / metadata.path
         worker = ImageLoaderWorker(image_id, image_path, (target_width, target_height))
         
@@ -643,9 +760,21 @@ class ImageGrid(QScrollArea):
         self.thread_pool.start(worker)
     
     def _on_image_loaded(self, image_id: str, pixmaps: tuple):
-        """Handle loaded image. Always cache; set_image only if thumbnail still shows this image (virtualized may have recycled it)."""
+        """Handle loaded image. Extracts are duplicated: in _extract_pixmaps for overlay AND in grid cache so grid shows them too."""
         self.loading_images.discard(image_id)
+        self._extract_loading.discard(image_id)
         fast_pixmap, high_quality_pixmap = pixmaps
+        if image_id in self._image_id_to_extract_index:
+            extract_i = self._image_id_to_extract_index[image_id]
+            self._extract_pixmaps[extract_i] = high_quality_pixmap
+            if self._scroll_preview.isVisible():
+                self._update_scroll_preview_image()
+            # Duplicate: also feed the grid so the image still shows in the image grid (140px until full-size load replaces it)
+            self.pixmap_cache[image_id] = high_quality_pixmap
+            if image_id in self.thumbnails:
+                self.thumbnails[image_id].set_image(high_quality_pixmap)
+            return
+        # Grid thumbnail load (full size): cache and display
         self.pixmap_cache[image_id] = high_quality_pixmap
         if image_id in self.thumbnails:
             self.thumbnails[image_id].set_image(high_quality_pixmap)
@@ -653,14 +782,14 @@ class ImageGrid(QScrollArea):
     def _on_image_error(self, image_id: str, error_msg: str):
         """Handle image loading error."""
         self.loading_images.discard(image_id)
+        self._extract_loading.discard(image_id)
         if image_id in self.thumbnails:
             self.thumbnails[image_id].set_error(error_msg)
     
     def resizeEvent(self, event):
         """Handle resize events to adjust grid layout."""
         super().resizeEvent(event)
-        
-        # Only trigger relayout if width changed
+        self._update_scroll_preview_position()
         if event.size().width() != event.oldSize().width():
             self.needs_relayout = True
             self.layout_timer.start()
@@ -1112,6 +1241,7 @@ class ImageGrid(QScrollArea):
         self.sort_by = sort_by
         
         self.all_images = self.image_manager.search_images_advanced(and_tags, or_tags, sort_by)
+        self._rebuild_extract_indices()
         if not self._is_virtualized():
             self._load_next_batch()
         self.layout_timer.start() 
@@ -1136,6 +1266,7 @@ class ImageGrid(QScrollArea):
 
         self.current_filter = filter_key
         self.all_images = images
+        self._rebuild_extract_indices()
         if not self._is_virtualized():
             self._load_next_batch()
         self.layout_timer.start()

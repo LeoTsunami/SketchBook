@@ -16,7 +16,7 @@ class ImageLoaderWorker(QRunnable):
     def __init__(self, image_id: str, image_path: Path, target_size: tuple[int, int]):
         """
         Initialize the worker.
-        
+
         Args:
             image_id: Unique identifier of the image
             image_path: Path to the image file
@@ -60,27 +60,19 @@ class ImageLoaderWorker(QRunnable):
                 scaled_width = int(target_width * max(device_pixel_ratio, 1.5))
                 scaled_height = int(new_height * max(device_pixel_ratio, 1.5))
                 
-                # First create a fast scaled version for immediate display
                 fast_pixmap = QPixmap.fromImage(image.scaled(
                     target_width,
                     new_height,
                     Qt.KeepAspectRatio,
                     Qt.FastTransformation
                 ))
-                
-                # Create high quality version at higher resolution for crisp display
-                # Using SmoothTransformation for best quality
                 high_quality_pixmap = QPixmap.fromImage(image.scaled(
                     scaled_width,
                     scaled_height,
                     Qt.KeepAspectRatio,
                     Qt.SmoothTransformation
                 ))
-                
-                # Set device pixel ratio on the pixmap for proper scaling
                 high_quality_pixmap.setDevicePixelRatio(device_pixel_ratio)
-                
-                # Store both versions in a tuple
                 result = (fast_pixmap, high_quality_pixmap)
             else:
                 result = (QPixmap.fromImage(image), QPixmap.fromImage(image))
