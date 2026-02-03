@@ -42,6 +42,7 @@ from qtpy.QtCore import (
     QMimeData,
     QSize,
     QStringListModel,
+    QUrl,
 )
 from qtpy.QtGui import (
     QAction,
@@ -472,6 +473,7 @@ class MainWindow(QMainWindow):
         )
         self.image_grid.selection_changed.connect(self._on_selection_changed)
         self.image_grid.grid_needs_refresh.connect(self._apply_category_filters)
+        self.image_grid.set_import_drop_callback(self._import_from_urls)
         middle_layout.addWidget(self.image_grid)
 
         # Lazy-created image viewer window (one window, reused)
@@ -1258,17 +1260,19 @@ class MainWindow(QMainWindow):
     
     def dropEvent(self, event: QDropEvent):
         """Handle file drop events."""
-        urls = event.mimeData().urls()
+        self._import_from_urls(event.mimeData().urls())
+        event.acceptProposedAction()
+
+    def _import_from_urls(self, urls: List[QUrl]):
+        """Import images from dropped URLs (files/folders). Used by main window drop and by grid/thumbnail forward."""
         paths = []
         for url in urls:
             path = Path(url.toLocalFile())
             if path.is_dir() or path.suffix.lower() in ImageManager.SUPPORTED_FORMATS:
                 paths.append(path)
-        
         if paths:
             self._import_images(paths)
-            event.acceptProposedAction()
-    
+
     def _create_status_progress_bar(self):
         """Create and set up the status bar progress bar."""
         # Remove any existing progress bar

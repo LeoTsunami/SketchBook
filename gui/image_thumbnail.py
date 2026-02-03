@@ -3,7 +3,7 @@ Image thumbnail widget for displaying individual images in the grid.
 """
 import sys
 from pathlib import Path
-from typing import Callable, Optional, Set
+from typing import Callable, List, Optional, Set
 from qtpy.QtWidgets import (
     QFrame,
     QVBoxLayout,
@@ -17,7 +17,7 @@ from qtpy.QtWidgets import (
     QApplication,
     QSizePolicy
 )
-from qtpy.QtCore import Qt, Signal, QTimer
+from qtpy.QtCore import Qt, Signal, QTimer, QUrl
 from qtpy.QtGui import QPixmap, QIcon, QImage, QCursor, QDragEnterEvent, QDropEvent, QFontMetrics
 from core.settings import settings
 
@@ -192,6 +192,7 @@ class ImageThumbnail(QFrame):
         remove_tag_callback=None,
         get_selected_images_callback=None,
         show_tag_popover_callback: Optional[Callable[["ImageThumbnail", str, Set[str]], None]] = None,
+        import_drop_callback: Optional[Callable[[List[QUrl]], None]] = None,
     ):
         """
         Initialize the thumbnail widget.
@@ -205,6 +206,8 @@ class ImageThumbnail(QFrame):
             get_selected_images_callback: Optional callback function() -> Set[str] to get selected image IDs
             show_tag_popover_callback: If set, tags are shown in a floating popover below the thumbnail
                 instead of on the image. Called with (thumbnail_widget, image_id, tags).
+            import_drop_callback: If set, file/folder drops (hasUrls) are forwarded here instead of
+                being treated as tags. Called with (list of QUrl); grid/main window handles import.
         """
         super().__init__(parent)
         self.image_id = image_id
@@ -212,6 +215,7 @@ class ImageThumbnail(QFrame):
         self.remove_tag_callback = remove_tag_callback
         self.get_selected_images_callback = get_selected_images_callback
         self.show_tag_popover_callback = show_tag_popover_callback
+        self.import_drop_callback = import_drop_callback
         self.setObjectName("ImageThumbnail")
         self.setFrameStyle(QFrame.NoFrame)
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -610,38 +614,60 @@ class ImageThumbnail(QFrame):
         super().leaveEvent(event)
 
     def dragEnterEvent(self, event: QDragEnterEvent):
-        """Handle drag enter event for tag drops."""
-        if event.mimeData().hasText():
-            # Check if it's a tag being dragged (from tag library)
-            tag_text = event.mimeData().text()
-            # Accept if it looks like a tag (not empty, reasonable length)
-            if tag_text and len(tag_text.strip()) > 0:
-                event.acceptProposedAction()
-                # Add visual feedback
-                self.setProperty("dragOver", True)
-                self.style().unpolish(self)
-                self.style().polish(self)
-            else:
-                event.ignore()
+        """Accept tag drops (from library) or file/folder drops (forwarded to grid for import)."""
+        md = event.mimeData()
+        # File/folder drag from OS: hasUrls(); we accept and will forward to import callback
+        if md.hasUrls():
+            event.acceptProposedAction()
+            self.setProperty("dragOver", True)
+            self.style().unpolish(self)
+            self.style().polish(self)
+            return
+        # Tag drag from library: hasText() only (no URLs)
+        if md.hasText() and md.text().strip():
+            event.acceptProposedAction()
+            self.setProperty("dragOver", True)
+            self.style().unpolish(self)
+            self.style().polish(self)
         else:
             event.ignore()
-    
+
     def dragLeaveEvent(self, event):
         """Handle drag leave event."""
-        # Remove visual feedback
         self.setProperty("dragOver", False)
         self.style().unpolish(self)
         self.style().polish(self)
-    
+
     def dropEvent(self, event: QDropEvent):
-        """Handle drop event for tag drops."""
-        if not event.mimeData().hasText():
-            event.ignore()
+        """Route drop: files/urls -> import callback; text only -> tag the image(s)."""
+        md = event.mimeData()
+
+        # File/folder drop: forward to grid/main window for import (do not add paths as tags)
+        if md.hasUrls():
+            if self.import_drop_callback:
+                self.import_drop_callback(md.urls())
+                event.acceptProposedAction()
+            else:
+                event.ignore()
+            self.setProperty("dragOver", False)
+            self.style().unpolish(self)
+            self.style().polish(self)
             return
 
-        tag_text = event.mimeData().text().strip()
+        # Tag drop (from tag library): hasText() and no URLs
+        if not md.hasText():
+            event.ignore()
+            self.setProperty("dragOver", False)
+            self.style().unpolish(self)
+            self.style().polish(self)
+            return
+
+        tag_text = md.text().strip()
         if not tag_text:
             event.ignore()
+            self.setProperty("dragOver", False)
+            self.style().unpolish(self)
+            self.style().polish(self)
             return
 
         # Get selected images
@@ -649,34 +675,24 @@ class ImageThumbnail(QFrame):
         if self.get_selected_images_callback:
             selected_images = self.get_selected_images_callback()
 
-        # Determine which images to tag
         images_to_tag: list[str] = []
-
         if not selected_images:
-            # No selection: tag only the image where we dropped
             images_to_tag = [self.image_id]
         elif len(selected_images) > 1 and self.image_id in selected_images:
-            # Multiple images selected and drop on one of them: tag all selected
             images_to_tag = list(selected_images)
         elif len(selected_images) == 1 and self.image_id in selected_images:
-            # Single image selected and drop on it: tag only that image
             images_to_tag = [self.image_id]
         else:
-            # Drop on non-selected image while others are selected: tag only the dropped image
             images_to_tag = [self.image_id]
 
-        # Delegate heavy work to MainWindow via async worker
         parent = self.parent()
         while parent:
-            # MainWindow has apply_tag_to_images_async
             if hasattr(parent, "apply_tag_to_images_async"):
                 parent.apply_tag_to_images_async(tag_text, images_to_tag)
                 break
             parent = parent.parent()
 
-        # Remove visual feedback
         self.setProperty("dragOver", False)
         self.style().unpolish(self)
         self.style().polish(self)
-
         event.acceptProposedAction()

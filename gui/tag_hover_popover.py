@@ -26,8 +26,8 @@ class TagHoverPopover(QFrame):
         self.setWindowFlags(Qt.Widget)
         self.setStyleSheet("""
             QFrame#TagHoverPopover {
-                background-color: rgba(35, 35, 35, 0.95);
-                border: 1px solid rgba(100, 100, 100, 0.6);
+                background-color: rgba(35, 35, 35, 0.72);
+                border: 1px solid rgba(100, 100, 100, 0.5);
                 border-radius: 6px;
             }
         """)

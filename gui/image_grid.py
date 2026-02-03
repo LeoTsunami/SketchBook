@@ -2,7 +2,7 @@
 Image grid component for displaying image thumbnails in a scrollable grid layout.
 """
 from pathlib import Path
-from typing import List, Optional, Dict, Set
+from typing import Callable, List, Optional, Dict, Set
 from collections import deque
 from qtpy.QtWidgets import (
     QWidget,
@@ -22,8 +22,8 @@ from qtpy.QtWidgets import (
     QApplication,
     QSizePolicy
 )
-from qtpy.QtCore import Qt, QSize, Signal, QTimer, QThreadPool, QRect, QPoint
-from qtpy.QtGui import QPixmap, QImage, QResizeEvent, QIcon
+from qtpy.QtCore import Qt, QSize, Signal, QTimer, QThreadPool, QRect, QPoint, QUrl
+from qtpy.QtGui import QPixmap, QImage, QResizeEvent, QIcon, QDragEnterEvent, QDropEvent
 from core.image_manager import ImageManager
 from core.image_db import ImageMetadata
 from gui.image_loader_worker import ImageLoaderWorker
@@ -126,6 +126,10 @@ class ImageGrid(QScrollArea):
         self._extract_preload_timer.setSingleShot(False)
         self._extract_preload_timer.setInterval(55)
         self._extract_preload_timer.timeout.connect(self._process_extract_preload)
+
+        # Import drop: file/folder drops on grid (or forwarded from thumbnail) trigger this callback
+        self._import_drop_callback: Optional[Callable[[List[QUrl]], None]] = None
+        self.setAcceptDrops(True)
 
         # Apply theme-aware styles
         self._apply_theme()
@@ -326,6 +330,7 @@ class ImageGrid(QScrollArea):
                 remove_tag_callback=self._remove_tag_from_selection,
                 get_selected_images_callback=lambda: self.selected_images,
                 show_tag_popover_callback=self._show_tag_popover,
+                import_drop_callback=self._import_drop_callback,
             )
             thumb.setFixedWidth(thumbnail_width)
             thumb.setFixedHeight(row_height)
@@ -414,7 +419,7 @@ class ImageGrid(QScrollArea):
         """Set the number of columns in the grid."""
         if self.columns == columns:
             return
-            
+
         self.columns = columns
         self.needs_relayout = True
         self.pixmap_cache.clear()
@@ -422,6 +427,10 @@ class ImageGrid(QScrollArea):
         self.layout_timer.start()
         if not self._is_virtualized() and self.loaded_count < len(self.all_images):
             self._load_next_batch()
+
+    def set_import_drop_callback(self, callback: Optional[Callable[[List[QUrl]], None]]) -> None:
+        """Set callback for file/folder drops (on grid or forwarded from thumbnail). Used for import."""
+        self._import_drop_callback = callback
 
     def _calculate_row_heights(self):
         """Calculate optimal height for each row based on actual image dimensions."""
@@ -613,8 +622,9 @@ class ImageGrid(QScrollArea):
                 remove_tag_callback=self._remove_tag_from_selection,
                 get_selected_images_callback=lambda: self.selected_images,
                 show_tag_popover_callback=self._show_tag_popover,
+                import_drop_callback=self._import_drop_callback,
             )
-            
+
             # Set initial size
             thumbnail.setFixedWidth(thumbnail_width)
             thumbnail.setFixedHeight(thumbnail_height)
@@ -649,6 +659,7 @@ class ImageGrid(QScrollArea):
             remove_tag_callback=self._remove_tag_from_selection,
             get_selected_images_callback=lambda: self.selected_images,
             show_tag_popover_callback=self._show_tag_popover,
+            import_drop_callback=self._import_drop_callback,
         )
         thumbnail.setFixedWidth(thumbnail_width)
         thumbnail.setFixedHeight(thumbnail_height)
@@ -1108,7 +1119,18 @@ class ImageGrid(QScrollArea):
         """Show context menu."""
         if self.selected_images:  # Only show if there are selected images
             self.context_menu.popup(event.globalPos())
-    
+
+    def dragEnterEvent(self, event: QDragEnterEvent):
+        """Accept file/folder drops so they are handled as import (not as tag on thumbnail)."""
+        if event.mimeData().hasUrls() and self._import_drop_callback:
+            event.acceptProposedAction()
+
+    def dropEvent(self, event: QDropEvent):
+        """Handle file/folder drop on empty grid area: forward to import."""
+        if event.mimeData().hasUrls() and self._import_drop_callback:
+            self._import_drop_callback(event.mimeData().urls())
+            event.acceptProposedAction()
+
     def _rotate_selected_clockwise(self):
         """Rotate selected images 90° clockwise and refresh thumbnails."""
         self._rotate_selected(clockwise=True)
