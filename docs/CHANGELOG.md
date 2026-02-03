@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-02-03 (image grid: load visible pixmaps only, debounced)
+### ✅ Tasks:
+- Load thumbnail pixmaps only for visible items with QTimer to avoid main-thread lag
+
+- Scroll no longer triggers immediate visibility check: `_on_scroll` only starts a 120 ms debounce timer; when it fires, `_check_visible_thumbnails` runs and enqueues visible image IDs into `pending_load_queue` (capped at 60).
+- A separate `load_ticker_timer` (80 ms) processes the queue: at most 2 loads per tick via `_process_pending_loads`, so pixmap loads and `set_image()` are spread over time and the main thread is not flooded.
+- `clear()` now stops both timers and empties the pending queue.
+ → Result: Scrolling large grids is much smoother; pixmaps load progressively for visible thumbnails only.
+---
+
 ## 2026-01-30 (max width in import settings)
 ### ✅ Tasks:
 - Add Maximum Width to image import settings

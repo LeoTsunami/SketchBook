@@ -374,8 +374,9 @@ The `ImageGrid` class manages the display of image thumbnails in a responsive gr
 ### Performance Optimizations
 - Asynchronous image loading using `QThreadPool`
 - Debounced layout updates using `QTimer`
+- **Scroll debounce**: On scroll, only a 120 ms timer is started; when it fires, `_check_visible_thumbnails` runs and enqueues visible image IDs into `pending_load_queue` (capped at 60). A separate `load_ticker_timer` (80 ms) processes the queue with at most 2 pixmap loads per tick (`_process_pending_loads`), so the main thread is not flooded when scrolling quickly.
 - Efficient thumbnail resizing with proper scaling
-- Viewport-based loading for visible thumbnails only
+- Viewport-based loading for visible thumbnails only (queue + ticker instead of loading all visible at once)
 
 ### Tag operations (apply / remove)
 - Applying a tag to many images (from main window) uses `TagApplyWorker` in the thread pool; progress and completion are handled on the main thread.

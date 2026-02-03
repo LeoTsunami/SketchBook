@@ -1,18 +1,15 @@
-feat: tag removal on selection in background thread (same worker as assign)
+perf: load thumbnail pixmaps only for visible items with debounced scroll and load ticker
 
 Description:
-- Remove-tag action (× on tag chip for selected images) now runs in background via TagApplyWorker with operation="remove"
-- ImageGrid._remove_tag_from_selection creates worker, connects progress/finished/error, starts in thread_pool; handlers refresh thumbnails on main thread
-- New signals on ImageGrid: tag_remove_progress, tag_remove_finished, tag_remove_error for main window status/progress
-- Main window connects to these signals and shows "Removing tag 'X'..." with progress bar, cleanup on finished/error
-- Unit tests in tests/test_tag_apply_worker.py for remove operation, empty list, error path
+- Scroll no longer triggers immediate visibility check; _on_scroll only starts a 120 ms debounce timer; when it fires, _check_visible_thumbnails enqueues visible image IDs into pending_load_queue (capped at 60)
+- A separate load_ticker_timer (80 ms) processes the queue with at most 2 pixmap loads per tick (_process_pending_loads), spreading set_image() and cache updates over time to avoid main-thread lag
+- clear() stops both timers and empties the pending queue
+- Unit tests in tests/test_image_grid.py for scroll debounce, queue/ticker, and clear behavior
 
 Affected files:
 - gui/image_grid.py
-- gui/main_window.py
-- tests/test_tag_apply_worker.py
+- tests/test_image_grid.py
 - docs/CHANGELOG.md
 - docs/CHANGELOG_FR.md
 - docs/DOC_DEV.md
-- docs/DOC_USER.md
 - .cursor/TASKS.md

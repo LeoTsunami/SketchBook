@@ -339,6 +339,18 @@ class ImageThumbnail(QFrame):
         self.original_pixmap = None
         self.pixmap_item = None
 
+    def assign_metadata(self, metadata) -> None:
+        """
+        Reassign this thumbnail to display another image (for virtualized grid reuse).
+
+        Args:
+            metadata: New image metadata (ImageMetadata) to display.
+        """
+        self.image_id = metadata.id
+        self.clear_pixmap()
+        self.set_tags_visible(False)
+        self._clear_tags()
+
     def set_error(self, error_msg: str):
         """Show error message."""
         if not self.scene:

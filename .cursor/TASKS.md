@@ -155,7 +155,9 @@ Update this file via prompt:
 ## 🧱 BACKLOG (Future Sprints)
 
 ### Sprint 5: Polish & Optimization
-- [ ] Performance optimization
+- [x] **Image grid: load pixmaps only for visible thumbnails with QTimer** (2026-02-03)
+  - Debounce scroll (120 ms) before running visibility check; pending load queue + load ticker (80 ms, max 2 loads per tick) to avoid main-thread lag when scrolling.
+- [ ] Performance optimization (other)
 - [ ] Memory usage optimization
 - [ ] Error handling improvements
 - [ ] User experience refinements

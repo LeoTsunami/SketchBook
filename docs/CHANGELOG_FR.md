@@ -1,5 +1,15 @@
 # Journal des modifications
 
+## 2026-02-03 (grille d’images : chargement des pixmaps visibles uniquement, debounce)
+### ✅ Tâches :
+- Charger les pixmaps des miniatures uniquement pour les éléments visibles, avec QTimer pour éviter les lag sur le main thread
+
+- Au scroll, plus d’appel direct à la détection de visibilité : `_on_scroll` ne fait que démarrer un timer de debounce (120 ms) ; à l’échéance, `_check_visible_thumbnails` s’exécute et met en file les IDs des images visibles dans `pending_load_queue` (plafonnée à 60).
+- Un timer séparé `load_ticker_timer` (80 ms) traite la file : au plus 2 chargements par tick via `_process_pending_loads`, ce qui étale les chargements de pixmaps et les `set_image()` dans le temps et évite de surcharger le thread principal.
+- `clear()` arrête désormais les deux timers et vide la file en attente.
+ → Résultat : Le défilement de grandes grilles est beaucoup plus fluide ; les pixmaps se chargent progressivement pour les miniatures visibles uniquement.
+---
+
 ## 2026-01-30 (largeur max dans les paramètres d'import)
 ### ✅ Tâches :
 - Ajout de la largeur max dans les paramètres d'import d'images
