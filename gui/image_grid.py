@@ -402,6 +402,15 @@ class ImageGrid(QScrollArea):
                     if len(self.pixmap_cache) <= max_cache:
                         break
 
+    def _reset_content_height_for_layout(self) -> None:
+        """
+        Reset content height constraints so the grid layout controls height.
+        Call when switching to non-virtualized mode (e.g. after filtering to few images);
+        otherwise content can stay at setFixedHeight(0) from clear() and nothing is visible.
+        """
+        self.content.setMinimumHeight(0)
+        self.content.setMaximumHeight(16777215)  # QWIDGETSIZE_MAX: allow layout to size content
+
     def _update_layout(self):
         """Handle all layout updates in one place."""
         if self._is_virtualized():
@@ -411,6 +420,7 @@ class ImageGrid(QScrollArea):
             thumb.hide()
         if not self.thumbnails:
             return
+        self._reset_content_height_for_layout()
         self._calculate_row_heights()
         self._do_relayout()
         self._check_visible_thumbnails()

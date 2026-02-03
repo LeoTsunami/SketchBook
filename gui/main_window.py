@@ -1079,52 +1079,63 @@ class MainWindow(QMainWindow):
                     tag_button.setVisible(True)
                     self._set_button_active(tag_button, tag in active_tags)
 
+    @staticmethod
+    def _normalize_tag_for_match(tag: str) -> str:
+        """
+        Normalize tag for case- and separator-insensitive comparison.
+        e.g. "Wide-Angle", "wideAngle", "wide angle" all become "wideangle".
+        """
+        if not tag:
+            return ""
+        return tag.lower().replace(" ", "").replace("-", "").replace("_", "")
+
     def _filter_images_by_category(self) -> List:
         """
         Filter images by category (OR) and sub-tags (AND within category).
         Label categories (e.g. Camera-Angle) are applied as a global AND constraint:
         e.g. Human + Wide-Angle => images that are Human AND Wide-Angle.
-
-        Returns:
-            List: Filtered image metadata list.
+        Tag matching is case- and separator-insensitive (Wide-Angle matches wideAngle, etc.).
         """
         # Get current sort order and apply it
         sort_by = self._get_current_sort_order()
         all_images = self.image_manager.db.list_images(sort_by)
-        
+
         # Label categories are not real tags; their sub-tags constrain all category results (AND)
         label_categories = ["Miscellaneous:", "Camera-Angle:"]
         constraining_tags: Set[str] = set()
         for label_cat in label_categories:
             constraining_tags.update(self._active_subtags.get(label_cat, set()))
-        
+
         # Check if there are any active filters (regular categories or constraining tags)
         has_active_filters = bool(self._active_categories) or bool(constraining_tags)
         if not has_active_filters:
             return all_images
-        
+
+        constraining_normalized = {self._normalize_tag_for_match(t) for t in constraining_tags}
+
         # Step 1: images matching at least one active regular category (with its sub-tags)
         if self._active_categories:
             category_matched = []
             for metadata in all_images:
-                image_tags = set(metadata.tags)
+                image_tags_norm = {self._normalize_tag_for_match(t) for t in metadata.tags}
                 for category in self._active_categories:
-                    if category not in image_tags:
+                    if self._normalize_tag_for_match(category) not in image_tags_norm:
                         continue
                     required = self._active_subtags.get(category, set())
-                    if required.issubset(image_tags):
+                    required_norm = {self._normalize_tag_for_match(t) for t in required}
+                    if required_norm.issubset(image_tags_norm):
                         category_matched.append(metadata)
                         break
         else:
             # No category selected: start from all images (then apply constraining tags only)
             category_matched = list(all_images)
-        
+
         # Step 2: apply constraining tags (label categories) as global AND
-        if not constraining_tags:
+        if not constraining_normalized:
             return category_matched
         filtered_images = [
             m for m in category_matched
-            if constraining_tags.issubset(set(m.tags))
+            if constraining_normalized.issubset({self._normalize_tag_for_match(t) for t in m.tags})
         ]
         return filtered_images
 
