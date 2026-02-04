@@ -843,6 +843,8 @@ class MainWindow(QMainWindow):
                 item.widget().deleteLater()
         self._category_buttons = {}
         self._subcategory_buttons = {}
+        self._subcategory_containers = {}
+        self._subcategory_tag_order = {}
         self._user_tag_buttons = {}
         self._subtag_to_category = {}
 
@@ -873,36 +875,18 @@ class MainWindow(QMainWindow):
                 categories_list = list(default_tags.items())
                 max_cols = 3
                 max_tags_per_row = 3
-                category_row_counts: List[int] = []
-                for category, tags in categories_list:
-                    default_st: List[str] = []
-                    collect_subtags(tags, default_st)
-                    default_st = list(dict.fromkeys(default_st))
-                    unique_subtags = self._build_subtags_for_category(
-                        category, default_st, user_tags_list, placements
-                    )
-                    subtag_rows = max(1, (len(unique_subtags) + max_tags_per_row - 1) // max_tags_per_row) if unique_subtags else 0
-                    num_rows = 1 + subtag_rows
-                    category_row_counts.append(num_rows)
-
                 current_row = 0
-                category_start_rows: List[int] = []
-                for num_rows in category_row_counts:
-                    category_start_rows.append(current_row)
-                    current_row += num_rows + 1
-
                 for category_idx, (category, tags) in enumerate(categories_list):
-                    row = category_start_rows[category_idx]
-                    num_rows = category_row_counts[category_idx]
                     is_label_category = category in ["Miscellaneous:", "Camera-Angle:"]
-
                     default_st: List[str] = []
                     collect_subtags(tags, default_st)
                     default_st = list(dict.fromkeys(default_st))
                     unique_subtags = self._build_subtags_for_category(
                         category, default_st, user_tags_list, placements
                     )
+                    self._subcategory_tag_order[category] = list(unique_subtags)
 
+                    row = current_row
                     if is_label_category:
                         category_label = QLabel(category)
                         category_label.setStyleSheet("font-weight: bold; font-size: 12px; padding: 4px; background-color: transparent;")
@@ -919,6 +903,12 @@ class MainWindow(QMainWindow):
                         self.tags_grid_layout.addWidget(category_button, row, 0, 1, max_cols)
                         self._category_buttons[category] = category_button
 
+                    tag_container = QWidget()
+                    tag_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+                    tag_container.setMinimumHeight(0)
+                    tag_container_layout = QGridLayout(tag_container)
+                    tag_container_layout.setContentsMargins(0, 0, 0, 0)
+                    tag_container_layout.setSpacing(10)
                     subtag_buttons: Dict[str, QPushButton] = {}
                     for idx, tag in enumerate(unique_subtags):
                         is_user_tag = tag in user_tags_set
@@ -930,22 +920,24 @@ class MainWindow(QMainWindow):
                         tag_button.setProperty("tagGridRole", "tag")
                         tag_button.setProperty("tagGridKey", tag)
                         tag_button.contextMenuRequested.connect(self._on_tag_context_menu_requested)
-                        tag_row = row + 1 + (idx // max_tags_per_row)
-                        tag_col = idx % max_tags_per_row
-                        self.tags_grid_layout.addWidget(tag_button, tag_row, tag_col)
+                        tr, tc = idx // max_tags_per_row, idx % max_tags_per_row
+                        tag_container_layout.addWidget(tag_button, tr, tc)
                         subtag_buttons[tag] = tag_button
                         self._subtag_to_category[tag] = category
                         tag_button.setVisible(is_label_category)
 
+                    self.tags_grid_layout.addWidget(tag_container, row + 1, 0, 1, max_cols)
+                    self._subcategory_containers[category] = tag_container
                     self._subcategory_buttons[category] = subtag_buttons
 
+                    current_row = row + 2
                     if category_idx < len(categories_list) - 1:
                         separator = QFrame()
                         separator.setFrameShape(QFrame.Shape.HLine)
                         separator.setFrameShadow(QFrame.Shadow.Sunken)
                         separator.setStyleSheet("QFrame { color: #666; }")
-                        separator_row = row + num_rows
-                        self.tags_grid_layout.addWidget(separator, separator_row, 0, 1, max_cols)
+                        self.tags_grid_layout.addWidget(separator, current_row, 0, 1, max_cols)
+                        current_row += 1
 
             except Exception as e:
                 print(f"Error loading default tags: {str(e)}")
@@ -958,7 +950,8 @@ class MainWindow(QMainWindow):
                 max_row = max(max_row, row + row_span - 1)
         if max_row >= 0:
             self.tags_grid_layout.setRowStretch(max_row + 1, 1)
-        
+        self._sync_tag_grid_state()
+
     def _find_tag_icon(self, tag: str) -> QIcon:
         """
         Resolve a tag icon: user config override, then tag name / fallbacks.
@@ -1284,9 +1277,10 @@ class MainWindow(QMainWindow):
     def _sync_tag_grid_state(self) -> None:
         """
         Sync tag grid button states with active filters.
-        Uses per-category subtags so a tag in multiple categories (e.g. Weapon) highlights correctly.
         Child tags (placement parent_tag) are only visible when the parent tag is selected.
+        Rebuilds each category's tag container layout with only visible tags so the grid has no holes.
         """
+        max_cols = 3
         placements = self._user_tags_config.get("placements", {})
         for category, button in self._category_buttons.items():
             is_active = category in self._active_categories
@@ -1301,7 +1295,7 @@ class MainWindow(QMainWindow):
                     tag_button.setVisible(is_active)
                 self._set_button_active(tag_button, tag in category_subtags)
 
-        # Handle label categories separately - always visible, not clickable categories
+        # Label categories: set visibility
         label_categories = ["Miscellaneous:", "Camera-Angle:"]
         for label_category in label_categories:
             if label_category in self._subcategory_buttons:
@@ -1314,6 +1308,30 @@ class MainWindow(QMainWindow):
                     else:
                         tag_button.setVisible(True)
                     self._set_button_active(tag_button, tag in label_subtags)
+
+        # Rebuild each category container with only visible tags (no holes).
+        # Skip rebuild for label categories so their tags stay in the layout and display from the start.
+        label_categories_set = {"Miscellaneous:", "Camera-Angle:"}
+        for category in self._subcategory_tag_order:
+            if category in label_categories_set:
+                continue
+            container = self._subcategory_containers.get(category)
+            if not container:
+                continue
+            layout = container.layout()
+            if not layout:
+                continue
+            while layout.count():
+                layout.takeAt(0)
+            tag_order = self._subcategory_tag_order[category]
+            subtag_buttons = self._subcategory_buttons.get(category, {})
+            idx = 0
+            for tag in tag_order:
+                btn = subtag_buttons.get(tag)
+                if btn and btn.isVisible():
+                    row, col = idx // max_cols, idx % max_cols
+                    layout.addWidget(btn, row, col)
+                    idx += 1
 
     @staticmethod
     def _normalize_tag_for_match(tag: str) -> str:
