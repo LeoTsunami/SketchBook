@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-02-03 (tag library: edit user tags)
+### ✅ Tasks:
+- Tag library: modify user tags (default tags remain read-only)
+
+- **Rename**: Right-click a user tag → "Rename...". Renames the tag on all images and in config (placements/icons). Default tags have no context menu.
+- **Drag and drop**: Drag a user tag from the library and drop it onto a category or another tag. Dropping on a category places the tag under that category; dropping on a tag makes that tag the "parent" (sub-category) so the user tag appears under it in the grid. Placements are stored in `user_tags_config.json` (user data config dir).
+- **Add tag**: "Add tag" button opens a dialog with a name field and an optional icon picker (icons from `gui/ressources/icones/tags`). New tags are registered and appear under Miscellaneous until moved by drag-drop. They can be applied to images like any user tag.
+- **Persistence**: `core/user_tags_config.py` loads/saves placements, icons, and `registered_only` (tags added via UI not yet on any image). `ImageDatabase.rename_tag(old, new)` renames a tag on all images.
+ → Result: Users can organize, rename, and add custom tags from the tag library; default tags are fixed but can receive new tags as children.
+---
+
 ## 2026-02-03 (image grid: load visible pixmaps only, debounced)
 ### ✅ Tasks:
 - Load thumbnail pixmaps only for visible items with QTimer to avoid main-thread lag

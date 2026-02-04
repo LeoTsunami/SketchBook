@@ -152,4 +152,52 @@ def test_persistence(image_db, sample_metadata, tmp_path):
     image_db._db_path.write_text("invalid json")
     new_db = ImageDatabase()
     new_db._db_path = image_db._db_path
-    assert len(new_db.list_images()) == 0 
+    assert len(new_db.list_images()) == 0
+
+
+def test_rename_tag(image_db):
+    """Test renaming a tag across all images."""
+    m1 = ImageMetadata(
+        id="r1",
+        path="r1.jpg",
+        original_filename="r1.jpg",
+        width=100,
+        height=100,
+        file_size=100,
+        format="JPEG",
+        tags={"old_tag", "other"},
+    )
+    m2 = ImageMetadata(
+        id="r2",
+        path="r2.jpg",
+        original_filename="r2.jpg",
+        width=100,
+        height=100,
+        file_size=100,
+        format="JPEG",
+        tags={"old_tag"},
+    )
+    image_db.add_image(m1)
+    image_db.add_image(m2)
+    n = image_db.rename_tag("old_tag", "new_tag")
+    assert n == 2
+    assert image_db.get_image("r1").tags == {"new_tag", "other"}
+    assert image_db.get_image("r2").tags == {"new_tag"}
+
+
+def test_rename_tag_no_match(image_db, sample_metadata):
+    """Test rename_tag when no image has the old tag."""
+    sample_metadata.tags = {"other"}
+    image_db.add_image(sample_metadata)
+    n = image_db.rename_tag("missing", "new_tag")
+    assert n == 0
+    assert image_db.get_image(sample_metadata.id).tags == {"other"}
+
+
+def test_rename_tag_idempotent_same_name(image_db, sample_metadata):
+    """Test rename_tag with same old and new name returns 0."""
+    sample_metadata.tags = {"same"}
+    image_db.add_image(sample_metadata)
+    n = image_db.rename_tag("same", "same")
+    assert n == 0
+    assert image_db.get_image(sample_metadata.id).tags == {"same"}

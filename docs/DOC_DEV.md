@@ -45,6 +45,8 @@ SketchBook/
 ### Core (core/)
 - Module principal contenant la logique métier
 - `session_manager.py` : Gestion des sessions (Course et intervalle constant). `load_course_config`, `build_course_run`, `SessionManager.start_session` (image_ids, type, durée/intervalle, window_mode), navigation (advance_image, previous_image, get_current_duration, get_session_progress). Presets Course dans `gui/ressources/session_configs.json` (10–60 min, phases WarmUp/Gesture/Anatomy/Shading).
+- `user_tags_config.py` : Config des tags utilisateur (placements, icônes, `registered_only`). Fichier `user_tags_config.json` dans le répertoire config des données utilisateur. `load_config()`, `save_config(placements, icons, registered_only)`, `get_placement()`, `get_icon_filename()`, `set_placement()`, `rename_in_config()`.
+- `image_db.py` : `ImageDatabase.rename_tag(old_name, new_name)` renomme un tag sur toutes les images et retourne le nombre d’images mises à jour.
 - Version actuelle : 0.1.0
 
 ### Utils (utils/)

@@ -20,6 +20,7 @@ Update this file via prompt:
 - [x] Slideshow fullscreen avec fitInView (scene.itemsBoundingRect, KeepAspectRatio) ; crossfade avec workaround (repaint + processEvents + délai 80 ms) pour éviter le resize pendant le fondu (2026-01-30)
 - [x] Tag removal on selection moved to background thread (same TagApplyWorker as assign) (2026-01-30)
 - [x] Camera-Angle (and label categories) as global AND constraint for all category filters (2026-01-30)
+- [x] Tag library: edit user tags – rename (right-click), drag-drop onto category/tag, Add tag with icon (2026-02-03)
 
 ### Phase 1: Basic Structure ✅ (Completed: 2024-03-06)
 - [x] Set up base Python project with multi-file structure

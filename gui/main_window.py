@@ -2,7 +2,7 @@
 Main window of the SketchBook application.
 """
 from pathlib import Path
-from typing import Dict, List, Set, Optional, Tuple
+from typing import Any, Dict, List, Set, Optional, Tuple
 from qtpy.QtWidgets import (
     QMainWindow,
     QMenuBar,
@@ -30,7 +30,9 @@ from qtpy.QtWidgets import (
     QGridLayout,
     QFrame,
     QSizePolicy,
-    QCompleter
+    QCompleter,
+    QInputDialog,
+    QMenu,
 )
 from qtpy.QtCore import (
     Qt,
@@ -39,10 +41,14 @@ from qtpy.QtCore import (
     Q_ARG,
     Slot,
     QThread,
+    QTimer,
     QMimeData,
     QSize,
     QStringListModel,
     QUrl,
+    Signal,
+    QEvent,
+    QObject,
 )
 from qtpy.QtGui import (
     QAction,
@@ -54,12 +60,15 @@ from qtpy.QtGui import (
     QPainter,
     QIcon,
     QImage,
+    QCursor,
 )
 from core.settings import settings
 from core.image_manager import ImageManager
+from core import user_tags_config
 from gui.image_import_worker import ImageImportWorker
 from gui.image_grid import ImageGrid, ImageThumbnail
 from gui.tag_widgets import DraggableTagChip
+from gui.add_tag_dialog import AddTagDialog, IconPickerDialog
 from gui.tag_apply_worker import TagApplyWorker
 from gui.session_settings_dialog import SessionSettingsDialog
 from gui.image_viewer_window import ImageViewerWindow
@@ -100,8 +109,40 @@ class DraggableTreeWidget(QTreeWidget):
         drag.exec_(Qt.MoveAction)
 
 
+# MIME type for drag from tag library (reposition user tag); plain text used for drop on images
+TAG_LIBRARY_MIME = "application/x-sketchbook-tag-library"
+
+
+class TagGridDropFilter(QObject):
+    """Event filter to accept tag-library drag/drop on the tag grid container."""
+
+    def __init__(self, main_window: "MainWindow"):
+        super().__init__(main_window)
+        self._main = main_window
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if obj != self._main.tags_grid_container:
+            return False
+        try:
+            _drag_enter = QEvent.Type.DragEnter
+            _drop_type = QEvent.Type.Drop
+        except AttributeError:
+            _drag_enter = QEvent.DragEnter
+            _drop_type = QEvent.Drop
+        if event.type() == _drag_enter:
+            if event.mimeData().hasFormat(TAG_LIBRARY_MIME):
+                event.acceptProposedAction()
+            return True
+        if event.type() == _drop_type:
+            self._main._on_tag_grid_drop(event)
+            return True
+        return False
+
+
 class DraggableTagButton(QPushButton):
     """Tag button in the tag library that can be dragged onto images."""
+
+    contextMenuRequested = Signal(str)
 
     def __init__(self, text: str, parent=None):
         super().__init__(text, parent)
@@ -111,6 +152,11 @@ class DraggableTagButton(QPushButton):
         if event.button() == Qt.LeftButton:
             self._drag_start_pos = event.pos()
         super().mousePressEvent(event)
+
+    def contextMenuEvent(self, event):
+        """Emit signal so main window can show Rename (user tags only)."""
+        self.contextMenuRequested.emit(self.text())
+        event.accept()
 
     def mouseMoveEvent(self, event):
         if (
@@ -125,6 +171,9 @@ class DraggableTagButton(QPushButton):
             drag = QDrag(self)
             mime_data = QMimeData()
             mime_data.setText(tag_text)
+            # Mark drag from tag library so grid can accept drop for repositioning (user tags only)
+            if self.property("userTag"):
+                mime_data.setData(TAG_LIBRARY_MIME, tag_text.encode("utf-8"))
             drag.setMimeData(mime_data)
 
             # Simple pixmap with tag text for visual feedback
@@ -177,7 +226,8 @@ class MainWindow(QMainWindow):
         self._active_categories: Set[str] = set()
         self._active_subtags: Dict[str, Set[str]] = {}
         self._subtag_to_category: Dict[str, str] = {}
-        
+        self._user_tags_config: Dict[str, Any] = {}  # Loaded in _load_tags_into_grid
+
         # Window setup
         self.setWindowTitle("SketchBook")
         self.resize(1280, 800)
@@ -278,7 +328,11 @@ class MainWindow(QMainWindow):
         tags_tree_title = QLabel("Tags Library")
         tags_tree_title.setStyleSheet("font-size: 12px; font-weight: bold;")
         tags_tree_layout.addWidget(tags_tree_title)
-        
+
+        add_tag_btn = QPushButton("Add tag")
+        add_tag_btn.clicked.connect(self._on_add_user_tag_clicked)
+        tags_tree_layout.addWidget(add_tag_btn)
+
         # Scrollable grid widget for tags
         self.tags_grid_container = QWidget()
         self.tags_grid_layout = QGridLayout(self.tags_grid_container)
@@ -294,7 +348,10 @@ class MainWindow(QMainWindow):
         self.tags_scroll_area.setFrameShape(QFrame.NoFrame)
         self.tags_scroll_area.setWidget(self.tags_grid_container)
         tags_tree_layout.addWidget(self.tags_scroll_area)
-        
+        self.tags_grid_container.setAcceptDrops(True)
+        self._tag_grid_drop_filter = TagGridDropFilter(self)
+        self.tags_grid_container.installEventFilter(self._tag_grid_drop_filter)
+
         # Load tags into grid
         self._load_tags_into_grid()
         
@@ -538,7 +595,7 @@ class MainWindow(QMainWindow):
     
     def _get_user_tags(self) -> Set[str]:
         """
-        Get all user-defined tags (tags that are not in default tags).
+        Get all user-defined tags: from DB (excluding default) plus registered-only (added via UI).
 
         Returns:
             set: User-defined tags.
@@ -547,8 +604,9 @@ class MainWindow(QMainWindow):
         all_tags = set()
         for metadata in self.image_manager.db.list_images():
             all_tags.update(metadata.tags)
-        # Return only tags that are not in default tags
-        return all_tags - default_tags
+        from_db = all_tags - default_tags
+        registered = set(getattr(self, "_user_tags_config", {}).get("registered_only", []))
+        return from_db | registered
 
     def _apply_category_filters(self) -> None:
         """Apply category/subtag filters to the image grid."""
@@ -740,8 +798,45 @@ class MainWindow(QMainWindow):
         self.raise_()
         self.activateWindow()
     
+    def _build_subtags_for_category(
+        self,
+        category: str,
+        default_subtags: List[str],
+        user_tags: List[str],
+        placements: Dict[str, Any],
+    ) -> List[str]:
+        """
+        Build ordered subtag list for a category: default tags + user tags by placement.
+        User tags with placement "category" are appended; with "parent_tag" inserted after parent.
+        Multiple passes ensure nested parent_tag (child of a user tag) is inserted after its parent.
+        """
+        result = list(dict.fromkeys(default_subtags))
+        for ut in user_tags:
+            pl = placements.get(ut)
+            if pl is None:
+                if category == "Miscellaneous:":
+                    result.append(ut)
+                continue
+            if pl.get("category") == category:
+                if ut not in result:
+                    result.append(ut)
+        # Multiple passes so tags with parent_tag are inserted after their parent (parent may be user tag)
+        changed = True
+        while changed:
+            changed = False
+            for ut in user_tags:
+                pl = placements.get(ut)
+                if pl is None or "parent_tag" not in pl:
+                    continue
+                parent = pl["parent_tag"]
+                if parent in result and ut not in result:
+                    idx = result.index(parent) + 1
+                    result.insert(idx, ut)
+                    changed = True
+        return result
+
     def _load_tags_into_grid(self):
-        """Load tags from JSON into the tags grid."""
+        """Load tags from JSON and user config into the tags grid."""
         while self.tags_grid_layout.count():
             item = self.tags_grid_layout.takeAt(0)
             if item.widget():
@@ -750,17 +845,21 @@ class MainWindow(QMainWindow):
         self._subcategory_buttons = {}
         self._user_tag_buttons = {}
         self._subtag_to_category = {}
-        
+
+        self._user_tags_config = user_tags_config.load_config()
+        placements = self._user_tags_config.get("placements", {})
+        user_tags_list = sorted(self._get_user_tags())
+        user_tags_set = self._get_user_tags()
+
         # Load default tags from JSON
         default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
         if default_tags_path.exists():
             try:
-                import json
+                import json as _json
                 with open(default_tags_path, "r", encoding="utf-8") as f:
-                    default_tags = json.load(f)
-                
+                    default_tags = _json.load(f)
+
                 def collect_subtags(data, collected: List[str]) -> None:
-                    """Recursively collect subtags from nested structures."""
                     if isinstance(data, list):
                         for item in data:
                             collect_subtags(item, collected)
@@ -771,111 +870,98 @@ class MainWindow(QMainWindow):
                     elif isinstance(data, str):
                         collected.append(data)
 
-                # Process each category at root level
                 categories_list = list(default_tags.items())
-                # User tags (tags in DB not in default) shown under Miscellaneous:
-                user_tags = sorted(self._get_user_tags())
                 max_cols = 3
                 max_tags_per_row = 3
                 category_row_counts: List[int] = []
                 for category, tags in categories_list:
-                    subtags: List[str] = []
-                    collect_subtags(tags, subtags)
-                    unique_subtags = list(dict.fromkeys(subtags))
-                    if category == "Miscellaneous:":
-                        unique_subtags = list(dict.fromkeys(unique_subtags + user_tags))
+                    default_st: List[str] = []
+                    collect_subtags(tags, default_st)
+                    default_st = list(dict.fromkeys(default_st))
+                    unique_subtags = self._build_subtags_for_category(
+                        category, default_st, user_tags_list, placements
+                    )
                     subtag_rows = max(1, (len(unique_subtags) + max_tags_per_row - 1) // max_tags_per_row) if unique_subtags else 0
                     num_rows = 1 + subtag_rows
                     category_row_counts.append(num_rows)
-                
-                # Calculate starting row for each category
+
                 current_row = 0
                 category_start_rows: List[int] = []
                 for num_rows in category_row_counts:
                     category_start_rows.append(current_row)
-                    current_row += num_rows + 1  # +1 for separator (except last)
-                
-                # Second pass: create UI elements
+                    current_row += num_rows + 1
+
                 for category_idx, (category, tags) in enumerate(categories_list):
                     row = category_start_rows[category_idx]
                     num_rows = category_row_counts[category_idx]
-                    
-                    # Special handling for "Miscellaneous:" and "Camera-Angle:" - they're labels, not buttons
                     is_label_category = category in ["Miscellaneous:", "Camera-Angle:"]
-                    
-                    # Category button/label at the top, spanning all columns
+
+                    default_st: List[str] = []
+                    collect_subtags(tags, default_st)
+                    default_st = list(dict.fromkeys(default_st))
+                    unique_subtags = self._build_subtags_for_category(
+                        category, default_st, user_tags_list, placements
+                    )
+
                     if is_label_category:
-                        # Create label instead of button for label categories
                         category_label = QLabel(category)
                         category_label.setStyleSheet("font-weight: bold; font-size: 12px; padding: 4px; background-color: transparent;")
                         category_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                         self.tags_grid_layout.addWidget(category_label, row, 0, 1, max_cols)
                     else:
-                        # Category button at the top, spanning all columns
-                        category_button = self._build_tag_button(category)
-                        # Set size policy to prevent vertical expansion
-                        category_button.setSizePolicy(
-                            QSizePolicy.Preferred, QSizePolicy.Maximum
-                        )
+                        category_button = self._build_tag_button(category, is_user_tag=False)
+                        category_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
                         category_button.clicked.connect(
                             lambda _, name=category: self._on_tag_button_clicked(name)
                         )
+                        category_button.setProperty("tagGridRole", "category")
+                        category_button.setProperty("tagGridKey", category)
                         self.tags_grid_layout.addWidget(category_button, row, 0, 1, max_cols)
                         self._category_buttons[category] = category_button
 
-                    # Collect subtags (for Miscellaneous: include user tags)
-                    subtags: List[str] = []
-                    collect_subtags(tags, subtags)
-                    unique_subtags = list(dict.fromkeys(subtags))
-                    if category == "Miscellaneous:":
-                        unique_subtags = list(dict.fromkeys(unique_subtags + user_tags))
                     subtag_buttons: Dict[str, QPushButton] = {}
                     for idx, tag in enumerate(unique_subtags):
-                        tag_button = self._build_tag_button(tag)
+                        is_user_tag = tag in user_tags_set
+                        tag_button = self._build_tag_button(tag, is_user_tag=is_user_tag)
+                        tag_name, category_name = tag, category
                         tag_button.clicked.connect(
-                            lambda _, name=tag: self._on_tag_button_clicked(name)
+                            lambda _=False, t=tag_name, c=category_name: self._on_tag_button_clicked(t, c)
                         )
-                        # Calculate row and column: first 3 tags on row row+1, next 3 on row row+2, etc.
+                        tag_button.setProperty("tagGridRole", "tag")
+                        tag_button.setProperty("tagGridKey", tag)
+                        tag_button.contextMenuRequested.connect(self._on_tag_context_menu_requested)
                         tag_row = row + 1 + (idx // max_tags_per_row)
                         tag_col = idx % max_tags_per_row
                         self.tags_grid_layout.addWidget(tag_button, tag_row, tag_col)
                         subtag_buttons[tag] = tag_button
                         self._subtag_to_category[tag] = category
-                        # Hide subtag buttons initially (except for label categories like Miscellaneous and Camera-Angle)
                         tag_button.setVisible(is_label_category)
 
                     self._subcategory_buttons[category] = subtag_buttons
-                    
-                    # Add horizontal separator after each category (except the last one)
+
                     if category_idx < len(categories_list) - 1:
                         separator = QFrame()
                         separator.setFrameShape(QFrame.Shape.HLine)
                         separator.setFrameShadow(QFrame.Shadow.Sunken)
                         separator.setStyleSheet("QFrame { color: #666; }")
-                        # Place separator after all rows for this category
                         separator_row = row + num_rows
                         self.tags_grid_layout.addWidget(separator, separator_row, 0, 1, max_cols)
 
             except Exception as e:
                 print(f"Error loading default tags: {str(e)}")
-            
-            # Add spacer at the bottom to push all content to the top
-            # Find the maximum row used in the grid
-            max_row = 0
-            for i in range(self.tags_grid_layout.count()):
-                item = self.tags_grid_layout.itemAt(i)
-                if item:
-                    row, col, row_span, col_span = self.tags_grid_layout.getItemPosition(i)
-                    max_row = max(max_row, row + row_span - 1)
-            
-            # Add vertical spacer at the bottom row to push content up
-            # Set stretch for the row after the last used row
-            if max_row >= 0:
-                self.tags_grid_layout.setRowStretch(max_row + 1, 1)
+
+        max_row = 0
+        for i in range(self.tags_grid_layout.count()):
+            item = self.tags_grid_layout.itemAt(i)
+            if item:
+                row, col, row_span, col_span = self.tags_grid_layout.getItemPosition(i)
+                max_row = max(max_row, row + row_span - 1)
+        if max_row >= 0:
+            self.tags_grid_layout.setRowStretch(max_row + 1, 1)
         
     def _find_tag_icon(self, tag: str) -> QIcon:
         """
-        Resolve a tag icon based on the tag name.
+        Resolve a tag icon: user config override, then tag name / fallbacks.
 
         Args:
             tag: Tag name.
@@ -887,20 +973,20 @@ class MainWindow(QMainWindow):
         if not icons_dir.exists():
             return QIcon()
 
+        config_icons = getattr(self, "_user_tags_config", {}).get("icons", {})
+        if tag in config_icons:
+            icon_file = icons_dir / config_icons[tag]
+            if icon_file.exists():
+                return QIcon(str(icon_file))
+
         tag_lower = tag.lower()
         file_map = {path.stem.lower(): path for path in icons_dir.glob("*.png")}
         if tag_lower in file_map:
             return QIcon(str(file_map[tag_lower]))
-
-        fallback_map = {
-            "hands": "hand",
-            "feet": "foot",
-            "objects": "object",
-        }
+        fallback_map = {"hands": "hand", "feet": "foot", "objects": "object"}
         fallback = fallback_map.get(tag_lower)
         if fallback and fallback in file_map:
             return QIcon(str(file_map[fallback]))
-
         return QIcon()
 
     def _invert_icon(self, icon: QIcon) -> QIcon:
@@ -920,18 +1006,20 @@ class MainWindow(QMainWindow):
         image.invertPixels(QImage.InvertRgb)
         return QIcon(QPixmap.fromImage(image))
 
-    def _build_tag_button(self, tag: str) -> QPushButton:
+    def _build_tag_button(self, tag: str, is_user_tag: bool = False) -> QPushButton:
         """
         Build a tag button with icon and label.
 
         Args:
             tag: Tag name.
+            is_user_tag: If True, tag can be renamed and repositioned (drag onto category/tag).
 
         Returns:
             QPushButton: Configured tag button.
         """
-        # Use draggable button so tags can be dragged onto images
         button = DraggableTagButton(tag)
+        button.setObjectName("TagGridButton")
+        button.setProperty("userTag", is_user_tag)
         icon = self._find_tag_icon(tag)
         if not icon.isNull():
             button.setIcon(self._invert_icon(icon))
@@ -942,16 +1030,17 @@ class MainWindow(QMainWindow):
         )
         return button
 
-    def _on_tag_button_clicked(self, tag: str) -> None:
+    def _on_tag_button_clicked(self, tag: str, category_override: Optional[str] = None) -> None:
         """
         Toggle tag in filters from tag buttons.
 
         Args:
             tag: Tag name to toggle.
+            category_override: When set, use this category (for tags that appear in multiple categories, e.g. Weapon).
         """
         # Label categories are not real tags and should never be added to active categories
         label_categories = ["Miscellaneous:", "Camera-Angle:"]
-        
+
         if tag in self._category_buttons:
             if tag in self._active_categories:
                 self._active_categories.remove(tag)
@@ -960,7 +1049,7 @@ class MainWindow(QMainWindow):
                 self._active_categories.add(tag)
                 self._active_subtags.setdefault(tag, set())
         else:
-            category = self._subtag_to_category.get(tag)
+            category = category_override if category_override is not None else self._subtag_to_category.get(tag)
             if not category:
                 return
             
@@ -985,7 +1074,8 @@ class MainWindow(QMainWindow):
                 else:
                     category_tags.add(tag)
         self._apply_category_filters()
-    
+        self._sync_tag_grid_state()
+
     def _on_tag_search_return(self) -> None:
         """Handle tag search input return key press (only for user tags)."""
         text = self.tag_search_input.text().strip()
@@ -1019,6 +1109,7 @@ class MainWindow(QMainWindow):
             tag: Tag that was added/removed (optional, for tag_dropped signal).
         """
         self._apply_category_filters()
+        self._sync_tag_grid_state()
     
     def _clear_all_tag_filters(self) -> None:
         """Clear all tag filters (category, AND, and OR)."""
@@ -1027,7 +1118,141 @@ class MainWindow(QMainWindow):
         self.and_zone.clear_tags()
         self.or_zone.clear_tags()
         self._apply_category_filters()
-    
+        self._sync_tag_grid_state()
+
+    def _on_tag_context_menu_requested(self, tag_text: str) -> None:
+        """Show context menu for tag button; only user tags get Rename and Change icon."""
+        user_tags = self._get_user_tags()
+        if tag_text not in user_tags:
+            return
+        menu = QMenu(self)
+        rename_action = menu.addAction("Rename...")
+        change_icon_action = menu.addAction("Change icon...")
+        action = menu.exec_(QCursor.pos())
+        if action == change_icon_action:
+            cfg = self._user_tags_config
+            current = cfg.get("icons", {}).get(tag_text)
+            dialog = IconPickerDialog(self, current_icon=current)
+            if dialog.exec_() == QDialog.DialogCode.Accepted:
+                icons = dict(cfg.get("icons", {}))
+                chosen = dialog.get_icon_filename()
+                if chosen:
+                    icons[tag_text] = chosen
+                else:
+                    icons.pop(tag_text, None)
+                user_tags_config.save_config(
+                    cfg.get("placements", {}),
+                    icons,
+                    cfg.get("registered_only"),
+                )
+                self._user_tags_config = user_tags_config.load_config()
+                self._load_tags_into_grid()
+                self._sync_tag_grid_state()
+            return
+        if action == rename_action:
+            new_name, ok = QInputDialog.getText(
+                self, "Rename tag", "New name:", text=tag_text
+            )
+            if ok and new_name and new_name.strip() and new_name.strip() != tag_text:
+                new_name = new_name.strip()
+                default_tags = self._get_default_tags()
+                if new_name in default_tags:
+                    QMessageBox.warning(
+                        self,
+                        "Rename tag",
+                        "This name is reserved for a default tag.",
+                    )
+                    return
+                n = self.image_manager.db.rename_tag(tag_text, new_name)
+                cfg = self._user_tags_config
+                placements = cfg.get("placements", {})
+                icons = cfg.get("icons", {})
+                user_tags_config.rename_in_config(placements, icons, tag_text, new_name)
+                ro = cfg.get("registered_only", [])
+                if tag_text in ro:
+                    ro = [new_name if t == tag_text else t for t in ro]
+                user_tags_config.save_config(placements, icons, ro)
+                self._user_tags_config = user_tags_config.load_config()
+                self._load_tags_into_grid()
+                self._update_tag_search_completer()
+                self._apply_category_filters()
+                self._sync_tag_grid_state()
+                QMessageBox.information(
+                    self,
+                    "Rename tag",
+                    f"Tag renamed on {n} image(s).",
+                )
+
+    def _on_tag_grid_drop(self, event: "QDropEvent") -> None:
+        """Reposition a user tag when dropped on a category or tag in the grid."""
+        if not event.mimeData().hasFormat(TAG_LIBRARY_MIME):
+            return
+        raw = event.mimeData().data(TAG_LIBRARY_MIME)
+        dropped_tag = bytes(raw).decode("utf-8") if raw else ""
+        if dropped_tag not in self._get_user_tags():
+            return
+        pos = event.position().toPoint() if hasattr(event.position(), "toPoint") else event.pos()
+        child = self.tags_grid_container.childAt(pos)
+        while child and child != self.tags_grid_container and not child.property("tagGridRole"):
+            child = child.parentWidget() if hasattr(child, "parentWidget") else None
+        if not child or not child.property("tagGridRole"):
+            return
+        role = child.property("tagGridRole")
+        key = child.property("tagGridKey")
+        if dropped_tag == key:
+            return
+        if role == "category":
+            placement = {"category": key}
+        elif role == "tag":
+            placement = {"parent_tag": key}
+        else:
+            return
+        cfg = self._user_tags_config
+        placements = dict(cfg.get("placements", {}))
+        placements[dropped_tag] = placement
+        user_tags_config.save_config(
+            placements,
+            cfg.get("icons", {}),
+            cfg.get("registered_only"),
+        )
+        self._user_tags_config = user_tags_config.load_config()
+        self._load_tags_into_grid()
+        self._sync_tag_grid_state()
+
+    def _on_add_user_tag_clicked(self) -> None:
+        """Open dialog to add a new user tag (name + optional icon)."""
+        dialog = AddTagDialog(self)
+        if dialog.exec_() != QDialog.DialogCode.Accepted:
+            return
+        tag_name = dialog.get_tag_name()
+        icon_file = dialog.get_icon_filename()
+        if not tag_name or not tag_name.strip():
+            return
+        tag_name = tag_name.strip()
+        default_tags = self._get_default_tags()
+        if tag_name in default_tags:
+            QMessageBox.warning(self, "Add tag", "This name is reserved for a default tag.")
+            return
+        user_tags = self._get_user_tags()
+        if tag_name in user_tags:
+            QMessageBox.information(self, "Add tag", "This tag already exists.")
+            return
+        cfg = getattr(self, "_user_tags_config", user_tags_config.load_config())
+        self._user_tags_config = cfg
+        placements = dict(cfg.get("placements", {}))
+        icons = dict(cfg.get("icons", {}))
+        registered = list(cfg.get("registered_only", []))
+        placements[tag_name] = {"category": "Miscellaneous:"}
+        if icon_file:
+            icons[tag_name] = icon_file
+        if tag_name not in registered:
+            registered.append(tag_name)
+        user_tags_config.save_config(placements, icons, registered)
+        self._user_tags_config = user_tags_config.load_config()
+        self._load_tags_into_grid()
+        self._update_tag_search_completer()
+        self._sync_tag_grid_state()
+
     def _update_tag_search_completer(self) -> None:
         """Update the tag search completer with current user tags."""
         user_tags = list(self._get_user_tags())
@@ -1059,25 +1284,36 @@ class MainWindow(QMainWindow):
     def _sync_tag_grid_state(self) -> None:
         """
         Sync tag grid button states with active filters.
+        Uses per-category subtags so a tag in multiple categories (e.g. Weapon) highlights correctly.
+        Child tags (placement parent_tag) are only visible when the parent tag is selected.
         """
-        active_tags = set(self._active_categories)
-        for tags in self._active_subtags.values():
-            active_tags.update(tags)
+        placements = self._user_tags_config.get("placements", {})
         for category, button in self._category_buttons.items():
             is_active = category in self._active_categories
             self._set_button_active(button, is_active)
-            # Show/hide subtags based on category activation
+            category_subtags = self._active_subtags.get(category, set())
             for tag, tag_button in self._subcategory_buttons.get(category, {}).items():
-                tag_button.setVisible(is_active)
-                self._set_button_active(tag_button, tag in active_tags)
-        
+                pl = placements.get(tag)
+                parent_tag = pl.get("parent_tag") if isinstance(pl, dict) else None
+                if parent_tag is not None:
+                    tag_button.setVisible(is_active and parent_tag in category_subtags)
+                else:
+                    tag_button.setVisible(is_active)
+                self._set_button_active(tag_button, tag in category_subtags)
+
         # Handle label categories separately - always visible, not clickable categories
         label_categories = ["Miscellaneous:", "Camera-Angle:"]
         for label_category in label_categories:
             if label_category in self._subcategory_buttons:
+                label_subtags = self._active_subtags.get(label_category, set())
                 for tag, tag_button in self._subcategory_buttons[label_category].items():
-                    tag_button.setVisible(True)
-                    self._set_button_active(tag_button, tag in active_tags)
+                    pl = placements.get(tag)
+                    parent_tag = pl.get("parent_tag") if isinstance(pl, dict) else None
+                    if parent_tag is not None:
+                        tag_button.setVisible(parent_tag in label_subtags)
+                    else:
+                        tag_button.setVisible(True)
+                    self._set_button_active(tag_button, tag in label_subtags)
 
     @staticmethod
     def _normalize_tag_for_match(tag: str) -> str:
@@ -1141,19 +1377,12 @@ class MainWindow(QMainWindow):
 
     def _set_button_active(self, button: QPushButton, active: bool) -> None:
         """
-        Apply active styling to a tag button.
-
-        Args:
-            button: Button to update.
-            active: Whether the button is active.
+        Apply active styling to a tag button via property so QSS applies highlight.
         """
-        base_style = "QPushButton { text-align: left; padding: 2px 4px; }"
-        if active:
-            button.setStyleSheet(
-                base_style + " QPushButton { background-color: #8ec5ff; }"
-            )
-        else:
-            button.setStyleSheet(base_style)
+        button.setProperty("tagActive", "true" if active else "false")
+        button.style().unpolish(button)
+        button.style().polish(button)
+        button.update()
     
     # Tree-based tag handling removed in favor of button grid.
     
@@ -1273,6 +1502,12 @@ class MainWindow(QMainWindow):
         """Handle file drop events."""
         self._import_from_urls(event.mimeData().urls())
         event.acceptProposedAction()
+
+    def closeEvent(self, event):
+        """Flush pending image DB save before closing so no changes are lost."""
+        if hasattr(self, "image_manager") and self.image_manager is not None:
+            self.image_manager.db.flush_pending_save()
+        super().closeEvent(event)
 
     def _import_from_urls(self, urls: List[QUrl]):
         """Import images from dropped URLs (files/folders). Used by main window drop and by grid/thumbnail forward."""
@@ -1488,7 +1723,7 @@ class MainWindow(QMainWindow):
     def _handle_tag_apply_finished(
         self, tag: str, image_ids: List[str], total: int
     ) -> None:
-        """Handle completion of tag application."""
+        """Handle completion of tag application; refresh thumbnails in batches to keep UI responsive."""
         try:
             if self.status_progress_bar is not None:
                 self.status_progress_bar.setValue(100)
@@ -1500,10 +1735,31 @@ class MainWindow(QMainWindow):
             # Clean up progress bar
             self._cleanup_progress_bars()
 
-            # Refresh thumbnails for affected images only (no full grid refresh)
-            for image_id in image_ids:
-                if image_id in self.image_grid.thumbnails:
-                    self.image_grid.thumbnails[image_id].refresh_tags()
+            # Refresh only thumbnails that exist in the grid (visible pool or loaded set)
+            to_refresh = [
+                image_id
+                for image_id in image_ids
+                if image_id in self.image_grid.thumbnails
+            ]
+            if not to_refresh:
+                return
+            # Process in batches so the event loop can run between batches (no UI freeze)
+            batch_size = 20
+            index_holder = [0]  # mutable so closure can update
+
+            def process_next_batch() -> None:
+                start = index_holder[0]
+                end = min(start + batch_size, len(to_refresh))
+                grid_thumbnails = self.image_grid.thumbnails
+                for i in range(start, end):
+                    image_id = to_refresh[i]
+                    if image_id in grid_thumbnails:
+                        grid_thumbnails[image_id].refresh_tags()
+                index_holder[0] = end
+                if end < len(to_refresh):
+                    QTimer.singleShot(0, process_next_batch)
+
+            QTimer.singleShot(0, process_next_batch)
         except Exception:
             self._cleanup_progress_bars()
 

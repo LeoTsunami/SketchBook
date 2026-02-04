@@ -6,7 +6,8 @@
     "Male",
     "Female",
     "Clothed",
-    "Naked"
+    "Naked",
+    "Weapon"
   ],
   "Animal": [
     "Quadruped",
@@ -14,7 +15,10 @@
     "Insect",
     "Bird",
     "Terrestrial",
-    "Aquatic"
+    "Aquatic",
+    "Portrait",
+    "Hands",
+    "Feet"
   ],
   "Landscape": [
     "Castle",

@@ -3,12 +3,19 @@ Local database for image metadata management.
 """
 import json
 import re
+import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 from core.settings import settings
 from core.user_data import user_data
 from dataclasses import dataclass, asdict, field
+
+# Windows: file in use / permission denied when renaming
+_SAVE_RETRY_COUNT = 5
+_SAVE_RETRY_DELAY_S = 0.15
+_DEBOUNCE_SAVE_DELAY_S = 0.45
 
 @dataclass
 class ImageMetadata:
@@ -33,6 +40,9 @@ class ImageDatabase:
         self._db_path = user_data.get_images_db_path()
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._images = {}
+        self._save_lock = threading.Lock()
+        self._dirty = False
+        self._save_timer = None  # threading.Timer for debounced save
         self._load_db()
     
     def _load_db(self):
@@ -98,25 +108,62 @@ class ImageDatabase:
             print(f"Error loading image database: {str(e)}")
             self._images = {}
     
-    def _save_db(self):
-        """Save the database to disk (atomic write to avoid corruption)."""
-        try:
-            tmp_path = self._db_path.with_suffix(self._db_path.suffix + ".tmp")
-            with open(tmp_path, "w", encoding="utf-8") as f:
-                json.dump(
-                    {
-                        id: {
-                            k: list(v) if k == "tags" else v
-                            for k, v in asdict(metadata).items()
-                        }
-                        for id, metadata in self._images.items()
-                    },
-                    f,
-                    indent=2,
-                )
-            tmp_path.replace(self._db_path)
-        except Exception as e:
-            print(f"Error saving image database: {str(e)}")
+    def _save_db_impl(self) -> None:
+        """Write DB to a temp file then replace target. Retry on Windows 'file in use'."""
+        tmp_path = self._db_path.with_suffix(self._db_path.suffix + ".tmp")
+        data = {
+            id: {
+                k: list(v) if k == "tags" else v
+                for k, v in asdict(metadata).items()
+            }
+            for id, metadata in self._images.items()
+        }
+        with open(tmp_path, "w", encoding="utf-8") as f:
+            json.dump(data, f, indent=2)
+        # On Windows, replace() can fail with WinError 32 if target is still in use; retry
+        last_error = None
+        for attempt in range(_SAVE_RETRY_COUNT):
+            try:
+                tmp_path.replace(self._db_path)
+                return
+            except OSError as e:
+                last_error = e
+                if attempt < _SAVE_RETRY_COUNT - 1:
+                    time.sleep(_SAVE_RETRY_DELAY_S)
+        print(f"Error saving image database: {last_error}")
+
+    def _save_db(self) -> None:
+        """Save the database to disk (serialized, for immediate save e.g. repair)."""
+        with self._save_lock:
+            self._save_db_impl()
+
+    def _request_save(self) -> None:
+        """Mark dirty and schedule a single save after a short delay (debounced)."""
+        self._dirty = True
+        if self._save_timer is None or not self._save_timer.is_alive():
+            self._save_timer = threading.Timer(_DEBOUNCE_SAVE_DELAY_S, self._flush_save)
+            self._save_timer.start()
+
+    def _flush_save(self) -> None:
+        """Timer callback: save once if dirty, then clear timer."""
+        with self._save_lock:
+            if self._dirty:
+                self._dirty = False
+                self._save_db_impl()
+        self._save_timer = None
+
+    def flush_pending_save(self) -> None:
+        """
+        Cancel any pending debounced save and write immediately if dirty.
+        Call on app exit so the last changes are not lost.
+        """
+        if self._save_timer is not None and self._save_timer.is_alive():
+            self._save_timer.cancel()
+            self._save_timer = None
+        with self._save_lock:
+            if self._dirty:
+                self._dirty = False
+                self._save_db_impl()
     
     def add_image(self, metadata: ImageMetadata):
         """
@@ -130,7 +177,7 @@ class ImageDatabase:
         if metadata.id in self._images:
             return False
         self._images[metadata.id] = metadata
-        self._save_db()
+        self._request_save()
         return True
     
     def get_image(self, image_id: str) -> Optional[ImageMetadata]:
@@ -163,14 +210,14 @@ class ImageDatabase:
         for key, value in updates.items():
             if hasattr(metadata, key):
                 setattr(metadata, key, value)
-        
-        self._save_db()
+
+        self._request_save()
         return True
     
     def delete_image(self, image_id: str) -> bool:
         """
         Delete image metadata.
-        
+
         Args:
             image_id: ID of the image to delete
             
@@ -179,10 +226,34 @@ class ImageDatabase:
         """
         if image_id in self._images:
             del self._images[image_id]
-            self._save_db()
+            self._request_save()
             return True
         return False
-    
+
+    def rename_tag(self, old_name: str, new_name: str) -> int:
+        """
+        Rename a tag on all images that have it.
+        Replaces old_name with new_name in each image's tags.
+
+        Args:
+            old_name: Current tag name.
+            new_name: New tag name.
+
+        Returns:
+            Number of images updated.
+        """
+        if not old_name or not new_name or old_name == new_name:
+            return 0
+        count = 0
+        for metadata in self._images.values():
+            if old_name in metadata.tags:
+                metadata.tags.discard(old_name)
+                metadata.tags.add(new_name)
+                count += 1
+        if count:
+            self._request_save()
+        return count
+
     def list_images(self, sort_by: str = "import_date_desc") -> List[ImageMetadata]:
         """
         Get list of all image metadata, optionally sorted.

@@ -1,9 +1,15 @@
 """
 Worker class for applying or removing a tag on many images in a background thread.
 """
+import time
 from typing import List, Literal
 
 from qtpy.QtCore import QObject, QRunnable, Signal, Slot
+
+# Throttle progress: emit at most every N images to avoid flooding the main thread
+_PROGRESS_EMIT_EVERY = 25
+# Min interval between progress emissions (seconds) when processing is very fast
+_PROGRESS_MIN_INTERVAL_S = 0.08
 
 
 class TagApplySignals(QObject):
@@ -56,6 +62,8 @@ class TagApplyWorker(QRunnable):
                 return
 
             self._emit_progress(0, total)
+            last_emit_index = 0
+            last_emit_time = time.monotonic()
 
             for index, image_id in enumerate(self.image_ids, start=1):
                 metadata = self.image_manager.get_image_metadata(image_id)
@@ -67,9 +75,17 @@ class TagApplyWorker(QRunnable):
                         new_tags.discard(self.tag)
                     self.image_manager.update_image_metadata(image_id, tags=new_tags)
 
-                self._emit_progress(index, total)
+                # Throttle progress to avoid freezing UI (too many queued slot calls)
+                now = time.monotonic()
+                if (
+                    index - last_emit_index >= _PROGRESS_EMIT_EVERY
+                    or (now - last_emit_time) >= _PROGRESS_MIN_INTERVAL_S
+                    or index == total
+                ):
+                    self._emit_progress(index, total)
+                    last_emit_index = index
+                    last_emit_time = now
 
-            # Ensure 100% progress
             self._emit_progress(total, total)
             self.signals.finished.emit(total)
 

@@ -48,6 +48,13 @@ QPushButton:hover {
 QPushButton:pressed {
     background-color: #3d5a8c;
 }
+QPushButton#TagGridButton[tagActive="true"] {
+    background-color: #4b6eaf;
+    border: 1px solid #5d7bc0;
+}
+QPushButton#TagGridButton[tagActive="true"]:hover {
+    background-color: #5d7bc0;
+}
 QScrollArea {
     background-color: #1e1e1e;
     border: none;

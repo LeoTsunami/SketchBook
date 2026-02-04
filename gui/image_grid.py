@@ -1244,11 +1244,26 @@ class ImageGrid(QScrollArea):
         self.thread_pool.start(worker)
 
     def _on_remove_tag_finished(self, tag: str, image_ids: List[str], total: int) -> None:
-        """Refresh thumbnails after tag removal completes (main thread)."""
-        for image_id in image_ids:
-            if image_id in self.thumbnails:
-                self.thumbnails[image_id].refresh_tags()
-        self.tag_remove_finished.emit(tag, image_ids, total)
+        """Refresh thumbnails after tag removal in batches to keep UI responsive."""
+        to_refresh = [iid for iid in image_ids if iid in self.thumbnails]
+        if not to_refresh:
+            self.tag_remove_finished.emit(tag, image_ids, total)
+            return
+        batch_size = 20
+        index_holder = [0]
+
+        def process_next_batch() -> None:
+            start = index_holder[0]
+            end = min(start + batch_size, len(to_refresh))
+            for i in range(start, end):
+                self.thumbnails[to_refresh[i]].refresh_tags()
+            index_holder[0] = end
+            if end < len(to_refresh):
+                QTimer.singleShot(0, process_next_batch)
+            else:
+                self.tag_remove_finished.emit(tag, image_ids, total)
+
+        QTimer.singleShot(0, process_next_batch)
 
     def _on_remove_tag_error(self, error_msg: str) -> None:
         """Handle tag removal error (main thread)."""

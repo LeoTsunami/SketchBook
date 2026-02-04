@@ -68,6 +68,13 @@ Categories act as a global OR (Human OR Animal). Sub-tags act as AND within thei
 - You can add multiple tags to a single image
 - Tags are case-sensitive 
 
+### Tags Library: Managing User Tags
+- **Default tags** (from the built-in list) cannot be renamed or removed; they can receive new user tags as children (see below).
+- **User tags** (tags you added or that exist only on your images) can be edited:
+  - **Rename**: Right-click a user tag → "Rename...". The tag is renamed on all images that have it.
+  - **Move**: Drag a user tag and drop it onto a category (e.g. "Human") to place it under that category, or onto another tag to make that tag the parent (the user tag then appears under it in the grid).
+  - **Add tag**: Click "Add tag" above the grid. Enter a name and optionally pick an icon from the list. The new tag appears under "Miscellaneous:" until you move it by drag-and-drop. You can then apply it to images like any other tag.
+
 ### Tags Library Notes
 Categories stay collapsed by default and only expand when you add the category tag to your filters.
 Categories are displayed as buttons in the first column, with sub-tag buttons revealed horizontally to the right when active.

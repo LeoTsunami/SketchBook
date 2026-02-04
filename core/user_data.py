@@ -144,6 +144,10 @@ class UserDataManager:
         """Get the session history file path."""
         return self.get_config_dir() / "session_history.json"
 
+    def get_user_tags_config_path(self) -> Path:
+        """Get the user tags config file path (placements and icons for user tags)."""
+        return self.get_config_dir() / "user_tags_config.json"
+
 
 # Global instance
 user_data = UserDataManager()

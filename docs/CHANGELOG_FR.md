@@ -1,5 +1,11 @@
 # Journal des modifications
 
+## 2026-02-03 (bibliothèque de tags : modification des tags utilisateur)
+### ✅ Tâches :
+- Bibliothèque de tags : modification des tags utilisateur (tags par défaut en lecture seule). Renommer : clic droit sur un tag utilisateur → « Renommer... ». Glisser-déposer : déposer un tag sur une catégorie ou un autre tag pour le déplacer. Add tag : bouton pour ajouter un tag (nom + icône optionnelle). Persistance dans `user_tags_config.json` et `ImageDatabase.rename_tag()`.
+ → Résultat : Organiser, renommer et ajouter des tags personnalisés depuis la bibliothèque.
+---
+
 ## 2026-02-03 (grille d’images : chargement des pixmaps visibles uniquement, debounce)
 ### ✅ Tâches :
 - Charger les pixmaps des miniatures uniquement pour les éléments visibles, avec QTimer pour éviter les lag sur le main thread
