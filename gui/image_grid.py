@@ -2,7 +2,7 @@
 Image grid component for displaying image thumbnails in a scrollable grid layout.
 """
 from pathlib import Path
-from typing import Callable, List, Optional, Dict, Set
+from typing import Callable, List, Optional, Dict, Set, Tuple
 from collections import deque
 from qtpy.QtWidgets import (
     QWidget,
@@ -147,9 +147,14 @@ class ImageGrid(QScrollArea):
         self.max_thumbnail_height = 300  # Default maximum height
         self.sort_by = "import_date_desc"  # Default sort: most recent first
         
-        # Set up thread pool for image loading
+        # Set up thread pool for main image loading (thumbnails in the grid)
         self.thread_pool = QThreadPool.globalInstance()
-        self.thread_pool.setMaxThreadCount(4)  # Limit concurrent image loads
+        self.thread_pool.setMaxThreadCount(4)  # Limit concurrent image loads for main grid
+
+        # Separate, low-concurrency pool for scroll preview extracts so it never
+        # blocks the main grid loading; both run in parallel.
+        self.extract_thread_pool = QThreadPool(self)
+        self.extract_thread_pool.setMaxThreadCount(1)
         
         # Set up unified timer for all layout updates with shorter interval
         self.layout_timer = QTimer(self)
@@ -160,7 +165,7 @@ class ImageGrid(QScrollArea):
         # Set up separate timer for checking visible thumbnails (debounce scroll)
         self.visibility_timer = QTimer(self)
         self.visibility_timer.setSingleShot(True)
-        self.visibility_timer.setInterval(40)  # Reason: faster reaction on scroll
+        self.visibility_timer.setInterval(40)  # Faster reaction on scroll; fires shortly after last scroll event
         self.visibility_timer.timeout.connect(self._check_visible_thumbnails)
 
         # Pending pixmap loads: process several per tick for snappy feel with virtualization
@@ -172,7 +177,7 @@ class ImageGrid(QScrollArea):
         self.MAX_LOADS_PER_TICK = 8  # Reason: load more images per tick for snappier grid
         self.PENDING_QUEUE_MAX = 220  # Larger preload queue (extra rows = more items to load)
         
-        # Connect scroll bar
+        # Connect scroll bar (valueChanged is enough; we debounce with visibility_timer)
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
         
         self.row_heights = {}  # Store optimal height for each row
@@ -244,9 +249,64 @@ class ImageGrid(QScrollArea):
             self._extract_indices.append(idx)
             self._image_id_to_extract_index[self.all_images[idx].id] = len(self._extract_indices) - 1
             idx += step
-        self._extract_pending_indices = list(range(len(self._extract_indices)))
+        # Build a "global to detailed" load order for the scroll preview:
+        # first center of strip, then sub-centers, etc. This gives a rough global
+        # overview quickly, then refines progressively instead of loading strictly
+        # from top to bottom.
+        self._extract_pending_indices = self._build_balanced_extract_order(len(self._extract_indices))
         if self._extract_pending_indices:
             self._extract_preload_timer.start()
+
+    def _build_balanced_extract_order(self, count: int) -> List[int]:
+        """Return indices [0..count-1] in a hierarchical Debut/Fin/Milieu, quarts, 1/8, 1/16... order.
+
+        Idée:
+        - Charger d'abord les bornes (début/fin) et le milieu,
+        - Puis, récursivement, les milieux de chaque segment [début, milieu], [milieu, fin], etc.
+
+        Cela donne une vue globale très vite (haut/bas/milieu), puis on raffine par quarts, huitièmes, etc.
+        """
+        if count <= 0:
+            return []
+        if count == 1:
+            return [0]
+
+        max_idx = count - 1
+        seen: Set[int] = set()
+        order: List[int] = []
+
+        def add(idx: int) -> None:
+            i = max(0, min(max_idx, idx))
+            if i not in seen:
+                seen.add(i)
+                order.append(i)
+
+        # 1) Début, fin, milieu global
+        add(0)
+        add(max_idx)
+        add(max_idx // 2)
+
+        # 2) Parcours hiérarchique des segments pour ajouter les milieux (quarts, huitièmes, etc.)
+        segments: List[Tuple[int, int]] = [(0, max_idx // 2), (max_idx // 2, max_idx)]
+
+        while len(seen) < count and segments:
+            next_segments: List[Tuple[int, int]] = []
+            for start, end in segments:
+                if end - start <= 1:
+                    continue
+                mid = (start + end) // 2
+                add(mid)
+                # Sous-segments à raffiner ensuite
+                next_segments.append((start, mid))
+                next_segments.append((mid, end))
+            segments = next_segments
+
+        # Si jamais il reste des trous (cas bornes bizarres), on complète linéairement.
+        for i in range(count):
+            if i not in seen:
+                order.append(i)
+
+        return order
 
     def _process_extract_preload(self) -> None:
         """Start loading a few extract images per tick."""
@@ -269,7 +329,8 @@ class ImageGrid(QScrollArea):
             worker = ImageLoaderWorker(meta.id, path, (self.EXTRACT_LOAD_SIZE, self.EXTRACT_LOAD_SIZE))
             worker.signals.finished.connect(self._on_image_loaded)
             worker.signals.error.connect(self._on_image_error)
-            self.thread_pool.start(worker)
+            # Use dedicated pool so preview loading does not starve the main grid thread pool.
+            self.extract_thread_pool.start(worker)
         if not self._extract_pending_indices:
             self._extract_preload_timer.stop()
 
@@ -365,6 +426,7 @@ class ImageGrid(QScrollArea):
         for i, thumb in enumerate(self.thumbnail_pool):
             idx = start_index + i
             if idx >= end_index:
+                thumb.clear_pixmap()
                 thumb.hide()
                 continue
             meta = self.all_images[idx]
@@ -558,6 +620,7 @@ class ImageGrid(QScrollArea):
             self.thumbnails.clear()
             self.pixmap_cache.clear()
             for thumb in self.thumbnail_pool:
+                thumb.clear_pixmap()
                 thumb.hide()
             self.loaded_count = 0
             self.all_images.clear()
@@ -764,12 +827,12 @@ class ImageGrid(QScrollArea):
         """Load image for a thumbnail asynchronously. When virtualized, may load for cache only (thumbnail not visible)."""
         if image_id in self.loading_images:
             return
+        metadata = next((m for m in self.all_images if m.id == image_id), None)
+        if not metadata:
+            return
         if image_id in self.pixmap_cache:
             if image_id in self.thumbnails:
                 self.thumbnails[image_id].set_image(self.pixmap_cache[image_id])
-            return
-        metadata = next((m for m in self.all_images if m.id == image_id), None)
-        if not metadata:
             return
         self.loading_images.add(image_id)
         if image_id in self.thumbnails:
@@ -792,20 +855,20 @@ class ImageGrid(QScrollArea):
         """Handle loaded image. Extracts are duplicated: in _extract_pixmaps for overlay AND in grid cache so grid shows them too."""
         self.loading_images.discard(image_id)
         self._extract_loading.discard(image_id)
+        if not any(m.id == image_id for m in self.all_images):
+            return
         fast_pixmap, high_quality_pixmap = pixmaps
         if image_id in self._image_id_to_extract_index:
             extract_i = self._image_id_to_extract_index[image_id]
             self._extract_pixmaps[extract_i] = high_quality_pixmap
             if self._scroll_preview.isVisible():
                 self._update_scroll_preview_image()
-            # Duplicate: also feed the grid so the image still shows in the image grid (140px until full-size load replaces it)
             self.pixmap_cache[image_id] = high_quality_pixmap
-            if image_id in self.thumbnails:
+            if image_id in self.thumbnails and self.thumbnails[image_id].image_id == image_id:
                 self.thumbnails[image_id].set_image(high_quality_pixmap)
             return
-        # Grid thumbnail load (full size): cache and display
         self.pixmap_cache[image_id] = high_quality_pixmap
-        if image_id in self.thumbnails:
+        if image_id in self.thumbnails and self.thumbnails[image_id].image_id == image_id:
             self.thumbnails[image_id].set_image(high_quality_pixmap)
     
     def _on_image_error(self, image_id: str, error_msg: str):
@@ -1324,22 +1387,29 @@ class ImageGrid(QScrollArea):
             images: List of image metadata to display.
             filter_key: Key used to detect filter changes.
         """
+        new_ids = set(m.id for m in images)
         list_changed = (
             len(images) != len(self.all_images)
-            or (self.all_images and set(m.id for m in images) != set(m.id for m in self.all_images))
+            or (self.all_images and new_ids != set(m.id for m in self.all_images))
         )
-        if self.current_filter != filter_key or list_changed:
+        if list_changed or self.current_filter != filter_key:
             self.clear()
+            self.verticalScrollBar().setValue(0)
+            self.horizontalScrollBar().setValue(0)
             self.grid.update()
             self.content.update()
+            self.viewport().update()
             QApplication.processEvents()
 
         self.current_filter = filter_key
-        self.all_images = images
+        self.all_images = list(images)
         self._rebuild_extract_indices()
-        if not self._is_virtualized():
+        if self._is_virtualized():
+            self._update_virtualized_view()
+        else:
             self._load_next_batch()
         self.layout_timer.start()
         self.visibility_timer.start()
         self.grid.update()
         self.content.update()
+        self.viewport().update()

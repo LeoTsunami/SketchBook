@@ -77,8 +77,23 @@ class ImageLoaderWorker(QRunnable):
             else:
                 result = (QPixmap.fromImage(image), QPixmap.fromImage(image))
             
-            # Emit result
-            self.signals.finished.emit(self.image_id, result)
+            # Emit result (guard: receiver may be deleted if window closed)
+            self._safe_emit_finished(result)
             
         except Exception as e:
-            self.signals.error.emit(self.image_id, str(e)) 
+            self._safe_emit_error(str(e))
+
+    def _safe_emit_finished(self, result: tuple) -> None:
+        """Emit finished signal; no-op if signal source/receiver was deleted (e.g. window closed)."""
+        try:
+            self.signals.finished.emit(self.image_id, result)
+        except RuntimeError:
+            # Signal source or receiver deleted (window closed); ignore
+            pass
+
+    def _safe_emit_error(self, message: str) -> None:
+        """Emit error signal; no-op if signal source/receiver was deleted (e.g. window closed)."""
+        try:
+            self.signals.error.emit(self.image_id, message)
+        except RuntimeError:
+            pass 

@@ -1,5 +1,13 @@
 # Journal des modifications
 
+## 2026-02-05 (persistance du nombre de colonnes de la grille)
+### ✅ Tâches :
+- Sauvegarder le nombre de colonnes de la grille dans les paramètres utilisateur
+
+- Lorsque l'utilisateur modifie le curseur du nombre de colonnes (3–10), la valeur est désormais enregistrée via `settings.save()` après `settings.set("ui.grid.columns", value)`. À la réouverture, le curseur et la grille utilisent `settings.get("ui.grid.columns", 4)` (déjà en place).
+ → Résultat : Le nombre de colonnes choisi est restauré au prochain lancement.
+---
+
 ## 2026-02-03 (bibliothèque de tags : modification des tags utilisateur)
 ### ✅ Tâches :
 - Bibliothèque de tags : modification des tags utilisateur (tags par défaut en lecture seule). Renommer : clic droit sur un tag utilisateur → « Renommer... ». Glisser-déposer : déposer un tag sur une catégorie ou un autre tag pour le déplacer. Add tag : bouton pour ajouter un tag (nom + icône optionnelle). Persistance dans `user_tags_config.json` et `ImageDatabase.rename_tag()`.

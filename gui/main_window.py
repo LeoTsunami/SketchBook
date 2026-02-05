@@ -324,14 +324,32 @@ class MainWindow(QMainWindow):
         tags_tree_layout.setContentsMargins(10, 10, 10, 10)
         tags_tree_layout.setSpacing(5)
         
-        # Title
+        # Title row: "Tags Library" + small blue "+" button
+        tags_header_layout = QHBoxLayout()
+        tags_header_layout.setContentsMargins(0, 0, 0, 0)
         tags_tree_title = QLabel("Tags Library")
         tags_tree_title.setStyleSheet("font-size: 12px; font-weight: bold;")
-        tags_tree_layout.addWidget(tags_tree_title)
-
-        add_tag_btn = QPushButton("Add tag")
+        tags_header_layout.addWidget(tags_tree_title)
+        tags_header_layout.addStretch()
+        add_tag_btn = QPushButton("+ Create tag")
+        add_tag_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #2196F3;
+                color: white;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 6px 12px;
+                border: none;
+                border-radius: 4px;
+                min-width: 90px;
+            }
+            QPushButton:hover { background-color: #1976D2; }
+            QPushButton:pressed { background-color: #0D47A1; }
+        """)
+        add_tag_btn.setToolTip("Add a new tag to the library")
         add_tag_btn.clicked.connect(self._on_add_user_tag_clicked)
-        tags_tree_layout.addWidget(add_tag_btn)
+        tags_header_layout.addWidget(add_tag_btn)
+        tags_tree_layout.addLayout(tags_header_layout)
 
         # Scrollable grid widget for tags
         self.tags_grid_container = QWidget()
@@ -2134,10 +2152,11 @@ class MainWindow(QMainWindow):
                 )
 
     def _on_columns_changed(self, value: int):
-        """Handle column slider value changes."""
+        """Handle column slider value changes and persist to user settings."""
         self.columns_count.setText(str(value))
         self.image_grid.set_columns(value)
         settings.set("ui.grid.columns", value)
+        settings.save()
 
     def _on_image_clicked(self, image_id: str):
         """Open the image in a large viewer window."""

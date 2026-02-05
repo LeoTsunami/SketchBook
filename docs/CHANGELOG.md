@@ -1,5 +1,13 @@
 # Changelog
 
+## 2026-02-05 (persist grid column count)
+### ✅ Tasks:
+- Persist grid column count in user settings
+
+- When the user changes the column slider (3–10 columns), the value is now saved via `settings.save()` after `settings.set("ui.grid.columns", value)`. On reopen, the slider and grid use `settings.get("ui.grid.columns", 4)` (already in place).
+ → Result: The chosen number of columns is restored at next launch.
+---
+
 ## 2026-02-03 (tag library: edit user tags)
 ### ✅ Tasks:
 - Tag library: modify user tags (default tags remain read-only)
