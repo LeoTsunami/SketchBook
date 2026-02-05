@@ -55,6 +55,20 @@ QPushButton#TagGridButton[tagActive="true"] {
 QPushButton#TagGridButton[tagActive="true"]:hover {
     background-color: #5d7bc0;
 }
+QPushButton#TagGridButton[tagChildRow="true"] {
+    background-color: rgba(75, 110, 175, 0.35);
+    border: 1px solid rgba(93, 123, 192, 0.5);
+}
+QPushButton#TagGridButton[tagChildRow="true"]:hover {
+    background-color: rgba(75, 110, 175, 0.5);
+}
+QPushButton#TagGridButton[tagActive="true"][tagChildRow="true"] {
+    background-color: #4b6eaf;
+    border: 1px solid #5d7bc0;
+}
+QPushButton#TagGridButton[tagActive="true"][tagChildRow="true"]:hover {
+    background-color: #5d7bc0;
+}
 QScrollArea {
     background-color: #1e1e1e;
     border: none;

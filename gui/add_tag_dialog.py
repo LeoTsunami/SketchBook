@@ -2,7 +2,7 @@
 Dialog to add a new user tag: name and optional icon from gui/ressources/icones/tags.
 """
 from pathlib import Path
-from typing import List, Optional
+from typing import Callable, List, Optional
 
 from qtpy.QtWidgets import (
     QDialog,
@@ -88,11 +88,19 @@ class AddTagDialog(QDialog):
 
 
 class IconPickerDialog(QDialog):
-    """Dialog to pick an icon from gui/ressources/icones/tags (e.g. for changing tag icon)."""
+    """Dialog to pick an icon from gui/ressources/icones/tags (e.g. for changing tag icon).
+    Optional on_icon_changed(filename) is called when user clicks an icon for live preview.
+    """
 
-    def __init__(self, parent=None, current_icon: Optional[str] = None):
+    def __init__(
+        self,
+        parent=None,
+        current_icon: Optional[str] = None,
+        on_icon_changed: Optional[Callable[[Optional[str]], None]] = None,
+    ):
         super().__init__(parent)
         self._selected_icon: Optional[str] = current_icon
+        self._on_icon_changed = on_icon_changed
         self.setWindowTitle("Choose icon")
         layout = QVBoxLayout(self)
 
@@ -124,6 +132,12 @@ class IconPickerDialog(QDialog):
         scroll.setWidget(icon_container)
         layout.addWidget(scroll)
 
+        self._no_icon_btn = QPushButton("No icon")
+        self._no_icon_btn.setCheckable(True)
+        self._no_icon_btn.setChecked(current_icon is None)
+        self._no_icon_btn.clicked.connect(self._on_no_icon_clicked)
+        layout.addWidget(self._no_icon_btn)
+
         buttons = QDialogButtonBox(
             QDialogButtonBox.StandardButton.Ok | QDialogButtonBox.StandardButton.Cancel
         )
@@ -131,11 +145,22 @@ class IconPickerDialog(QDialog):
         buttons.rejected.connect(self.reject)
         layout.addWidget(buttons)
 
+    def _on_no_icon_clicked(self) -> None:
+        self._no_icon_btn.setChecked(True)
+        for b in self._icon_buttons:
+            b.setChecked(False)
+        self._selected_icon = None
+        if self._on_icon_changed:
+            self._on_icon_changed(None)
+
     def _make_icon_click_handler(self, clicked_btn: QPushButton):
         def handler():
+            self._no_icon_btn.setChecked(False)
             for b in self._icon_buttons:
                 b.setChecked(b is clicked_btn)
             self._selected_icon = clicked_btn.property("iconFile")
+            if self._on_icon_changed:
+                self._on_icon_changed(self._selected_icon)
 
         return handler
 

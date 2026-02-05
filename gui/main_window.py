@@ -227,6 +227,8 @@ class MainWindow(QMainWindow):
         self._active_subtags: Dict[str, Set[str]] = {}
         self._subtag_to_category: Dict[str, str] = {}
         self._user_tags_config: Dict[str, Any] = {}  # Loaded in _load_tags_into_grid
+        # Temporary icon override for live preview in "Change icon" dialog; key = tag, value = icon filename or None
+        self._icon_preview_override: Dict[str, Optional[str]] = {}
 
         # Window setup
         self.setWindowTitle("SketchBook")
@@ -984,6 +986,17 @@ class MainWindow(QMainWindow):
         if not icons_dir.exists():
             return QIcon()
 
+        # Live preview while "Change icon" dialog is open
+        overrides = getattr(self, "_icon_preview_override", {})
+        if tag in overrides:
+            preview = overrides[tag]
+            if preview is None:
+                return QIcon()
+            icon_path = icons_dir / preview
+            if icon_path.exists():
+                return QIcon(str(icon_path))
+            return QIcon()
+
         config_icons = getattr(self, "_user_tags_config", {}).get("icons", {})
         if tag in config_icons:
             icon_file = icons_dir / config_icons[tag]
@@ -1040,6 +1053,31 @@ class MainWindow(QMainWindow):
             "QPushButton { text-align: left; padding: 2px 4px; }"
         )
         return button
+
+    def _on_icon_preview(self, tag: str, icon_filename: Optional[str]) -> None:
+        """Live preview: show the chosen icon on the tag button while the icon picker dialog is open."""
+        self._icon_preview_override[tag] = icon_filename
+        self._update_tag_button_icon(tag)
+
+    def _update_tag_button_icon(self, tag: str) -> None:
+        """
+        Update the icon of the existing tag button for `tag` without rebuilding the grid.
+        Keeps category expand/collapse state unchanged.
+        """
+        category = self._subtag_to_category.get(tag)
+        if not category:
+            return
+        subtag_buttons = self._subcategory_buttons.get(category, {})
+        btn = subtag_buttons.get(tag)
+        if not btn:
+            return
+        icon = self._find_tag_icon(tag)
+        if not icon.isNull():
+            btn.setIcon(self._invert_icon(icon))
+            btn.setIconSize(QSize(28, 28))
+        else:
+            btn.setIcon(QIcon())
+            btn.setIconSize(QSize(28, 28))  # Keep size so layout does not jump
 
     def _on_tag_button_clicked(self, tag: str, category_override: Optional[str] = None) -> None:
         """
@@ -1143,8 +1181,15 @@ class MainWindow(QMainWindow):
         if action == change_icon_action:
             cfg = self._user_tags_config
             current = cfg.get("icons", {}).get(tag_text)
-            dialog = IconPickerDialog(self, current_icon=current)
-            if dialog.exec_() == QDialog.DialogCode.Accepted:
+            dialog = IconPickerDialog(
+                self,
+                current_icon=current,
+                on_icon_changed=lambda filename: self._on_icon_preview(tag_text, filename),
+            )
+            result = dialog.exec_()
+            # Clear preview override so _update_tag_button_icon uses config again
+            self._icon_preview_override.pop(tag_text, None)
+            if result == QDialog.DialogCode.Accepted:
                 icons = dict(cfg.get("icons", {}))
                 chosen = dialog.get_icon_filename()
                 if chosen:
@@ -1157,8 +1202,8 @@ class MainWindow(QMainWindow):
                     cfg.get("registered_only"),
                 )
                 self._user_tags_config = user_tags_config.load_config()
-                self._load_tags_into_grid()
-                self._sync_tag_grid_state()
+            # Restore or apply final icon from config (revert on Cancel, keep on OK)
+            self._update_tag_button_icon(tag_text)
             return
         if action == rename_action:
             new_name, ok = QInputDialog.getText(
@@ -1292,11 +1337,21 @@ class MainWindow(QMainWindow):
         # Reapply filters (will be empty, so shows all images)
         self._apply_category_filters()
 
+    def _get_children_of_tag(self, tag: str) -> List[str]:
+        """Return list of tags whose placement has parent_tag = tag (tags that belong to this sub-category)."""
+        placements = self._user_tags_config.get("placements", {})
+        return [
+            t for t, pl in placements.items()
+            if isinstance(pl, dict) and pl.get("parent_tag") == tag
+        ]
+
     def _sync_tag_grid_state(self) -> None:
         """
         Sync tag grid button states with active filters.
         Child tags (placement parent_tag) are only visible when the parent tag is selected.
-        Rebuilds each category's tag container layout with only visible tags so the grid has no holes.
+        When a selected tag is a sub-category (has children), its row is shown first, then
+        its children on the next row(s), then the rest. Rebuilds each category's tag container
+        layout with only visible tags so the grid has no holes.
         """
         max_cols = 3
         placements = self._user_tags_config.get("placements", {})
@@ -1328,7 +1383,7 @@ class MainWindow(QMainWindow):
                     self._set_button_active(tag_button, tag in label_subtags)
 
         # Rebuild each category container with only visible tags (no holes).
-        # Skip rebuild for label categories so their tags stay in the layout and display from the start.
+        # When a selected tag is a sub-category (has children), show it first then its children on the next row(s), then the rest.
         label_categories_set = {"Miscellaneous:", "Camera-Angle:"}
         for category in self._subcategory_tag_order:
             if category in label_categories_set:
@@ -1342,14 +1397,62 @@ class MainWindow(QMainWindow):
             while layout.count():
                 layout.takeAt(0)
             tag_order = self._subcategory_tag_order[category]
+            category_subtags = self._active_subtags.get(category, set())
             subtag_buttons = self._subcategory_buttons.get(category, {})
-            idx = 0
-            for tag in tag_order:
-                btn = subtag_buttons.get(tag)
-                if btn and btn.isVisible():
-                    row, col = idx // max_cols, idx % max_cols
-                    layout.addWidget(btn, row, col)
-                    idx += 1
+            # Clear child-row style from all buttons; will set only on children when expanded
+            for btn in subtag_buttons.values():
+                btn.setProperty("tagChildRow", "false")
+                btn.style().unpolish(btn)
+                btn.style().polish(btn)
+
+            expanded_parent = None
+            for t in category_subtags:
+                if self._get_children_of_tag(t):
+                    expanded_parent = t
+                    break
+            if expanded_parent is not None and expanded_parent in tag_order:
+                idx_t = tag_order.index(expanded_parent)
+                before = tag_order[:idx_t]
+                after = tag_order[idx_t + 1:]
+                children = [c for c in self._get_children_of_tag(expanded_parent) if c in tag_order]
+                rest = [x for x in after if x not in children]
+                # Segment 1: before + sub-category (stays in place)
+                # Then new row → Segment 2: children (slightly blue)
+                # Then new row → Segment 3: rest
+                idx = 0
+                for tag in before + [expanded_parent]:
+                    btn = subtag_buttons.get(tag)
+                    if btn and btn.isVisible():
+                        row, col = idx // max_cols, idx % max_cols
+                        layout.addWidget(btn, row, col)
+                        idx += 1
+                # Force next row before children
+                idx = ((idx + max_cols - 1) // max_cols) * max_cols
+                for tag in children:
+                    btn = subtag_buttons.get(tag)
+                    if btn and btn.isVisible():
+                        row, col = idx // max_cols, idx % max_cols
+                        layout.addWidget(btn, row, col)
+                        btn.setProperty("tagChildRow", "true")
+                        btn.style().unpolish(btn)
+                        btn.style().polish(btn)
+                        idx += 1
+                # Force next row before rest
+                idx = ((idx + max_cols - 1) // max_cols) * max_cols
+                for tag in rest:
+                    btn = subtag_buttons.get(tag)
+                    if btn and btn.isVisible():
+                        row, col = idx // max_cols, idx % max_cols
+                        layout.addWidget(btn, row, col)
+                        idx += 1
+            else:
+                idx = 0
+                for tag in tag_order:
+                    btn = subtag_buttons.get(tag)
+                    if btn and btn.isVisible():
+                        row, col = idx // max_cols, idx % max_cols
+                        layout.addWidget(btn, row, col)
+                        idx += 1
 
     @staticmethod
     def _normalize_tag_for_match(tag: str) -> str:
