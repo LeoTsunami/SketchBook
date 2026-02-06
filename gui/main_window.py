@@ -64,6 +64,7 @@ from qtpy.QtGui import (
 )
 from core.settings import settings
 from core.image_manager import ImageManager
+from core.image_db import ImageMetadata
 from core import user_tags_config
 from gui.image_import_worker import ImageImportWorker
 from gui.image_grid import ImageGrid, ImageThumbnail
@@ -230,6 +231,9 @@ class MainWindow(QMainWindow):
         self._user_tags_config: Dict[str, Any] = {}  # Loaded in _load_tags_into_grid
         # Temporary icon override for live preview in "Change icon" dialog; key = tag, value = icon filename or None
         self._icon_preview_override: Dict[str, Optional[str]] = {}
+        self._shuffle_counter: int = 0  # Counter for shuffle iterations (increments on each shuffle)
+        self._course_random_images_list: List[ImageMetadata] = []  # Global list of ALL images in random order (only changed by shuffle button)
+        self._filtered_course_random_list: List[ImageMetadata] = []  # Filtered list from grid (same as what's displayed)
 
         # Window setup
         self.setWindowTitle("SketchBook")
@@ -491,8 +495,32 @@ class MainWindow(QMainWindow):
         self.selection_info_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #7eb8da;")
         grid_controls.addWidget(self.selection_info_label)
         
-        # Add sort combo box
+        # Add sort combo box with shuffle button
         grid_controls.addStretch()
+        
+        # Shuffle button (only visible for "Session Course Random")
+        self.shuffle_button = QPushButton("Shuffle")
+        self.shuffle_button.setFixedWidth(70)
+        self.shuffle_button.setStyleSheet("""
+            QPushButton {
+                background-color: #3c3f41;
+                color: #ffffff;
+                border: 1px solid #4d4d4d;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #4b6eaf;
+            }
+            QPushButton:pressed {
+                background-color: #3d5a8c;
+            }
+        """)
+        self.shuffle_button.clicked.connect(self._on_shuffle_clicked)
+        self.shuffle_button.hide()  # Hidden by default
+        grid_controls.addWidget(self.shuffle_button)
+        
         sort_label = QLabel("Sort:")
         sort_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
         self.sort_combo = QComboBox()
@@ -502,7 +530,8 @@ class MainWindow(QMainWindow):
             "Filename A→Z",
             "Filename Z→A",
             "Lightest First",
-            "Heaviest First"
+            "Heaviest First",
+            "Session Course Random"
         ])
         self.sort_combo.setCurrentIndex(0)  # Default: Most Recent First
         self.sort_combo.setFixedWidth(150)
@@ -631,15 +660,29 @@ class MainWindow(QMainWindow):
 
     def _apply_category_filters(self) -> None:
         """Apply category/subtag filters to the image grid."""
-        filtered_images = self._filter_images_by_category()
-        # Also apply AND/OR filters if they exist
-        filtered_images = self._apply_and_or_filters(filtered_images)
-        
         # Get current sort order
         sort_by = self._get_current_sort_order()
         
-        # Apply sorting
-        filtered_images = self.image_manager.db._sort_images(filtered_images, sort_by)
+        if sort_by == "course_random":
+            # Use the global course_random list and filter it (keeping order)
+            if not self._course_random_images_list:
+                self._initialize_course_random_list()
+            
+            # Start with the global random list
+            images_to_display = self._course_random_images_list
+            
+            # Apply category filters (keep order, just filter which images are shown)
+            images_to_display = self._filter_images_by_category_from_list(images_to_display)
+            # Apply AND/OR filters
+            images_to_display = self._apply_and_or_filters(images_to_display)
+            
+            shuffle_iteration = self._shuffle_counter
+        else:
+            # Normal filtering and sorting for other sort modes
+            filtered_images = self._filter_images_by_category()
+            filtered_images = self._apply_and_or_filters(filtered_images)
+            shuffle_iteration = 0
+            images_to_display = self.image_manager.db._sort_images(filtered_images, sort_by)
         
         filter_key = (
             frozenset(self._active_categories),
@@ -647,11 +690,61 @@ class MainWindow(QMainWindow):
                 (category, frozenset(tags))
                 for category, tags in self._active_subtags.items()
             ),
-            sort_by
+            sort_by,
+            shuffle_iteration  # Include shuffle iteration in filter key
         )
-        self.image_grid.load_images_from_list(filtered_images, filter_key)
-        self._update_session_images_count(filtered_images)
+        self.image_grid.load_images_from_list(images_to_display, filter_key)
+        self._update_session_images_count(images_to_display)
         self._sync_tag_grid_state()
+        
+        # Store filtered list for session (for course_random mode only)
+        if sort_by == "course_random":
+            self._filtered_course_random_list = images_to_display.copy()
+            # Debug: print what's stored for grid
+            first_5_ids = [img.id for img in images_to_display[:5]]
+            print(f"[DEBUG] GRID DISPLAY - {len(images_to_display)} images | First 5 IDs: {first_5_ids}")
+    
+    def _filter_images_by_category_from_list(self, images: List[ImageMetadata]) -> List[ImageMetadata]:
+        """
+        Filter images from a given list by category/subtag filters (keeps original order).
+        
+        Args:
+            images: List of images to filter (order will be preserved).
+            
+        Returns:
+            Filtered list of images in the same order.
+        """
+        if not self._active_categories and not self._active_subtags:
+            return images
+        
+        filtered = []
+        for metadata in images:
+            image_tags = metadata.tags
+            
+            # Check category match (OR logic between categories)
+            category_match = False
+            if not self._active_categories:
+                category_match = True  # No category selected = show all
+            else:
+                for category in self._active_categories:
+                    # Check if image has this category tag
+                    if category in image_tags:
+                        # Check subtags (AND logic within category)
+                        subtags = self._active_subtags.get(category, set())
+                        if not subtags:
+                            # No subtags selected for this category = match
+                            category_match = True
+                            break
+                        else:
+                            # All selected subtags must be present (AND)
+                            if subtags.issubset(image_tags):
+                                category_match = True
+                                break
+            
+            if category_match:
+                filtered.append(metadata)
+        
+        return filtered
     
     def _get_current_sort_order(self) -> str:
         """
@@ -667,13 +760,59 @@ class MainWindow(QMainWindow):
             3: "filename_desc",     # Filename Z→A
             4: "file_size_asc",     # Lightest First
             5: "file_size_desc",    # Heaviest First
+            6: "course_random",     # Session Course Random
         }
         return sort_map.get(self.sort_combo.currentIndex(), "import_date_desc")
     
     def _on_sort_changed(self, index: int):
         """Handle sort order change."""
+        # Show/hide shuffle button based on selected sort
+        is_random_sort = index == 6  # "Session Course Random" is index 6
+        self.shuffle_button.setVisible(is_random_sort)
+        
+        # Reset shuffle counter when switching away from random sort
+        if not is_random_sort:
+            self._shuffle_counter = 0
+            self._course_random_images_list = []  # Clear stored course random list
+            self._filtered_course_random_list = []  # Clear filtered list
+        
+        # If switching to random sort, initialize the global random list if empty
+        if is_random_sort and not self._course_random_images_list:
+            self._initialize_course_random_list()
+        
         # Reapply filters with new sort order
         self._apply_category_filters()
+    
+    def _on_shuffle_clicked(self):
+        """Handle shuffle button click - regenerate random order for ALL images."""
+        # Update global shuffle timestamp for more random variation
+        import time
+        from core.image_db import _shuffle_timestamp
+        import core.image_db as image_db_module
+        image_db_module._shuffle_timestamp = int(time.time() * 1000000)  # Use microseconds
+        
+        # Increment shuffle counter to generate new order
+        self._shuffle_counter += 1
+        # Regenerate the global random list with new seed
+        self._initialize_course_random_list()
+        # Reapply filters (order stays the same, just filter which images are shown)
+        self._apply_category_filters()
+    
+    def _initialize_course_random_list(self):
+        """Initialize the global course_random list with ALL images in random order."""
+        # Get ALL images from database
+        all_images = self.image_manager.db.list_images()
+        
+        # Apply random shuffle with current shuffle counter
+        self._course_random_images_list = self.image_manager.db._sort_images(
+            all_images, 
+            "course_random", 
+            shuffle_iteration=self._shuffle_counter
+        )
+        
+        # Debug: print the global list
+        print(f"[DEBUG] INIT/SHUFFLE: Generated random list ({len(self._course_random_images_list)} images)")
+        print(f"[DEBUG] First 5 IDs: {[img.id for img in self._course_random_images_list[:5]]}")
     
     def _apply_and_or_filters(self, images: List) -> List:
         """
@@ -759,7 +898,37 @@ class MainWindow(QMainWindow):
     
     def _on_session_settings_clicked(self):
         """Handle Session Settings button click: open dialog then start session window."""
-        filtered_images = self._filter_images_by_category()
+        # Get current sort order
+        sort_by = self._get_current_sort_order()
+        
+        if sort_by == "course_random":
+            # Use the EXACT same filtered list as the grid (stored in _filtered_course_random_list)
+            if not self._filtered_course_random_list:
+                # If not set, get it from grid's current display
+                filtered_images = list(self.image_grid.all_images) if hasattr(self.image_grid, 'all_images') else []
+                if not filtered_images:
+                    # Fallback: regenerate filters
+                    if not self._course_random_images_list:
+                        self._initialize_course_random_list()
+                    filtered_images = self._course_random_images_list
+                    filtered_images = self._filter_images_by_category_from_list(filtered_images)
+                    filtered_images = self._apply_and_or_filters(filtered_images)
+            else:
+                # Use the stored filtered list (same as grid)
+                filtered_images = self._filtered_course_random_list
+            
+            # Debug: print first 5 elements sent to session
+            first_5_ids = [img.id for img in filtered_images[:5]]
+            print(f"[DEBUG] SESSION BEGIN - {len(filtered_images)} images | First 5 IDs: {first_5_ids}")
+            
+            shuffle_iteration = self._shuffle_counter
+        else:
+            # For other sort modes, get current filtered images
+            filtered_images = self._filter_images_by_category()
+            filtered_images = self._apply_and_or_filters(filtered_images)
+            filtered_images = self.image_manager.db._sort_images(filtered_images, sort_by)
+            shuffle_iteration = 0
+        
         image_count = len(filtered_images)
 
         dialog = SessionSettingsDialog(self.image_manager, image_count, self)
@@ -769,7 +938,12 @@ class MainWindow(QMainWindow):
         settings_dict = dialog.get_session_settings()
         session_type = settings_dict["session_type"]
         window_mode = settings_dict["window_mode"]
+        # Use image IDs in the stored order (for course_random) or current order (for others)
         image_ids = [m.id for m in filtered_images]
+        
+        # Debug: print IDs being sent
+        print(f"[DEBUG] _on_session_settings_clicked: Sending {len(image_ids)} IDs to session")
+        print(f"[DEBUG] _on_session_settings_clicked: First 5 IDs: {image_ids[:5]}")
 
         course_duration_minutes: Optional[int] = None
         interval_seconds: Optional[int] = None
@@ -796,13 +970,17 @@ class MainWindow(QMainWindow):
             self._slideshow_window.session_ended.connect(self._on_session_ended)
 
         course_config_path = Path(__file__).resolve().parent / "ressources" / "session_configs.json"
+        # For course_random mode, use exact order (no reshuffle in session)
+        use_exact_order = (sort_by == "course_random")
         started = self._slideshow_window.start_session(
             image_ids=image_ids,
             session_type=session_type,
+            shuffle_iteration=shuffle_iteration,
             course_duration_minutes=course_duration_minutes,
             interval_seconds=interval_seconds,
             window_mode=window_mode,
             course_config_path=course_config_path,
+            use_exact_order=use_exact_order,
         )
         if started:
             self.hide()

@@ -5,12 +5,17 @@ import json
 import re
 import threading
 import time
+import random
+import hashlib
 from datetime import datetime
 from pathlib import Path
 from typing import Dict, List, Optional, Set
 from core.settings import settings
 from core.user_data import user_data
 from dataclasses import dataclass, asdict, field
+
+# Global shuffle timestamp (updated on each shuffle to ensure different random orders)
+_shuffle_timestamp = 0
 
 # Windows: file in use / permission denied when renaming
 _SAVE_RETRY_COUNT = 5
@@ -273,13 +278,46 @@ class ImageDatabase:
         images = list(self._images.values())
         return self._sort_images(images, sort_by)
     
-    def _sort_images(self, images: List[ImageMetadata], sort_by: str) -> List[ImageMetadata]:
+    def _shuffle_images_for_session(self, images: List[ImageMetadata], shuffle_iteration: int = 0) -> List[ImageMetadata]:
+        """
+        Shuffle images using seed based on image IDs, shuffle iteration, and current time.
+        
+        This ensures different random orders on each shuffle while keeping them deterministic
+        for the same shuffle_iteration within a short time window.
+        Uses the same algorithm as Course sessions.
+        
+        Args:
+            images: List of ImageMetadata to shuffle.
+            shuffle_iteration: Iteration counter (0 = default, increments on each shuffle).
+                              Each increment generates a new random order.
+            
+        Returns:
+            Shuffled list (new order on each shuffle).
+        """
+        if not images:
+            return images
+        
+        # Create seed from sorted image IDs, shuffle iteration, and global shuffle timestamp
+        # Reason: Include timestamp to ensure different orders on each shuffle
+        # The shuffle_iteration ensures that clicking shuffle multiple times gives different orders
+        global _shuffle_timestamp
+        ids_sorted = sorted([m.id for m in images])
+        seed_string = "|".join(ids_sorted) + f"|iter_{shuffle_iteration}|ts_{_shuffle_timestamp}"
+        seed = int(hashlib.md5(seed_string.encode()).hexdigest(), 16) % (2**31)
+        
+        # Shuffle using the seed
+        shuffled = list(images)
+        random.Random(seed).shuffle(shuffled)
+        return shuffled
+    
+    def _sort_images(self, images: List[ImageMetadata], sort_by: str, shuffle_iteration: int = 0) -> List[ImageMetadata]:
         """
         Sort images according to the specified criteria.
         
         Args:
             images: List of images to sort
             sort_by: Sort order string
+            shuffle_iteration: Iteration counter for course_random sort (allows regenerating order)
             
         Returns:
             Sorted list of images
@@ -320,6 +358,10 @@ class ImageDatabase:
             return sorted(images, key=lambda m: m.file_size)
         elif sort_by == "file_size_desc":
             return sorted(images, key=lambda m: m.file_size, reverse=True)
+        elif sort_by == "course_random":
+            # Random shuffle using the same algorithm as Course sessions
+            # Reason: Allows users to preview the session order before starting
+            return self._shuffle_images_for_session(images, shuffle_iteration=shuffle_iteration)
         else:
             # Default fallback: most recent first
             return sorted(

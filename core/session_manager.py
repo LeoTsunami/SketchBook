@@ -7,6 +7,7 @@ from typing import List, Optional, Dict, Any, Tuple
 from dataclasses import dataclass
 import json
 import random
+import hashlib
 from datetime import datetime
 from core.settings import settings
 from core.user_data import user_data
@@ -28,19 +29,56 @@ def load_course_config(config_path: Path) -> Dict[str, Any]:
         return json.load(f)
 
 
+def _shuffle_image_ids_for_session(image_ids: List[str], shuffle_iteration: int = 0) -> List[str]:
+    """
+    Shuffle image IDs using seed based on sorted IDs, shuffle iteration, and current time.
+    
+    This ensures different random orders on each shuffle while keeping them deterministic
+    for the same shuffle_iteration within a short time window.
+    Matches the order shown in the grid when "Session Course Random" sort is selected.
+    
+    Args:
+        image_ids: List of image IDs to shuffle.
+        shuffle_iteration: Iteration counter (0 = default, increments on each shuffle).
+                          Each increment generates a new random order.
+        
+    Returns:
+        Shuffled list (new order on each shuffle).
+    """
+    if not image_ids:
+        return image_ids
+    
+    # Create seed from sorted image IDs, shuffle iteration, and global shuffle timestamp
+    # Reason: Include timestamp to ensure different orders on each shuffle
+    # The shuffle_iteration ensures that clicking shuffle multiple times gives different orders
+    from core.image_db import _shuffle_timestamp
+    ids_sorted = sorted(image_ids)
+    seed_string = "|".join(ids_sorted) + f"|iter_{shuffle_iteration}|ts_{_shuffle_timestamp}"
+    seed = int(hashlib.md5(seed_string.encode()).hexdigest(), 16) % (2**31)
+    
+    # Shuffle using the seed
+    shuffled = list(image_ids)
+    random.Random(seed).shuffle(shuffled)
+    return shuffled
+
+
 def build_course_run(
     image_ids: List[str],
     course_presets: List[Dict[str, Any]],
     duration_minutes: int,
+    shuffle_iteration: int = 0,
+    use_exact_order: bool = False,
 ) -> List[Tuple[str, int]]:
     """
     Build a session run: list of (image_id, duration_seconds) from a course preset.
-    Images are shuffled; if fewer than needed, they are cycled.
+    Images are shuffled using deterministic seed (same as grid sort); if fewer than needed, they are cycled.
 
     Args:
-        image_ids: List of image IDs (will be shuffled).
+        image_ids: List of image IDs (will be shuffled unless use_exact_order=True).
         course_presets: List from load_course_config()["course_presets"].
         duration_minutes: Desired course duration (e.g. 10, 30).
+        shuffle_iteration: Iteration counter for shuffle (matches grid shuffle counter).
+        use_exact_order: If True, use image_ids in exact order (no shuffle). For course_random mode.
 
     Returns:
         List of (image_id, duration_seconds) in phase order.
@@ -52,8 +90,15 @@ def build_course_run(
     if not preset or not image_ids:
         return []
 
-    ids = list(image_ids)
-    random.shuffle(ids)
+    # Use exact order if requested (for course_random mode), otherwise shuffle
+    if use_exact_order:
+        ids = list(image_ids)  # Use exact order from grid
+        print(f"[DEBUG] build_course_run: Using EXACT order (no shuffle) - First 5 IDs: {ids[:5]}")
+    else:
+        # Use deterministic shuffle to match grid sort order
+        ids = _shuffle_image_ids_for_session(image_ids, shuffle_iteration=shuffle_iteration)
+        print(f"[DEBUG] build_course_run: Shuffled - First 5 IDs: {ids[:5]}")
+    
     run: List[Tuple[str, int]] = []
     n = 0
     for phase in preset["phases"]:
@@ -149,6 +194,8 @@ class SessionManager:
         interval_seconds: Optional[int] = None,
         window_mode: str = "FullScreen",
         course_config: Optional[Dict[str, Any]] = None,
+        shuffle_iteration: int = 0,
+        use_exact_order: bool = False,
     ) -> bool:
         """
         Start a session: build run from image_ids and config, set current index to 0.
@@ -160,6 +207,7 @@ class SessionManager:
             interval_seconds: For Constant: seconds per image.
             window_mode: "FullScreen" or "Window always on top".
             course_config: Result of load_course_config(); required for Course.
+            shuffle_iteration: Iteration counter for shuffle (matches grid shuffle counter).
 
         Returns:
             True if run was built and has at least one image, False otherwise.
@@ -173,7 +221,17 @@ class SessionManager:
                 (p for p in presets if p["duration_minutes"] == course_duration_minutes),
                 None,
             )
-            self.session_run = build_course_run(image_ids, presets, course_duration_minutes)
+            # Debug: print what we receive
+            print(f"[DEBUG] start_session (Course): Received {len(image_ids)} image IDs")
+            print(f"[DEBUG] start_session (Course): First 5 IDs: {image_ids[:5]}")
+            
+            self.session_run = build_course_run(
+                image_ids, 
+                presets, 
+                course_duration_minutes, 
+                shuffle_iteration=shuffle_iteration,
+                use_exact_order=use_exact_order
+            )
             self._session_display_name = f"Course {course_duration_minutes} min"
             self._course_phases = []
             if preset and preset.get("phases"):
@@ -186,8 +244,15 @@ class SessionManager:
                         self._course_phases.append((name, idx, count, sec))
                     idx += count
         elif session_type == "Constant interval" and interval_seconds is not None and image_ids:
-            ids = list(image_ids)
-            random.shuffle(ids)
+            # Use exact order if requested (for course_random mode), otherwise shuffle
+            if use_exact_order:
+                ids = list(image_ids)  # Use exact order from grid
+                print(f"[DEBUG] start_session (Constant): Using EXACT order (no shuffle) - First 5 IDs: {ids[:5]}")
+            else:
+                # Use deterministic shuffle to match grid sort order
+                ids = _shuffle_image_ids_for_session(image_ids, shuffle_iteration=shuffle_iteration)
+                print(f"[DEBUG] start_session (Constant): Shuffled - First 5 IDs: {ids[:5]}")
+            
             self.session_run = [(iid, interval_seconds) for iid in ids]
             self._session_display_name = f"Constant {interval_seconds}s"
             self._course_phases = []

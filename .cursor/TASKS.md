@@ -23,6 +23,7 @@ Update this file via prompt:
 - [x] Tag library: edit user tags – rename (right-click), drag-drop onto category/tag, Add tag with icon (2026-02-03)
 - [x] Persist grid column count in user settings so same value on reopen (2026-02-05)
 - [x] Code cleanup: remove unused code, factorize duplicates, improve maintainability (2026-02-06)
+- [x] Add "Session Course Random" sort option to preview session order before starting (2026-02-06)
 
 ### Phase 1: Basic Structure ✅ (Completed: 2024-03-06)
 - [x] Set up base Python project with multi-file structure

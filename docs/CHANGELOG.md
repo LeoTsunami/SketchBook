@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-02-06 (add Session Course Random sort option)
+### ✅ Tasks:
+- Add "Session Course Random" sort option to preview session order
+
+- **New sort option**: Added "Session Course Random" to the grid sort combo box. This option uses the same deterministic random algorithm as Course sessions, allowing users to preview the exact order of images that will be used in a session before starting it.
+- **Deterministic shuffle**: Implemented `_shuffle_images_for_session()` in `core/image_db.py` and `_shuffle_image_ids_for_session()` in `core/session_manager.py` that use a deterministic seed based on sorted image IDs. This ensures the same set of images always produces the same random order, matching between grid preview and actual session.
+- **Session consistency**: Updated `build_course_run()` and "Constant interval" session initialization to use the same deterministic shuffle, ensuring the grid preview order matches the session order exactly.
+ → Result: Users can now preview the session order in the grid before starting a session, making it easier to prepare for drawing sessions.
+---
+
 ## 2026-02-06 (code cleanup: remove unused code and factorize duplicates)
 ### ✅ Tasks:
 - Code cleanup: remove unused code, factorize duplicates, improve maintainability

@@ -1,5 +1,15 @@
 # Journal des modifications
 
+## 2026-02-06 (ajout de l'option de tri Session Course Random)
+### ✅ Tâches :
+- Ajout de l'option de tri "Session Course Random" pour prévisualiser l'ordre de la session
+
+- **Nouvelle option de tri** : Ajout de "Session Course Random" dans le combo box de tri de la grille. Cette option utilise le même algorithme de randomisation déterministe que les sessions Course, permettant aux utilisateurs de prévisualiser l'ordre exact des images qui seront utilisées dans une session avant de la démarrer.
+- **Shuffle déterministe** : Implémentation de `_shuffle_images_for_session()` dans `core/image_db.py` et `_shuffle_image_ids_for_session()` dans `core/session_manager.py` qui utilisent une seed déterministe basée sur les IDs d'images triés. Cela garantit que le même ensemble d'images produit toujours le même ordre randomisé, correspondant entre la prévisualisation de la grille et la session réelle.
+- **Cohérence des sessions** : Mise à jour de `build_course_run()` et de l'initialisation des sessions "Constant interval" pour utiliser le même shuffle déterministe, garantissant que l'ordre de prévisualisation dans la grille correspond exactement à l'ordre de la session.
+ → Résultat : Les utilisateurs peuvent maintenant prévisualiser l'ordre de la session dans la grille avant de démarrer une session, facilitant la préparation aux sessions de dessin.
+---
+
 ## 2026-02-06 (nettoyage du code : suppression du code inutilisé et factorisation des doublons)
 ### ✅ Tâches :
 - Nettoyage du code : suppression du code inutilisé, factorisation des doublons, amélioration de la maintenabilité

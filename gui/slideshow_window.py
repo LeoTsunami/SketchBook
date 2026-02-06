@@ -518,6 +518,8 @@ class SlideshowWindow(QMainWindow):
         interval_seconds: Optional[int] = None,
         window_mode: str = "FullScreen",
         course_config_path: Optional[Path] = None,
+        shuffle_iteration: int = 0,
+        use_exact_order: bool = False,
     ) -> bool:
         """
         Start a drawing session from filtered image IDs and settings.
@@ -529,6 +531,7 @@ class SlideshowWindow(QMainWindow):
             interval_seconds: For Constant: seconds per image.
             window_mode: "FullScreen" or "Window always on top".
             course_config_path: Path to session_configs.json for Course.
+            shuffle_iteration: Iteration counter for shuffle (matches grid shuffle counter).
 
         Returns:
             True if session started (run has at least one image), False otherwise.
@@ -544,6 +547,8 @@ class SlideshowWindow(QMainWindow):
             interval_seconds=interval_seconds,
             window_mode=window_mode,
             course_config=course_config,
+            shuffle_iteration=shuffle_iteration,
+            use_exact_order=use_exact_order,
         )
         if not ok:
             return False
