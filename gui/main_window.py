@@ -75,6 +75,7 @@ from gui.image_viewer_window import ImageViewerWindow
 from gui.slideshow_window import SlideshowWindow
 from core.session_manager import SessionManager
 from qtpy.QtWidgets import QApplication
+from gui.icon_utils import find_tag_icon, invert_icon
 import os
 import json
 
@@ -972,63 +973,6 @@ class MainWindow(QMainWindow):
             self.tags_grid_layout.setRowStretch(max_row + 1, 1)
         self._sync_tag_grid_state()
 
-    def _find_tag_icon(self, tag: str) -> QIcon:
-        """
-        Resolve a tag icon: user config override, then tag name / fallbacks.
-
-        Args:
-            tag: Tag name.
-
-        Returns:
-            QIcon: Icon for the tag or an empty icon if not found.
-        """
-        icons_dir = Path(__file__).parent / "ressources" / "icones" / "tags"
-        if not icons_dir.exists():
-            return QIcon()
-
-        # Live preview while "Change icon" dialog is open
-        overrides = getattr(self, "_icon_preview_override", {})
-        if tag in overrides:
-            preview = overrides[tag]
-            if preview is None:
-                return QIcon()
-            icon_path = icons_dir / preview
-            if icon_path.exists():
-                return QIcon(str(icon_path))
-            return QIcon()
-
-        config_icons = getattr(self, "_user_tags_config", {}).get("icons", {})
-        if tag in config_icons:
-            icon_file = icons_dir / config_icons[tag]
-            if icon_file.exists():
-                return QIcon(str(icon_file))
-
-        tag_lower = tag.lower()
-        file_map = {path.stem.lower(): path for path in icons_dir.glob("*.png")}
-        if tag_lower in file_map:
-            return QIcon(str(file_map[tag_lower]))
-        fallback_map = {"hands": "hand", "feet": "foot", "objects": "object"}
-        fallback = fallback_map.get(tag_lower)
-        if fallback and fallback in file_map:
-            return QIcon(str(file_map[fallback]))
-        return QIcon()
-
-    def _invert_icon(self, icon: QIcon) -> QIcon:
-        """
-        Invert icon colors for better visibility.
-
-        Args:
-            icon: Original icon.
-
-        Returns:
-            QIcon: Inverted icon.
-        """
-        if icon.isNull():
-            return icon
-        pixmap = icon.pixmap(QSize(28, 28))
-        image = pixmap.toImage()
-        image.invertPixels(QImage.InvertRgb)
-        return QIcon(QPixmap.fromImage(image))
 
     def _build_tag_button(self, tag: str, is_user_tag: bool = False) -> QPushButton:
         """
@@ -1044,9 +988,11 @@ class MainWindow(QMainWindow):
         button = DraggableTagButton(tag)
         button.setObjectName("TagGridButton")
         button.setProperty("userTag", is_user_tag)
-        icon = self._find_tag_icon(tag)
+        overrides = getattr(self, "_icon_preview_override", {})
+        user_config = getattr(self, "_user_tags_config", {})
+        icon = find_tag_icon(tag, user_config=user_config, icon_preview_override=overrides)
         if not icon.isNull():
-            button.setIcon(self._invert_icon(icon))
+            button.setIcon(invert_icon(icon, 28))
             button.setIconSize(QSize(28, 28))
         button.setCheckable(False)
         button.setStyleSheet(
@@ -1071,9 +1017,11 @@ class MainWindow(QMainWindow):
         btn = subtag_buttons.get(tag)
         if not btn:
             return
-        icon = self._find_tag_icon(tag)
+        overrides = getattr(self, "_icon_preview_override", {})
+        user_config = getattr(self, "_user_tags_config", {})
+        icon = find_tag_icon(tag, user_config=user_config, icon_preview_override=overrides)
         if not icon.isNull():
-            btn.setIcon(self._invert_icon(icon))
+            btn.setIcon(invert_icon(icon, 28))
             btn.setIconSize(QSize(28, 28))
         else:
             btn.setIcon(QIcon())

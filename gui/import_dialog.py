@@ -20,6 +20,7 @@ from qtpy.QtCore import Qt, QSize
 from qtpy.QtGui import QPixmap, QIcon, QImage
 from PIL import Image
 from core.image_manager import ImageManager
+from gui.icon_utils import find_tag_icon, invert_icon
 
 
 class ImportDialog(QDialog):
@@ -375,43 +376,13 @@ class ImportDialog(QDialog):
         extract_tags(default_tags_data)
         return tag_set
     
-    def _find_tag_icon(self, tag: str) -> QIcon:
-        """Find tag icon."""
-        icons_dir = Path(__file__).parent / "ressources" / "icones" / "tags"
-        if not icons_dir.exists():
-            return QIcon()
-        
-        tag_lower = tag.lower()
-        file_map = {path.stem.lower(): path for path in icons_dir.glob("*.png")}
-        if tag_lower in file_map:
-            return QIcon(str(file_map[tag_lower]))
-        
-        fallback_map = {
-            "hands": "hand",
-            "feet": "foot",
-            "objects": "object",
-        }
-        fallback = fallback_map.get(tag_lower)
-        if fallback and fallback in file_map:
-            return QIcon(str(file_map[fallback]))
-        
-        return QIcon()
-    
-    def _invert_icon(self, icon: QIcon) -> QIcon:
-        """Invert icon colors."""
-        if icon.isNull():
-            return icon
-        pixmap = icon.pixmap(QSize(28, 28))
-        image = pixmap.toImage()
-        image.invertPixels(QImage.InvertRgb)
-        return QIcon(QPixmap.fromImage(image))
     
     def _build_tag_button(self, tag: str) -> QPushButton:
         """Build a tag button with icon."""
         button = QPushButton(tag)
-        icon = self._find_tag_icon(tag)
+        icon = find_tag_icon(tag)
         if not icon.isNull():
-            button.setIcon(self._invert_icon(icon))
+            button.setIcon(invert_icon(icon, 28))
             button.setIconSize(QSize(28, 28))
         button.setStyleSheet("QPushButton { text-align: left; padding: 2px 4px; }")
         return button

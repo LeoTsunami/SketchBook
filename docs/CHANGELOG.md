@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-02-06 (code cleanup: remove unused code and factorize duplicates)
+### ✅ Tasks:
+- Code cleanup: remove unused code, factorize duplicates, improve maintainability
+
+- **Removed obsolete code**: Deleted `gui/session_dialog.py` (replaced by `SessionSettingsDialog`). Removed unused `get_current_session()` method and `current_session` attribute from `SessionManager`. Removed duplicate `load_stylesheet()` function from `gui/image_grid.py`.
+- **Factorized icon utilities**: Created `gui/icon_utils.py` with centralized `find_tag_icon()` and `invert_icon()` functions. Replaced 5 duplicate `_invert_icon()` implementations and 4 duplicate `_find_tag_icon()` implementations across the codebase. All icon handling now goes through a single, well-documented module.
+- **Cleaned up SessionManager**: Removed unused `get_current_session()` method that created dynamic classes. Added TODO comments for future persistence implementation of presets and session history. Kept paths and data structures for future installer integration.
+- **Migrated deprecated search**: Updated `ImageManager.search_images()` to internally use `search_images_advanced()` for consistency. Updated `gui/image_grid.py` to use `search_images_advanced()` directly.
+- **Improved debug functions**: Enhanced documentation for `_dbg()` and `_dbg_space()` functions in `slideshow_window.py` with clear flag-based control.
+- **Documented installer API**: Enhanced documentation for `set_user_data_directory()` and `get_user_data_directory()` in `core/user_data.py` as public API for installers to configure user data paths.
+ → Result: Codebase is cleaner, more maintainable, with reduced duplication. All functionality preserved. Ready for installer deployment with configurable user data paths.
+---
+
 ## 2026-02-05 (persist grid column count)
 ### ✅ Tasks:
 - Persist grid column count in user settings

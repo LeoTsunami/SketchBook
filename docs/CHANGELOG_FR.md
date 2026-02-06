@@ -1,5 +1,18 @@
 # Journal des modifications
 
+## 2026-02-06 (nettoyage du code : suppression du code inutilisé et factorisation des doublons)
+### ✅ Tâches :
+- Nettoyage du code : suppression du code inutilisé, factorisation des doublons, amélioration de la maintenabilité
+
+- **Code obsolète supprimé** : Suppression de `gui/session_dialog.py` (remplacé par `SessionSettingsDialog`). Suppression de la méthode `get_current_session()` et de l'attribut `current_session` non utilisés dans `SessionManager`. Suppression de la fonction `load_stylesheet()` dupliquée dans `gui/image_grid.py`.
+- **Factorisation des utilitaires d'icônes** : Création de `gui/icon_utils.py` avec les fonctions centralisées `find_tag_icon()` et `invert_icon()`. Remplacement de 5 implémentations dupliquées de `_invert_icon()` et 4 implémentations dupliquées de `_find_tag_icon()` dans tout le codebase. Toute la gestion des icônes passe désormais par un module unique et bien documenté.
+- **Nettoyage de SessionManager** : Suppression de la méthode `get_current_session()` non utilisée qui créait des classes dynamiques. Ajout de commentaires TODO pour la future implémentation de la persistance des presets et de l'historique des sessions. Conservation des chemins et structures de données pour l'intégration future de l'installer.
+- **Migration de la recherche dépréciée** : Mise à jour de `ImageManager.search_images()` pour utiliser en interne `search_images_advanced()` pour la cohérence. Mise à jour de `gui/image_grid.py` pour utiliser directement `search_images_advanced()`.
+- **Amélioration des fonctions de debug** : Documentation améliorée pour les fonctions `_dbg()` et `_dbg_space()` dans `slideshow_window.py` avec un contrôle clair basé sur des flags.
+- **Documentation de l'API installer** : Documentation améliorée pour `set_user_data_directory()` et `get_user_data_directory()` dans `core/user_data.py` comme API publique pour les installers afin de configurer les chemins des données utilisateur.
+ → Résultat : Le codebase est plus propre, plus maintenable, avec une duplication réduite. Toutes les fonctionnalités sont préservées. Prêt pour le déploiement avec installer avec chemins de données utilisateur configurables.
+---
+
 ## 2026-02-05 (persistance du nombre de colonnes de la grille)
 ### ✅ Tâches :
 - Sauvegarder le nombre de colonnes de la grille dans les paramètres utilisateur

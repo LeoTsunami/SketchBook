@@ -35,10 +35,6 @@ from gui.tag_hover_popover import TagHoverPopover
 from qtpy.QtWidgets import QCompleter
 import json
 
-def load_stylesheet(path: str) -> str:
-    with open(path, "r", encoding="utf-8") as f:
-        return f.read()
-
 class ImageGrid(QScrollArea):
     """Scrollable grid of image thumbnails."""
     
@@ -652,7 +648,13 @@ class ImageGrid(QScrollArea):
         self.current_filter = filter_key
         self.sort_by = sort_by
         
-        self.all_images = self.image_manager.db.search_images(filter_tags, sort_by)
+        # Use advanced search for consistency (convert list to set for AND logic)
+        if filter_tags:
+            self.all_images = self.image_manager.db.search_images_advanced(
+                and_tags=set(filter_tags), or_tags=None, sort_by=sort_by
+            )
+        else:
+            self.all_images = self.image_manager.db.list_images(sort_by)
         self._rebuild_extract_indices()
         if not self._is_virtualized():
             self._load_next_batch()

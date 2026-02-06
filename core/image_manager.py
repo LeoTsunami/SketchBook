@@ -370,10 +370,11 @@ class ImageManager:
     
     def search_images(self, tags: Optional[List[str]] = None, sort_by: str = "import_date_desc") -> List[ImageMetadata]:
         """
-        Search images by tags.
+        Search images by tags (deprecated - use search_images_advanced instead).
         
         .. deprecated:: 0.1.0
             Use :meth:`search_images_advanced` instead for more flexible filtering.
+            This method is kept for backward compatibility but will be removed in a future version.
         
         Args:
             tags: List of tags to search for (if None, returns all images)
@@ -382,7 +383,10 @@ class ImageManager:
         Returns:
             List of matching image metadata, sorted
         """
-        return self.db.search_images(tags, sort_by)
+        # Convert to search_images_advanced for consistency
+        if not tags:
+            return self.db.list_images(sort_by)
+        return self.db.search_images_advanced(and_tags=set(tags), or_tags=None, sort_by=sort_by)
     
     def get_all_tags(self) -> List[str]:
         """

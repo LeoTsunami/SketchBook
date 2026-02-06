@@ -17,56 +17,7 @@ from qtpy.QtWidgets import (
     QWidget,
     QVBoxLayout,
 )
-
-
-def _find_tag_icon(tag: str) -> QIcon:
-    """
-    Resolve a tag icon based on the tag name.
-
-    Args:
-        tag: Tag name.
-
-    Returns:
-        QIcon: Icon for the tag or an empty icon if not found.
-    """
-    icons_dir = Path(__file__).parent / "ressources" / "icones" / "tags"
-    if not icons_dir.exists():
-        return QIcon()
-
-    tag_lower = tag.lower()
-    file_map = {path.stem.lower(): path for path in icons_dir.glob("*.png")}
-    if tag_lower in file_map:
-        return QIcon(str(file_map[tag_lower]))
-
-    fallback_map = {
-        "hands": "hand",
-        "feet": "foot",
-        "objects": "object",
-    }
-    fallback = fallback_map.get(tag_lower)
-    if fallback and fallback in file_map:
-        return QIcon(str(file_map[fallback]))
-
-    return QIcon()
-
-
-def _invert_icon(icon: QIcon, size: int = 28) -> QIcon:
-    """
-    Invert icon colors for better visibility.
-
-    Args:
-        icon: Original icon.
-        size: Icon size.
-
-    Returns:
-        QIcon: Inverted icon.
-    """
-    if icon.isNull():
-        return icon
-    pixmap = icon.pixmap(size, size)
-    image = pixmap.toImage()
-    image.invertPixels(QImage.InvertRgb)
-    return QIcon(QPixmap.fromImage(image))
+from gui.icon_utils import find_tag_icon, invert_icon
 
 
 class DraggableTagChip(QFrame):
@@ -102,10 +53,10 @@ class DraggableTagChip(QFrame):
         self.setFont(app_font)
 
         # Add icon (if available)
-        icon = _find_tag_icon(text)
+        icon = find_tag_icon(text)
         if not icon.isNull():
             icon_label = QLabel()
-            icon_label.setPixmap(_invert_icon(icon, 28).pixmap(28, 28))
+            icon_label.setPixmap(invert_icon(icon, 28).pixmap(28, 28))
             icon_label.setStyleSheet("background-color: transparent;")
             layout.addWidget(icon_label)
 

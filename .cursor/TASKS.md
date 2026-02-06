@@ -22,6 +22,7 @@ Update this file via prompt:
 - [x] Camera-Angle (and label categories) as global AND constraint for all category filters (2026-01-30)
 - [x] Tag library: edit user tags – rename (right-click), drag-drop onto category/tag, Add tag with icon (2026-02-03)
 - [x] Persist grid column count in user settings so same value on reopen (2026-02-05)
+- [x] Code cleanup: remove unused code, factorize duplicates, improve maintainability (2026-02-06)
 
 ### Phase 1: Basic Structure ✅ (Completed: 2024-03-06)
 - [x] Set up base Python project with multi-file structure

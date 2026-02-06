@@ -119,7 +119,8 @@ class SessionManager:
 
     def __init__(self):
         """Initialize the session manager."""
-        # Use user data directory for session files
+        # Use user data directory for session files (for future persistence)
+        # TODO: Implement preset and session history persistence when needed
         self.presets_path = user_data.get_session_presets_path()
         self.sessions_path = user_data.get_session_history_path()
 
@@ -127,7 +128,8 @@ class SessionManager:
         self.presets_path.parent.mkdir(parents=True, exist_ok=True)
         self.sessions_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # Initialize empty state
+        # Initialize empty state (for future persistence)
+        # TODO: Load presets and session history from files when implementing persistence
         self.presets: Dict[str, SessionPreset] = {}
         self.session_history: List[DrawingSession] = []
 
@@ -136,7 +138,6 @@ class SessionManager:
         self._run_index: int = 0
         self._session_display_name: str = ""
         self._window_mode: str = "FullScreen"
-        self.current_session: Optional[DrawingSession] = None
         # Course only: (phase_name, start_index, count, duration_per_image) for each phase
         self._course_phases: List[Tuple[str, int, int, int]] = []
 
@@ -264,28 +265,8 @@ class SessionManager:
         return self._window_mode
 
     def end_session(self) -> None:
-        """Clear run state and current session."""
+        """Clear run state."""
         self.session_run = []
         self._run_index = 0
         self._session_display_name = ""
         self._course_phases = []
-        self.current_session = None
-
-    def get_current_session(self) -> Optional[Any]:
-        """Return a minimal session object for UI (has .preset.name and .preset.duration_seconds)."""
-        if not self.session_run:
-            return None
-        # Build a minimal object so existing UI (session.preset.name, session.preset.duration_seconds) works.
-        class MinimalPreset:
-            def __init__(self, name: str, duration_seconds: int):
-                self.name = name
-                self.duration_seconds = duration_seconds
-
-        class MinimalSession:
-            def __init__(self, name: str, duration_seconds: int):
-                self.preset = MinimalPreset(name, duration_seconds)
-
-        return MinimalSession(
-            self._session_display_name,
-            self.get_current_duration(),
-        )

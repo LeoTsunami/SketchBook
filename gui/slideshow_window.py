@@ -38,11 +38,12 @@ from core.session_manager import SessionManager, load_course_config
 from core.image_manager import ImageManager
 from gui.session_timer import SessionTimer
 from gui.image_loader_worker import ImageLoaderWorker
+from gui.icon_utils import invert_icon
 
-# Set to True to print dimension debug to console (viewport, scene rect, items)
-_DEBUG_SLIDESHOW_DIMENSIONS = False
-# Set to True to print Space key / play-pause toggle debug
-_DEBUG_SPACE_PLAYPAUSE = False
+# Debug flags: set to True to enable debug output
+# These flags control debug functions below - useful for troubleshooting
+_DEBUG_SLIDESHOW_DIMENSIONS = False  # Print dimension debug (viewport, scene rect, items)
+_DEBUG_SPACE_PLAYPAUSE = False  # Print Space key / play-pause toggle debug
 # UI auto-hide: show overlays + cursor on key/mouse, hide after inactivity
 _UI_HIDE_AFTER_MS = 2000
 # Get ready screen duration (seconds); countdown ticks 3, 2, 1
@@ -63,28 +64,27 @@ _PHASE_TITLE_DURATION_SEC = 5
 
 
 def _dbg(msg: str) -> None:
+    """
+    Debug function for slideshow dimensions (controlled by _DEBUG_SLIDESHOW_DIMENSIONS flag).
+    
+    Args:
+        msg: Debug message to print.
+    """
     if _DEBUG_SLIDESHOW_DIMENSIONS:
         print(f"[Slideshow DEBUG] {msg}")
 
 
 def _dbg_space(msg: str) -> None:
+    """
+    Debug function for Space key / play-pause toggle (controlled by _DEBUG_SPACE_PLAYPAUSE flag).
+    
+    Args:
+        msg: Debug message to print.
+    """
     if _DEBUG_SPACE_PLAYPAUSE:
         print(f"[Slideshow Space] {msg}")
 
 
-def _invert_icon(icon: QIcon) -> QIcon:
-    """Return a new QIcon with inverted RGB colors (for visibility on button)."""
-    if icon is None or icon.isNull():
-        return icon
-    size = 32
-    pixmap = icon.pixmap(QSize(size, size))
-    if pixmap.isNull():
-        return icon
-    image = pixmap.toImage()
-    if image.isNull():
-        return icon
-    image.invertPixels(QImage.InvertRgb)
-    return QIcon(QPixmap.fromImage(image))
 
 
 def _get_media_icons():
@@ -98,12 +98,12 @@ def _get_media_icons():
     sp_pause = getattr(QStyle, "SP_MediaPause", None)
     if sp_play is not None:
         try:
-            play_icon = _invert_icon(style.standardIcon(sp_play))
+            play_icon = invert_icon(style.standardIcon(sp_play), 32)
         except Exception:
             pass
     if sp_pause is not None:
         try:
-            pause_icon = _invert_icon(style.standardIcon(sp_pause))
+            pause_icon = invert_icon(style.standardIcon(sp_pause), 32)
         except Exception:
             pass
     return play_icon, pause_icon

@@ -157,11 +157,19 @@ def set_user_data_directory(path: str) -> bool:
     """
     Set the user data directory (for use by installer or configuration).
     
+    This is the public API for installers to configure the user data directory path.
+    The installer can call this function during installation to set a custom path
+    chosen by the user (e.g., D:\\SketchBook instead of default Documents\\SketchBook).
+    
     Args:
-        path: Path to the user data directory
+        path: Path to the user data directory (will be created if it doesn't exist)
         
     Returns:
         True if successful, False otherwise
+        
+    Example:
+        >>> set_user_data_directory("D:\\MySketchBook")
+        True
     """
     return user_data.set_base_dir(Path(path))
 
@@ -170,7 +178,14 @@ def get_user_data_directory() -> str:
     """
     Get the current user data directory path.
     
+    This is the public API for installers or other tools to query the current
+    user data directory path.
+    
     Returns:
         String path to the user data directory
+        
+    Example:
+        >>> get_user_data_directory()
+        'C:\\Users\\username\\Documents\\SketchBook'
     """
     return str(user_data.get_base_dir())

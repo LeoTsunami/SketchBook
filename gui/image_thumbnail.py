@@ -20,56 +20,7 @@ from qtpy.QtWidgets import (
 from qtpy.QtCore import Qt, Signal, QTimer, QUrl
 from qtpy.QtGui import QPixmap, QIcon, QImage, QCursor, QDragEnterEvent, QDropEvent, QFontMetrics
 from core.settings import settings
-
-
-def _find_tag_icon(tag: str) -> QIcon:
-    """
-    Resolve a tag icon based on the tag name.
-
-    Args:
-        tag: Tag name.
-
-    Returns:
-        QIcon: Icon for the tag or an empty icon if not found.
-    """
-    icons_dir = Path(__file__).parent / "ressources" / "icones" / "tags"
-    if not icons_dir.exists():
-        return QIcon()
-
-    tag_lower = tag.lower()
-    file_map = {path.stem.lower(): path for path in icons_dir.glob("*.png")}
-    if tag_lower in file_map:
-        return QIcon(str(file_map[tag_lower]))
-
-    fallback_map = {
-        "hands": "hand",
-        "feet": "foot",
-        "objects": "object",
-    }
-    fallback = fallback_map.get(tag_lower)
-    if fallback and fallback in file_map:
-        return QIcon(str(file_map[fallback]))
-
-    return QIcon()
-
-
-def _invert_icon(icon: QIcon, size: int = 20) -> QIcon:
-    """
-    Invert icon colors for better visibility.
-
-    Args:
-        icon: Original icon.
-        size: Icon size.
-
-    Returns:
-        QIcon: Inverted icon.
-    """
-    if icon.isNull():
-        return icon
-    pixmap = icon.pixmap(size, size)
-    image = pixmap.toImage()
-    image.invertPixels(QImage.InvertRgb)
-    return QIcon(QPixmap.fromImage(image))
+from gui.icon_utils import find_tag_icon, invert_icon
 
 
 class TagChip(QFrame):
@@ -106,12 +57,12 @@ class TagChip(QFrame):
         self.setFont(larger_font)
 
         # Add icon (if available) - preserve visibility with minimum size
-        icon = _find_tag_icon(text)
+        icon = find_tag_icon(text)
         self.has_icon = not icon.isNull()
         if self.has_icon:
             icon_label = QLabel()
             # Use 20x20 pixmap, allow slight reduction if space is very limited
-            icon_label.setPixmap(_invert_icon(icon, 20).pixmap(20, 20))
+            icon_label.setPixmap(invert_icon(icon, 20).pixmap(20, 20))
             icon_label.setStyleSheet("background-color: transparent;")
             icon_label.setMinimumSize(16, 16)  # Minimum size to keep icon visible
             icon_label.setMaximumSize(20, 20)  # Maximum size
