@@ -39,6 +39,7 @@ from core.image_manager import ImageManager
 from gui.session_timer import SessionTimer
 from gui.image_loader_worker import ImageLoaderWorker
 from gui.icon_utils import invert_icon
+from utils.keep_awake import prevent_sleep, allow_sleep
 
 # Debug flags: set to True to enable debug output
 # These flags control debug functions below - useful for troubleshooting
@@ -240,6 +241,9 @@ class SlideshowWindow(QMainWindow):
         self._title_countdown_remaining: int = 0
         self._title_countdown_total: int = 1  # Duration (sec) for color ratio
         self._title_countdown_done_callback = None  # Callable[[], None] when countdown reaches 0
+        # Step navigation: Get ready, phase titles and images are all steps (Next/Previous move one step)
+        self._showing_get_ready: bool = False
+        self._showing_phase_title: bool = False
 
         self._apply_theme()
     
@@ -588,6 +592,8 @@ class SlideshowWindow(QMainWindow):
         self.phase_title_frame.setVisible(False)
         self.get_ready_frame.setVisible(True)
         self.countdown_frame.raise_()  # Timer visible during title screens
+        self._showing_get_ready = True
+        self._showing_phase_title = False
 
         # Show window first; start 3s countdown (3, 2, 1) then hide "Get ready" and start timer + first image
         self.show()
@@ -603,6 +609,7 @@ class SlideshowWindow(QMainWindow):
                 self._fit_scene_in_view()
             QTimer.singleShot(100, _delayed_fit_after_fullscreen)
         self._start_title_countdown(_GET_READY_DURATION_SEC, self._on_get_ready_done)
+        prevent_sleep()  # Keep display and system awake during session
         return True
 
     def _start_title_countdown(self, duration_sec: int, on_done) -> None:
@@ -637,20 +644,40 @@ class SlideshowWindow(QMainWindow):
     def _on_get_ready_done(self):
         """After 3s countdown 'Get ready': hide overlay, start timer (PLAY), load first image (or phase title)."""
         self.get_ready_frame.setVisible(False)
+        self._showing_get_ready = False
         self.timer_widget.start_timer()
         self._sync_play_pause_button()
         self._load_current_image()
-    
-    def _load_current_image(self):
-        """Load the current image; in Course mode show phase title first if at phase start."""
+
+    def _cancel_get_ready_if_visible(self) -> None:
+        """Stop Get ready countdown and hide overlay when user clicks Next."""
+        self._title_countdown_timer.stop()
+        self._title_countdown_done_callback = None
+        if self.get_ready_frame.isVisible():
+            self.get_ready_frame.setVisible(False)
+        self._showing_get_ready = False
+
+    def _cancel_phase_title_if_visible(self) -> None:
+        """Stop phase title countdown and hide overlay when user navigates with Next/Previous."""
+        self._title_countdown_timer.stop()
+        self._title_countdown_done_callback = None
+        if self.phase_title_frame.isVisible():
+            self.phase_title_frame.setVisible(False)
+        self._showing_phase_title = False
+
+    def _load_current_image(self, skip_phase_title: bool = False):
+        """Load the current step: in Course mode show phase title first if at phase start, unless skip_phase_title."""
         idx = self.session_manager.get_run_index()
         phase_info = self.session_manager.get_phase_info_at_index(idx)
-        if phase_info is not None:
+        if phase_info is not None and not skip_phase_title:
+            self._showing_phase_title = True
             phase_name, count, duration_sec = phase_info
             if duration_sec < 60:
                 timing = f"{duration_sec}s"
-            else:
+            elif duration_sec % 60 == 0:
                 timing = f"{duration_sec // 60} min"
+            else:
+                timing = f"{duration_sec // 60} min {duration_sec % 60}"
             self.phase_title_label.setText(phase_name)
             self.phase_subtitle_label.setText(
                 f"{count} Images of {timing}"
@@ -661,11 +688,13 @@ class SlideshowWindow(QMainWindow):
             self.timer_widget.pause_timer()  # Pause during title so first image gets full duration
             self._start_title_countdown(_PHASE_TITLE_DURATION_SEC, self._on_phase_title_done)
             return
+        self._showing_phase_title = False
         self._do_load_current_image()
 
     def _on_phase_title_done(self):
-        """After 2s phase title: hide overlay, sync timer to current image, resume, load image."""
+        """After phase title countdown: hide overlay, sync timer to current image, resume, load image."""
         self.phase_title_frame.setVisible(False)
+        self._showing_phase_title = False
         self._sync_timer_to_current_image()
         self.timer_widget.start_timer()
         self._sync_play_pause_button()
@@ -909,7 +938,20 @@ class SlideshowWindow(QMainWindow):
             self._fade_animation.finished.disconnect(self._on_fade_finished)
     
     def _next_image(self):
-        """Go to the next image."""
+        """Go to the next step: Get ready -> first phase/image, phase title -> image, image -> next phase title or image."""
+        if self._showing_get_ready:
+            self._cancel_get_ready_if_visible()
+            self.timer_widget.start_timer()
+            self._sync_timer_to_current_image()
+            self._load_current_image()
+            return
+        if self._showing_phase_title:
+            self._cancel_phase_title_if_visible()
+            self._sync_timer_to_current_image()
+            self.timer_widget.start_timer()
+            self._load_current_image(skip_phase_title=True)
+            return
+        self._cancel_phase_title_if_visible()
         if self.session_manager.advance_image():
             self._sync_timer_to_current_image()
             self.timer_widget.start_timer()
@@ -928,11 +970,42 @@ class SlideshowWindow(QMainWindow):
         self._apply_countdown_color(dur)
 
     def _previous_image(self):
-        """Go to the previous image."""
-        if self.session_manager.previous_image():
-            self._sync_timer_to_current_image()
-            self.timer_widget.start_timer()
-            self._load_current_image()
+        """Go to the previous step: image -> phase title if phase start, or Get ready if at first image."""
+        if self._showing_get_ready:
+            return
+        if self._showing_phase_title:
+            self._cancel_phase_title_if_visible()
+            idx = self.session_manager.get_run_index()
+            if idx == 0:
+                self.get_ready_frame.setVisible(True)
+                self.get_ready_frame.raise_()
+                self.countdown_frame.raise_()
+                self._showing_get_ready = True
+                self.timer_widget.pause_timer()
+                self._start_title_countdown(_GET_READY_DURATION_SEC, self._on_get_ready_done)
+            else:
+                self.session_manager.previous_image()
+                self._sync_timer_to_current_image()
+                self.timer_widget.start_timer()
+                self._load_current_image()
+            return
+        idx = self.session_manager.get_run_index()
+        if idx == 0:
+            phase_info = self.session_manager.get_phase_info_at_index(0)
+            if phase_info is not None:
+                self._load_current_image()
+            else:
+                self.get_ready_frame.setVisible(True)
+                self.get_ready_frame.raise_()
+                self.countdown_frame.raise_()
+                self._showing_get_ready = True
+                self.timer_widget.pause_timer()
+                self._start_title_countdown(_GET_READY_DURATION_SEC, self._on_get_ready_done)
+            return
+        self.session_manager.previous_image()
+        self._sync_timer_to_current_image()
+        self.timer_widget.start_timer()
+        self._load_current_image()
 
     def _on_escape(self):
         """Escape: fullscreen -> switch to window; window -> close session."""
@@ -1085,6 +1158,7 @@ class SlideshowWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle window close event: end session and notify parent to re-show main window."""
+        allow_sleep()  # Restore normal power behavior (screen can sleep again)
         if self.session_manager.session_run:
             self.session_ended.emit()
         self.session_manager.end_session()

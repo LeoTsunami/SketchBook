@@ -3,8 +3,9 @@
     {
       "duration_minutes": 10,
       "phases": [
-        { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 4 },
-        { "name": "Gesture", "duration_seconds_per_image": 60, "count": 3 },
+        { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 5 },
+        { "name": "Gesture", "duration_seconds_per_image": 60, "count": 2 },
+        { "name": "Short pose", "duration_seconds_per_image": 150, "count": 1 },
         { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 1 },
         { "name": "Shading", "duration_seconds_per_image": 600, "count": 0 }
       ]
@@ -14,7 +15,8 @@
       "phases": [
         { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 8 },
         { "name": "Gesture", "duration_seconds_per_image": 60, "count": 6 },
-        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 2 },
+        { "name": "Short pose", "duration_seconds_per_image": 150, "count": 2 },
+        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 1 },
         { "name": "Shading", "duration_seconds_per_image": 600, "count": 0 }
       ]
     },
@@ -23,7 +25,8 @@
       "phases": [
         { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 8 },
         { "name": "Gesture", "duration_seconds_per_image": 60, "count": 6 },
-        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 2 },
+        { "name": "Short pose", "duration_seconds_per_image": 150, "count": 2 },
+        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 1 },
         { "name": "Shading", "duration_seconds_per_image": 600, "count": 1 }
       ]
     },
@@ -32,7 +35,8 @@
       "phases": [
         { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 8 },
         { "name": "Gesture", "duration_seconds_per_image": 60, "count": 6 },
-        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 2 },
+        { "name": "Short pose", "duration_seconds_per_image": 150, "count": 2 },
+        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 1 },
         { "name": "Shading", "duration_seconds_per_image": 600, "count": 2 }
       ]
     },
@@ -41,7 +45,8 @@
       "phases": [
         { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 8 },
         { "name": "Gesture", "duration_seconds_per_image": 60, "count": 6 },
-        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 4 },
+        { "name": "Short pose", "duration_seconds_per_image": 150, "count": 2 },
+        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 3 },
         { "name": "Shading", "duration_seconds_per_image": 600, "count": 2 }
       ]
     },
@@ -50,7 +55,8 @@
       "phases": [
         { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 8 },
         { "name": "Gesture", "duration_seconds_per_image": 60, "count": 6 },
-        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 4 },
+        { "name": "Short pose", "duration_seconds_per_image": 150, "count": 2 },
+        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 3 },
         { "name": "Shading", "duration_seconds_per_image": 600, "count": 3 }
       ]
     }

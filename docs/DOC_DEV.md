@@ -41,16 +41,18 @@ SketchBook/
 - `main_window.py` : Fenêtre principale. Crée et cache la fenêtre au lancement d’une session ; réaffiche à la fermeture de la session.
 - `slideshow_window.py` : Fenêtre de session (plein écran ou toujours au premier plan). Décompte en haut à droite, barre de contrôles (Play/Pause, Précédent, Suivant). Appelle `SessionManager.start_session` avec les image_ids filtrés et les paramètres du dialogue.
 - `session_settings_dialog.py` : Type de session (Course / Constant), durée course (10–60 min) ou intervalle, mode fenêtre.
+- `image_viewer_window.py` : Fenêtre de visualisation d’une image (zoom molette, Précédent/Suivant, rotation, crop). Mode crop : clic sur Crop affiche une grille règle des tiers et 4 poignées (`CropHandleItem`) déplaçables ; Valider applique le crop (Pillow) et met à jour les métadonnées, Annuler quitte le mode. Overlay (rect, lignes, poignées) créés dans la scène et retirés à la sortie du mode pour éviter des références invalides après `scene.clear()`.
 
 ### Core (core/)
 - Module principal contenant la logique métier
-- `session_manager.py` : Gestion des sessions (Course et intervalle constant). `load_course_config`, `build_course_run`, `SessionManager.start_session` (image_ids, type, durée/intervalle, window_mode), navigation (advance_image, previous_image, get_current_duration, get_session_progress). Presets Course dans `gui/ressources/session_configs.json` (10–60 min, phases WarmUp/Gesture/Anatomy/Shading).
+- `session_manager.py` : Gestion des sessions (Course et intervalle constant). `load_course_config`, `build_course_run`, `SessionManager.start_session` (image_ids, type, durée/intervalle, window_mode), navigation (advance_image, previous_image, get_current_duration, get_session_progress). Presets Course dans `gui/ressources/session_configs.json` (10–60 min, phases Warm-up / Gesture / Short pose 2m30 / Anatomy / Shading).
 - `user_tags_config.py` : Config des tags utilisateur (placements, icônes, `registered_only`). Fichier `user_tags_config.json` dans le répertoire config des données utilisateur. `load_config()`, `save_config(placements, icons, registered_only)`, `get_placement()`, `get_icon_filename()`, `set_placement()`, `rename_in_config()`.
 - `image_db.py` : `ImageDatabase.rename_tag(old_name, new_name)` renomme un tag sur toutes les images et retourne le nombre d’images mises à jour.
 - Version actuelle : 0.1.0
 
 ### Utils (utils/)
 - Utilitaires pour la manipulation de fichiers et le traitement d'images
+- `keep_awake.py` : `prevent_sleep()` / `allow_sleep()` — sous Windows, utilise `SetThreadExecutionState` pour empêcher la veille écran/système pendant la session ; appelé par la fenêtre de session au démarrage et à la fermeture.
 - En cours de développement
 
 ## Conventions de Code
@@ -376,9 +378,17 @@ The `ImageGrid` class manages the display of image thumbnails in a responsive gr
 ### Performance Optimizations
 - Asynchronous image loading using `QThreadPool`
 - Debounced layout updates using `QTimer`
-- **Scroll debounce**: On scroll, only a 120 ms timer is started; when it fires, `_check_visible_thumbnails` runs and enqueues visible image IDs into `pending_load_queue` (capped at 60). A separate `load_ticker_timer` (80 ms) processes the queue with at most 2 pixmap loads per tick (`_process_pending_loads`), so the main thread is not flooded when scrolling quickly.
+- **Scroll debounce**: On scroll, only a debounce timer is started; when it fires, `_check_visible_thumbnails` runs and enqueues visible image IDs into `pending_load_queue` (capped for performance). A separate `load_ticker_timer` processes the queue with a limited number of pixmap loads per tick (`_process_pending_loads`), so the main thread is not flooded when scrolling quickly.
 - Efficient thumbnail resizing with proper scaling
 - Viewport-based loading for visible thumbnails only (queue + ticker instead of loading all visible at once)
+
+### Thumbnail image quality
+
+- Thumbnails are loaded by `ImageLoaderWorker` with two passes:
+  - A lightweight `fast_pixmap` (currently not displayed in the grid but kept for potential future uses such as placeholders).
+  - A **high‑quality pixmap** that is upscaled using a factor of at least 2.0× on standard DPI screens (or the device pixel ratio on HiDPI screens), then downscaled by Qt in the view.
+- The worker uses `Qt.SmoothTransformation` for the high‑quality pixmap and applies `setDevicePixelRatio()` so that thumbnails remain crisp even on HiDPI displays and after window resizes or when the user increases the number of columns.
+- The grid caches these high‑quality pixmaps per image ID in `pixmap_cache` and reuses them both for the main grid and for the scroll preview overlay (extract strip), balancing quality and performance.
 
 ### Tag operations (apply / remove)
 - Applying a tag to many images (from main window) uses `TagApplyWorker` in the thread pool; progress and completion are handled on the main thread.

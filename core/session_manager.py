@@ -1,6 +1,6 @@
 """
 Session management for drawing sessions.
-Handles Course (phased: WarmUp / Gesture / Anatomy / Shading) and Constant-interval runs.
+Handles Course (phased: Warm-up / Gesture / Short pose / Anatomy / Shading) and Constant-interval runs.
 """
 from pathlib import Path
 from typing import List, Optional, Dict, Any, Tuple

@@ -1,5 +1,66 @@
 # Journal des modifications
 
+## 2026-02-11 (Visionneuse : crop avec grille des tiers et 4 points déplaçables)
+### ✅ Tâches :
+- Remplacer le crop par glisser-droite par un mode crop dédié : grille en tiers + Valider/Annuler
+
+- **Nouveau flux de crop** : Cliquer sur **Crop** affiche une grille de règle des tiers sur l’image et le rectangle de crop couvre d’abord toute l’image. Quatre poignées (cercles blancs) aux coins permettent de redimensionner la zone. **Valider** applique le crop et enregistre sur le disque ; **Annuler** annule et quitte le mode crop.
+- **Correctif** : Suppression de l’utilisation de `QRubberBand` dans la visionneuse (utilisé mais non importé, provoquant une NameError au clic droit). Le crop ne repose plus sur un glisser de rubber band.
+- **Interne** : `ZoomGraphicsView` ne gère plus le crop ; l’état du mode crop, les éléments d’overlay (rectangle, lignes de grille, `CropHandleItem`) et Valider/Annuler sont gérés dans `ImageViewerWindow`. Les overlay sont retirés de la scène à la sortie du mode crop pour éviter les références invalides après `scene.clear()`.
+ → Résultat : Le recadrage est plus clair, avec une grille règle des tiers et des boutons Valider/Annuler explicites.
+---
+
+## 2026-02-09 (Session : garder l'écran et le système actifs pendant la session)
+### ✅ Tâches :
+- Empêcher la mise en veille de l'écran et du système tant que la fenêtre de session est ouverte
+
+- **Windows** : Utilise `SetThreadExecutionState` (ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED) via `utils/keep_awake.py` pour que l'écran et le PC restent actifs pendant la session (plein écran ou fenêtre). Comportement normal rétabli à la fermeture de la fenêtre de session.
+- **Autres plateformes** : Aucune action (pas de dépendance) ; extension possible plus tard (macOS/Linux).
+- **Tests** : `tests/test_keep_awake.py` pour l'idempotence de prevent_sleep/allow_sleep.
+ → Résultat : L'ordinateur ne se met plus en veille pendant une session de dessin.
+---
+
+## 2026-02-10 (Grille : Session Course Random par défaut + miniatures plus nettes)
+### ✅ Tâches :
+- Mettre "Session Course Random" comme mode de tri par défaut et améliorer la qualité des miniatures dans la grille
+
+- **Comportement de tri par défaut** : Au premier lancement, la grille d’images utilise désormais par défaut le mode de tri "Session Course Random", ce qui aligne immédiatement la galerie sur l’ordre pseudo-aléatoire des sessions Course. L’index de tri choisi par l’utilisateur est ensuite persisté dans les paramètres (`ui.grid.sort_index`) et restauré aux prochains lancements.
+- **Cohérence de l’UI Shuffle** : La visibilité du bouton Shuffle est maintenant synchronisée avec l’état initial du combo de tri, et s’affiche donc correctement dès que "Session Course Random" est actif, y compris au démarrage.
+- **Miniatures de meilleure qualité** : `ImageLoaderWorker` génère maintenant des pixmaps de vignettes en plus haute résolution en utilisant un facteur de suréchantillonnage plus élevé (au minimum 2.0x sur les écrans standard) avec `Qt.SmoothTransformation`. Les miniatures apparaissent nettement plus nettes dans la grille, en particulier après redimensionnement de la fenêtre et avec des configurations de colonnes larges.
+ → Résultat : L’ordre aléatoire type "course" est utilisé par défaut à l’ouverture de l’application et les miniatures de la grille sont rendues avec une meilleure qualité visuelle.
+---
+
+## 2026-02-10 (Visionneuse : fit initial, navigation, rotation, crop)
+### ✅ Tâches :
+- Améliorer la fenêtre de visualisation d’image unique avec un meilleur fit initial et des outils de navigation
+
+- **Fit au premier affichage** : La visionneuse reporte maintenant l’appel à `fitInView` via un petit `QTimer.singleShot(0, ...)`, ce qui permet, dès la toute première ouverture, d’utiliser la taille réelle de la fenêtre au lieu d’afficher une image minuscule qui ne se corrige qu’au second affichage.
+- **Navigation Précédent/Suivant** : La visionneuse lit automatiquement la liste ordonnée courante d’images depuis l’`ImageGrid` (`all_images`) et expose des boutons **Previous** / **Next** pour parcourir la même séquence que dans la grille, en partant de l’image double-cliquée.
+- **Rotation sur place** : Deux boutons, **Rotate ⟲** et **Rotate ⟳**, appellent `ImageManager.rotate_image()` pour faire pivoter l’image courante de 90° dans le sens horaire ou anti-horaire directement sur le disque, puis rafraîchir l’affichage et les métadonnées (largeur/hauteur).
+- **Crop interactif + sauvegarde** : Un glisser avec le bouton droit dans la visionneuse dessine un rectangle de crop ; en cliquant sur **Crop**, le recadrage est appliqué au fichier sous-jacent via Pillow, les métadonnées (largeur, hauteur, taille de fichier) sont mises à jour, et l’image est rechargée pour visualiser immédiatement le nouveau cadrage dans SketchBook.
+ → Résultat : La visionneuse ouvre les images à un niveau de zoom utile dès la première utilisation, permet de parcourir rapidement les images voisines et offre la rotation et le recadrage directement depuis l’application.
+---
+
+## 2026-02-09 (Session : Suiv./Préc. traitent Get ready et titres de phase comme des étapes)
+### ✅ Tâches :
+- Suivant et Précédent (et Gauche/Droite) traitent Get ready, titres de phase et images comme des étapes égales
+
+- **Navigation par étapes unifiée** : Get ready, chaque titre de phase et chaque image sont des étapes. Suivant : Get ready → premier phase/image, titre de phase → image, image → prochain titre ou image. Précédent recule d'une étape (ex. retour au titre de phase, ou retour à Get ready depuis la première phase/titre).
+- **Get ready est une étape** : Depuis la première phase ou la première image, Précédent peut ramener à l'écran Get ready (avec décompte 3-2-1). Depuis Get ready, Suivant continue vers le premier contenu.
+ → Résultat : Même comportement pour chaque étape ; on peut passer ou revenir sur n'importe quel écran (Get ready, titres de phase, images) avec Suivant/Précédent.
+---
+
+## 2026-02-09 (Course : ajout de la phase Short pose 2 min 30, rééquilibrage warmup/gesture)
+### ✅ Tâches :
+- Ajout d'une étape intermédiaire entre 1 min et 5 min dans les presets Course
+
+- **Nouvelle phase « Short pose »** : Insérée à 2 min 30 (150 s) entre Gesture (1 min) et Anatomy (5 min). Nom conforme à l’usage en modèle vivant pour les poses courtes.
+- **Rééquilibrage des presets** : Tous les presets course (10–60 min) mis à jour : plus de place au warm-up et au gesture où possible ; le preset 10 min a maintenant 5 warm-up + 2 gesture + 1 short pose + 1 anatomy (~12 min au total pour inclure la nouvelle phase).
+- **Sous-titre de phase** : Le slideshow affiche « 2 min 30 » pour les phases à 150 s (minutes non entières) dans l’overlay de titre de phase.
+- **Docs et tests** : DOC_USER, DOC_DEV, docstring session_manager mis à jour ; assertions du test_session_manager mises à jour pour le nouveau nombre de slots 10 min et la durée 150.
+ → Résultat : Les sessions Course enchaînent désormais 30 s → 1 min → 2 min 30 → 5 min → 10 min avec un accent plus marqué sur le warmup et le gesture.
+---
+
 ## 2026-02-06 (ajout de l'option de tri Session Course Random)
 ### ✅ Tâches :
 - Ajout de l'option de tri "Session Course Random" pour prévisualiser l'ordre de la session

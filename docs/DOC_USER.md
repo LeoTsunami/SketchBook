@@ -87,7 +87,7 @@ You can run timed drawing sessions using the images currently shown (filtered by
 1. Apply tag filters so the gallery shows the images you want to use.
 2. Click **Session Settings** (bottom of the left panel).
 3. Choose **Session Type**:
-   - **Course**: Phased session (WarmUp → Gesture → Anatomy → Shading) with duration 10–60 minutes (step 10).
+   - **Course**: Phased session (Warm-up → Gesture → Short pose → Anatomy → Shading) with duration 10–60 minutes (step 10).
    - **Constant interval**: Same duration per image (30 s, 1/3/5/10/20 min).
 4. Choose **Window Mode**: FullScreen or Window always on top.
 5. Click **Start Session**.
@@ -95,8 +95,52 @@ You can run timed drawing sessions using the images currently shown (filtered by
 The main window is hidden and the session window opens. The image list is built from your filtered images, in random order.
 
 ### Session Window
+- **Screen awake**: While the session window is open, the screen and computer stay awake (no sleep or screen saver). Normal power behavior is restored when you close the session.
 - **Countdown**: Shown in the top-left for the current image; it decreases second by second and turns red as time approaches zero.
-- **Controls** (bottom bar): Previous, Next, and timer controls (Play/Pause, Reset). Press **Space** to show or hide the control bar.
+- **Controls** (bottom bar): Previous, Next, and timer controls (Play/Pause, Reset). Press **Space** to show or hide the control bar. **Next** and **Previous** move one step at a time: the first screen (Get ready), each phase title, and each image are steps you can move through and come back to like images.
 - **Keyboard**: **Space** (toggle controls), **Left/Right** (previous/next), **S** (start/stop timer), **P** (pause), **Escape** (end session and return to main window).
 
 When you close the session window (or finish the last image), the main window is shown again.
+
+### Session Course Random sort mode
+
+- In the image grid, the **Sort** combo box includes a mode called **"Session Course Random"**.
+- When this mode is active, the grid shows your filtered images in the same deterministic random order that will be used during a Course session (or Constant interval session when using random order).
+- By default, SketchBook now starts with **"Session Course Random"** selected the first time you open the app, so you immediately see a course-style random order for your gallery.
+- When you change the sort mode, SketchBook remembers your last choice and restores it the next time you launch the application.
+
+### Thumbnail quality in the image grid
+
+- Thumbnails in the image grid are generated from higher‑resolution source images using smooth scaling.
+- Internally, SketchBook now loads a slightly larger version of each image for thumbnails and lets Qt downscale it, which produces a sharper result, especially after window resizes or when using many columns.
+- This may use a bit more GPU/CPU when scrolling fast through very large libraries, but greatly improves the perceived quality of the preview images you draw from.
+
+## Single Image Viewer
+
+When you double-click an image in the grid, SketchBook opens a dedicated viewer window.
+
+### Initial display and zoom
+
+- The viewer window opens maximized by default.
+- The image is automatically **fit in view** the first time you open the viewer in a session, so it uses the full available space instead of appearing very small.
+- You can use the mouse wheel to zoom in and out (the cursor position is used as the zoom anchor).
+
+### Navigating between images
+
+- The viewer reads the current ordered list of images from the main grid.
+- Use the **Previous** and **Next** buttons at the bottom of the window to move to the neighbouring images in the same order as they appear in the grid.
+
+### Rotating an image
+
+- Use **Rotate ⟲** to rotate the image 90° counterclockwise.
+- Use **Rotate ⟳** to rotate the image 90° clockwise.
+- Rotation is applied directly to the underlying file and saved; the image and its metadata (size) are updated in the library.
+
+### Cropping and saving
+
+- To crop:
+  1. Click the **Crop** button at the bottom of the window. A rule-of-thirds grid appears over the image and the crop area is initially the full image.
+  2. Drag the **four corner handles** (white circles) to adjust the crop rectangle. The grid updates to show thirds inside the selected area.
+  3. Click **Valider** to apply the crop and save the image to disk, or **Annuler** to cancel and leave the image unchanged.
+- The cropped region replaces the original file (non-reversible inside SketchBook), and the viewer reloads the result.
+- This allows you to quickly reframe reference photos without leaving the application.

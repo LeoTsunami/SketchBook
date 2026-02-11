@@ -90,10 +90,10 @@ def test_session_manager_start_course():
     )
     assert ok is True
     assert mgr.get_current_image_id() is not None
-    assert mgr.get_current_duration() in (30, 60, 300, 600)
+    assert mgr.get_current_duration() in (30, 60, 150, 300, 600)
     cur, total, dur = mgr.get_session_progress()
     assert cur == 1
-    assert total == 4 + 3 + 1  # 10 min preset
+    assert total == 5 + 2 + 1 + 1  # 10 min preset: Warm-up, Gesture, Short pose, Anatomy
     assert dur == mgr.get_current_duration()
 
     # Advance to end

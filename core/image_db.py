@@ -14,8 +14,11 @@ from core.settings import settings
 from core.user_data import user_data
 from dataclasses import dataclass, asdict, field
 
-# Global shuffle timestamp (updated on each shuffle to ensure different random orders)
-_shuffle_timestamp = 0
+# Global shuffle timestamp used as part of the seed for course_random shuffles.
+# Initialized at import time so each application run starts with a different
+# base order in "Session Course Random" mode, then updated again on each
+# manual Shuffle click.
+_shuffle_timestamp = int(time.time() * 1000000)
 
 # Windows: file in use / permission denied when renaming
 _SAVE_RETRY_COUNT = 5

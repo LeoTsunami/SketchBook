@@ -51,27 +51,35 @@ class ImageLoaderWorker(QRunnable):
                 new_height = int(target_width / aspect_ratio)
                 
                 # Use device pixel ratio for high-DPI displays (usually 1.0, 1.5, or 2.0)
-                # This ensures crisp rendering on retina/high-DPI screens
+                # and upscale slightly even on standard displays for crisper thumbnails.
+                # Reason: loading a larger source pixmap and letting Qt downscale improves
+                # perceived quality in the grid, especially after resizes.
                 from qtpy.QtWidgets import QApplication
                 app = QApplication.instance()
                 device_pixel_ratio = app.devicePixelRatio() if app else 1.0
                 
-                # Scale to account for device pixel ratio for better quality
-                scaled_width = int(target_width * max(device_pixel_ratio, 1.5))
-                scaled_height = int(new_height * max(device_pixel_ratio, 1.5))
+                # Scale to account for device pixel ratio for better quality.
+                # Minimum upscale factor of 2.0 on standard DPI screens.
+                scale_factor = max(device_pixel_ratio, 2.0)
+                scaled_width = int(target_width * scale_factor)
+                scaled_height = int(new_height * scale_factor)
                 
-                fast_pixmap = QPixmap.fromImage(image.scaled(
-                    target_width,
-                    new_height,
-                    Qt.KeepAspectRatio,
-                    Qt.FastTransformation
-                ))
-                high_quality_pixmap = QPixmap.fromImage(image.scaled(
-                    scaled_width,
-                    scaled_height,
-                    Qt.KeepAspectRatio,
-                    Qt.SmoothTransformation
-                ))
+                fast_pixmap = QPixmap.fromImage(
+                    image.scaled(
+                        target_width,
+                        new_height,
+                        Qt.KeepAspectRatio,
+                        Qt.FastTransformation,
+                    )
+                )
+                high_quality_pixmap = QPixmap.fromImage(
+                    image.scaled(
+                        scaled_width,
+                        scaled_height,
+                        Qt.KeepAspectRatio,
+                        Qt.SmoothTransformation,
+                    )
+                )
                 high_quality_pixmap.setDevicePixelRatio(device_pixel_ratio)
                 result = (fast_pixmap, high_quality_pixmap)
             else:

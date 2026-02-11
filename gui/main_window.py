@@ -524,19 +524,28 @@ class MainWindow(QMainWindow):
         sort_label = QLabel("Sort:")
         sort_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
         self.sort_combo = QComboBox()
-        self.sort_combo.addItems([
-            "Most Recent First",
-            "Oldest First",
-            "Filename A→Z",
-            "Filename Z→A",
-            "Lightest First",
-            "Heaviest First",
-            "Session Course Random"
-        ])
-        self.sort_combo.setCurrentIndex(0)  # Default: Most Recent First
+        self.sort_combo.addItems(
+            [
+                "Most Recent First",
+                "Oldest First",
+                "Filename A→Z",
+                "Filename Z→A",
+                "Lightest First",
+                "Heaviest First",
+                "Session Course Random",
+            ]
+        )
+        # Restore last chosen sort mode, defaulting to "Session Course Random"
+        default_sort_index = settings.get("ui.grid.sort_index", 6)
+        if not 0 <= default_sort_index < self.sort_combo.count():
+            default_sort_index = 6
+        self.sort_combo.setCurrentIndex(default_sort_index)
         self.sort_combo.setFixedWidth(150)
         self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
         
+        # Ensure shuffle button visibility matches initial sort selection
+        self.shuffle_button.setVisible(self.sort_combo.currentIndex() == 6)
+
         grid_controls.addWidget(sort_label)
         grid_controls.addWidget(self.sort_combo)
         
@@ -780,6 +789,10 @@ class MainWindow(QMainWindow):
         if is_random_sort and not self._course_random_images_list:
             self._initialize_course_random_list()
         
+        # Persist chosen sort mode for next launch
+        settings.set("ui.grid.sort_index", index)
+        settings.save()
+
         # Reapply filters with new sort order
         self._apply_category_filters()
     

@@ -273,6 +273,14 @@ Update this file via prompt:
   - Analytics system design
   - Export functionality planning
 
+## ✅ Completed (2026-02-10)
+- Default random course order and improved grid image quality
+  - Default grid sort set to "Session Course Random" on first launch (then persisted per user choice).
+  - Persisted last chosen sort index in user settings (`ui.grid.sort_index`) so reopening the app restores the same behavior.
+  - Increased thumbnail source resolution in `ImageLoaderWorker` (higher upscale factor, still using `Qt.SmoothTransformation`) for crisper images in the image grid.
+  - Image viewer window: fit-in-view applied correctly on first open, added Previous/Next navigation following the grid order, rotate buttons (CW/CCW) that update the underlying file and metadata, and a crop tool with save to disk.
+  - Image viewer crop UX (2026-02-11): click Crop → rule-of-thirds grid + 4 draggable corner points; Valider to apply, Annuler to cancel.
+
 ## 📋 Backlog
 
 ## 🔍 DISCOVERIES / QUESTIONS

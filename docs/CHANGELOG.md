@@ -1,5 +1,66 @@
 # Changelog
 
+## 2026-02-11 (Image viewer: crop with rule-of-thirds grid and 4 draggable points)
+### ✅ Tasks:
+- Replace right-drag crop with a dedicated crop mode: grid in thirds + Valider/Annuler
+
+- **Crop flow**: Click **Crop** → a rule-of-thirds grid is shown over the image and the crop rectangle starts as the full image. Four draggable corner handles (white circles) let you resize the crop area. **Valider** applies the crop and saves to disk; **Annuler** cancels and exits crop mode.
+- **Bug fix**: Removed use of `QRubberBand` in the viewer (it was used but not imported, causing a NameError on right-click). Crop is no longer based on rubber-band drag.
+- **Internal**: `ZoomGraphicsView` no longer handles crop; crop mode state, overlay items (rect, grid lines, `CropHandleItem`), and Valider/Annuler are handled in `ImageViewerWindow`. Overlay items are removed from the scene when exiting crop mode to avoid stale references after `scene.clear()`.
+ → Result: Cropping is clearer and uses a rule-of-thirds grid with explicit validate/cancel actions.
+---
+
+## 2026-02-09 (Session: keep screen and system awake during session)
+### ✅ Tasks:
+- Prevent display and system sleep while the session window is open
+
+- **Windows**: Uses `SetThreadExecutionState` (ES_DISPLAY_REQUIRED | ES_SYSTEM_REQUIRED) via `utils/keep_awake.py` so the screen and PC stay awake during fullscreen or windowed session. Restored to normal when the session window is closed.
+- **Other platforms**: No-op (no extra dependency); could be extended later (e.g. macOS/Linux).
+- **Tests**: `tests/test_keep_awake.py` for prevent_sleep/allow_sleep idempotence.
+ → Result: The computer no longer goes to sleep during a drawing session.
+---
+
+## 2026-02-10 (Grid: default Session Course Random + crisper thumbnails)
+### ✅ Tasks:
+- Make "Session Course Random" the default sort mode and improve thumbnail quality in the image grid
+
+- **Default sort behavior**: On first launch, the image grid now defaults to the "Session Course Random" sort mode so the gallery immediately reflects the same pseudo-random order as course sessions. The last chosen sort index is persisted in user settings (`ui.grid.sort_index`) and restored on subsequent launches.
+- **Shuffle UI consistency**: The Shuffle button visibility is now synchronized with the initial sort combo state so it is shown whenever "Session Course Random" is active, including at startup.
+- **Higher-quality thumbnails**: The `ImageLoaderWorker` now generates higher-resolution pixmaps for thumbnails by using a larger upscale factor (minimum 2.0x on standard DPI) with `Qt.SmoothTransformation`. Thumbnails look noticeably sharper in the grid, especially after window resizes and on larger column configurations.
+ → Result: Users see a course-style random order by default when opening the app, and thumbnails in the image grid are rendered with better visual quality.
+---
+
+## 2026-02-10 (Image viewer: fit, navigation, rotate, crop)
+### ✅ Tasks:
+- Improve the single-image viewer window with better initial sizing and navigation tools
+
+- **Fit on first open**: The image viewer now defers `fitInView` with a short `QTimer.singleShot(0, ...)` so that the very first time you open it, the image uses the full available window size instead of appearing tiny and only fixing itself on re-open.
+- **Previous/Next navigation**: The viewer automatically reads the current ordered list of images from the `ImageGrid` (`all_images`) and exposes **Previous** / **Next** buttons to move through the same sequence as in the grid, starting from the double-clicked image.
+- **In-place rotation**: Two buttons, **Rotate ⟲** and **Rotate ⟳**, call `ImageManager.rotate_image()` to rotate the current image 90° counterclockwise or clockwise on disk and refresh the display, updating metadata width/height.
+- **Interactive crop & save**: Right-drag in the viewer draws a crop rectangle; clicking **Crop** applies the crop to the underlying file via Pillow, updates metadata (width, height, file size), and reloads the result so you can non-destructively reframe references inside SketchBook.
+ → Result: The image viewer opens at a useful zoom level on first use, supports quick browsing of neighbour images, and lets users rotate or crop references directly from within the app.
+---
+
+## 2026-02-09 (Session: Next/Previous treat Get ready and phase titles as steps)
+### ✅ Tasks:
+- Next and Previous (and Left/Right) treat Get ready, phase titles and images as equal steps
+
+- **Unified step navigation**: Get ready, each phase title and each image are steps. Next goes: Get ready → first phase/image, phase title → image, image → next phase title or image. Previous goes back one step (e.g. back to phase title, or back to Get ready from the first phase/title).
+- **Get ready is a step**: From the first phase or first image, Previous can return to the Get ready screen (with 3-2-1 countdown). From Get ready, Next continues to the first content.
+ → Result: Same behavior for every step; you can pass or come back to any screen (Get ready, phase titles, images) with Next/Previous.
+---
+
+## 2026-02-09 (Course: add Short pose phase 2m30, rebalance warmup/gesture)
+### ✅ Tasks:
+- Add intermediate phase between 1 min and 5 min in Course presets
+
+- **New phase "Short pose"**: Inserted at 2 min 30 (150 s) between Gesture (1 min) and Anatomy (5 min). Naming follows common life-drawing usage for short poses.
+- **Preset rebalance**: All course presets (10–60 min) updated: more weight on Warm-up and Gesture where possible; 10 min preset now has 5 warm-up + 2 gesture + 1 short pose + 1 anatomy (~12 min total to include the new phase).
+- **Phase subtitle**: Slideshow shows "2 min 30" for 150 s phases (non-integer minutes) in the phase title overlay.
+- **Docs and tests**: DOC_USER, DOC_DEV, session_manager docstring updated; test_session_manager asserts updated for new 10 min slot count and duration 150.
+ → Result: Course sessions now progress 30s → 1 min → 2m30 → 5 min → 10 min with clearer warmup/gesture emphasis.
+---
+
 ## 2026-02-06 (add Session Course Random sort option)
 ### ✅ Tasks:
 - Add "Session Course Random" sort option to preview session order
