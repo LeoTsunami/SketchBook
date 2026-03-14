@@ -11,6 +11,7 @@ from gui.main_window import MainWindow
 from core.settings import settings
 from core.user_data import user_data
 
+
 # Force stdout to be unbuffered for immediate print output
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)

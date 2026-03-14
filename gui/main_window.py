@@ -746,6 +746,29 @@ class MainWindow(QMainWindow):
         registered = set(getattr(self, "_user_tags_config", {}).get("registered_only", []))
         return from_db | registered
 
+    def _get_all_tag_names(self) -> Set[str]:
+        """All tag names in the system (default + user). Used to enforce unique names."""
+        return self._get_default_tags() | self._get_user_tags()
+
+    def _tag_name_already_used(self, name: str, exclude: Optional[str] = None) -> bool:
+        """
+        Return True if a tag with the same name already exists (case- and separator-insensitive).
+        If exclude is set, that tag is ignored (for rename: current name is allowed).
+
+        Returns:
+            True if another tag would conflict with the given name.
+        """
+        norm = self._normalize_tag_for_match(name)
+        if not norm:
+            return False
+        all_names = self._get_all_tag_names()
+        for existing in all_names:
+            if exclude is not None and existing == exclude:
+                continue
+            if self._normalize_tag_for_match(existing) == norm:
+                return True
+        return False
+
     def _apply_category_filters(self) -> None:
         """Apply category/subtag filters to the image grid."""
         # Get current sort order
@@ -792,19 +815,23 @@ class MainWindow(QMainWindow):
     def _filter_images_by_category_from_list(self, images: List[ImageMetadata]) -> List[ImageMetadata]:
         """
         Filter images from a given list by category/subtag filters (keeps original order).
-        Label categories (Miscellaneous, Camera-Angle) are applied as global AND, same as _filter_images_by_category.
+        Miscellaneous = AND (all selected); Camera-Angle = OR (any selected).
         """
-        label_categories = ["Miscellaneous:", "Camera-Angle:"]
-        constraining_tags: Set[str] = set()
-        for label_cat in label_categories:
-            constraining_tags.update(self._active_subtags.get(label_cat, set()))
-
-        if not self._active_categories and not constraining_tags and not self._active_subtags:
+        label_categories_and = ["Miscellaneous:"]
+        label_categories_or = ["Camera-Angle:"]
+        constraining_tags_and: Set[str] = set()
+        for label_cat in label_categories_and:
+            constraining_tags_and.update(self._active_subtags.get(label_cat, set()))
+        constraining_tags_or: Set[str] = set()
+        for label_cat in label_categories_or:
+            constraining_tags_or.update(self._active_subtags.get(label_cat, set()))
+        has_label = bool(constraining_tags_and) or bool(constraining_tags_or)
+        if not self._active_categories and not has_label and not self._active_subtags:
             return images
 
         filtered = []
-        constraining_norm = {self._normalize_tag_for_match(t) for t in constraining_tags} if constraining_tags else None
-        # Precompute once: tags that match any active category (narrowed by selected subtags)
+        constraining_and_norm = {self._normalize_tag_for_match(t) for t in constraining_tags_and}
+        constraining_or_norm = {self._normalize_tag_for_match(t) for t in constraining_tags_or}
         allowed_norm = self._get_active_category_match_tags_normalized() if self._active_categories else None
 
         for metadata in images:
@@ -814,11 +841,11 @@ class MainWindow(QMainWindow):
                 category_match = True
             else:
                 category_match = bool(image_tags_norm & allowed_norm)
-
             if not category_match:
                 continue
-            # Label categories (Miscellaneous, Camera-Angle) as global AND
-            if constraining_norm and not constraining_norm.issubset(image_tags_norm):
+            if constraining_and_norm and not constraining_and_norm.issubset(image_tags_norm):
+                continue
+            if constraining_or_norm and not (constraining_or_norm & image_tags_norm):
                 continue
             filtered.append(metadata)
 
@@ -1772,12 +1799,11 @@ class MainWindow(QMainWindow):
             )
             if ok and new_name and new_name.strip() and new_name.strip() != tag_text:
                 new_name = new_name.strip()
-                default_tags = self._get_default_tags()
-                if new_name in default_tags:
+                if self._tag_name_already_used(new_name, exclude=tag_text):
                     QMessageBox.warning(
                         self,
                         "Rename tag",
-                        "This name is reserved for a default tag.",
+                        "A tag with this name already exists. Tag names must be unique (case-insensitive).",
                     )
                     return
                 n = self.image_manager.db.rename_tag(tag_text, new_name)
@@ -2042,13 +2068,12 @@ class MainWindow(QMainWindow):
         if not tag_name or not tag_name.strip():
             return
         tag_name = tag_name.strip()
-        default_tags = self._get_default_tags()
-        if tag_name in default_tags:
-            QMessageBox.warning(self, "Add tag", "This name is reserved for a default tag.")
-            return
-        user_tags = self._get_user_tags()
-        if tag_name in user_tags:
-            QMessageBox.information(self, "Add tag", "This tag already exists.")
+        if self._tag_name_already_used(tag_name):
+            QMessageBox.warning(
+                self,
+                "Add tag",
+                "A tag with this name already exists. Tag names must be unique (case-insensitive).",
+            )
             return
         cfg = getattr(self, "_user_tags_config", user_tags_config.load_config())
         self._user_tags_config = cfg
@@ -2335,28 +2360,34 @@ class MainWindow(QMainWindow):
 
     def _filter_images_by_category(self) -> List:
         """
-        Filter images by category (OR) and sub-tags (AND within category).
-        Label categories (e.g. Camera-Angle) are applied as a global AND constraint:
-        e.g. Human + Wide-Angle => images that are Human AND Wide-Angle.
-        Tag matching is case- and separator-insensitive (Wide-Angle matches wideAngle, etc.).
+        Filter images by category (OR) and sub-tags (narrowing by path).
+        Miscellaneous = AND (image must have all selected tags).
+        Camera-Angle = OR (image must have at least one selected tag, e.g. Hands or Feet).
+        Tag matching is case- and separator-insensitive.
         """
         # Get current sort order and apply it
         sort_by = self._get_current_sort_order()
         all_images = self.image_manager.db.list_images(sort_by)
 
-        # Label categories are not real tags; their sub-tags constrain all category results (AND)
-        label_categories = ["Miscellaneous:", "Camera-Angle:"]
-        constraining_tags: Set[str] = set()
-        for label_cat in label_categories:
-            constraining_tags.update(self._active_subtags.get(label_cat, set()))
-
-        # Check if there are any active filters (regular categories or constraining tags)
-        has_active_filters = bool(self._active_categories) or bool(constraining_tags)
+        # Label categories: Miscellaneous = AND (all selected); Camera-Angle = OR (any selected)
+        label_categories_and = ["Miscellaneous:"]
+        label_categories_or = ["Camera-Angle:"]
+        constraining_tags_and: Set[str] = set()
+        for label_cat in label_categories_and:
+            constraining_tags_and.update(self._active_subtags.get(label_cat, set()))
+        constraining_tags_or: Set[str] = set()
+        for label_cat in label_categories_or:
+            constraining_tags_or.update(self._active_subtags.get(label_cat, set()))
+        has_active_filters = (
+            bool(self._active_categories)
+            or bool(constraining_tags_and)
+            or bool(constraining_tags_or)
+        )
         if not has_active_filters:
             return all_images
 
-        constraining_normalized = {self._normalize_tag_for_match(t) for t in constraining_tags}
-        # Precompute once: tags that match any active category (narrowed by selected subtags: Animal → Reptile → Tortoise)
+        constraining_and_norm = {self._normalize_tag_for_match(t) for t in constraining_tags_and}
+        constraining_or_norm = {self._normalize_tag_for_match(t) for t in constraining_tags_or}
         allowed_norm = self._get_active_category_match_tags_normalized() if self._active_categories else None
 
         if self._active_categories:
@@ -2367,14 +2398,19 @@ class MainWindow(QMainWindow):
         else:
             category_matched = list(all_images)
 
-        # Step 2: apply constraining tags (label categories) as global AND
-        if not constraining_normalized:
-            return category_matched
-        filtered_images = [
-            m for m in category_matched
-            if constraining_normalized.issubset({self._normalize_tag_for_match(t) for t in m.tags})
-        ]
-        return filtered_images
+        # Apply AND label (Miscellaneous): image must have all selected tags
+        if constraining_and_norm:
+            category_matched = [
+                m for m in category_matched
+                if constraining_and_norm.issubset({self._normalize_tag_for_match(t) for t in m.tags})
+            ]
+        # Apply OR label (Camera-Angle): image must have at least one selected tag
+        if constraining_or_norm:
+            category_matched = [
+                m for m in category_matched
+                if constraining_or_norm & {self._normalize_tag_for_match(t) for t in m.tags}
+            ]
+        return category_matched
 
     def _set_button_active(self, button: QPushButton, active: bool) -> None:
         """

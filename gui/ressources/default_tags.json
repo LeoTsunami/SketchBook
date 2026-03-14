@@ -1,8 +1,5 @@
 {
   "Human": [
-    "Portrait",
-    "Hands",
-    "Feet",
     "Male",
     "Female",
     "Clothed",
@@ -15,10 +12,7 @@
     "Insect",
     "Bird",
     "Terrestrial",
-    "Aquatic",
-    "Portrait",
-    "Hands",
-    "Feet"
+    "Aquatic"
   ],
   "Landscape": [
     "Castle",
@@ -39,7 +33,11 @@
   "Camera-Angle:": [
     "Wide-Angle",
     "Close-Up",
-    "Full-Body"],
+    "Full-Body",
+    "Portrait",
+    "Hands",
+    "Feet"
+  ],
   "Miscellaneous:": 
   []
 }
