@@ -792,43 +792,36 @@ class MainWindow(QMainWindow):
     def _filter_images_by_category_from_list(self, images: List[ImageMetadata]) -> List[ImageMetadata]:
         """
         Filter images from a given list by category/subtag filters (keeps original order).
-        
-        Args:
-            images: List of images to filter (order will be preserved).
-            
-        Returns:
-            Filtered list of images in the same order.
+        Label categories (Miscellaneous, Camera-Angle) are applied as global AND, same as _filter_images_by_category.
         """
-        if not self._active_categories and not self._active_subtags:
+        label_categories = ["Miscellaneous:", "Camera-Angle:"]
+        constraining_tags: Set[str] = set()
+        for label_cat in label_categories:
+            constraining_tags.update(self._active_subtags.get(label_cat, set()))
+
+        if not self._active_categories and not constraining_tags and not self._active_subtags:
             return images
-        
+
         filtered = []
+        constraining_norm = {self._normalize_tag_for_match(t) for t in constraining_tags} if constraining_tags else None
+        # Precompute once: tags that match any active category (narrowed by selected subtags)
+        allowed_norm = self._get_active_category_match_tags_normalized() if self._active_categories else None
+
         for metadata in images:
-            image_tags = metadata.tags
-            
-            # Check category match (OR logic between categories)
-            category_match = False
+            image_tags_norm = {self._normalize_tag_for_match(t) for t in metadata.tags}
+
             if not self._active_categories:
-                category_match = True  # No category selected = show all
+                category_match = True
             else:
-                for category in self._active_categories:
-                    # Check if image has this category tag
-                    if category in image_tags:
-                        # Check subtags (AND logic within category)
-                        subtags = self._active_subtags.get(category, set())
-                        if not subtags:
-                            # No subtags selected for this category = match
-                            category_match = True
-                            break
-                        else:
-                            # All selected subtags must be present (AND)
-                            if subtags.issubset(image_tags):
-                                category_match = True
-                                break
-            
-            if category_match:
-                filtered.append(metadata)
-        
+                category_match = bool(image_tags_norm & allowed_norm)
+
+            if not category_match:
+                continue
+            # Label categories (Miscellaneous, Camera-Angle) as global AND
+            if constraining_norm and not constraining_norm.issubset(image_tags_norm):
+                continue
+            filtered.append(metadata)
+
         return filtered
     
     def _get_current_sort_order(self) -> str:
@@ -2003,25 +1996,12 @@ class MainWindow(QMainWindow):
         # Preserve expand/filter state so source category stays expanded and active
         saved_categories = set(self._active_categories)
         saved_subtags = {k: set(v) for k, v in self._active_subtags.items()}
-        _sr = {k: sorted(v) for k, v in saved_subtags.items()}
-        print(f"[TAG_DROP] 1 SAVED AT DROP: saved_categories={sorted(saved_categories)!r} saved_subtags={_sr!r} role={role!r} key={key!r}")
-        self._debug_tag_grid_expand_state("1 SAVED AT DROP (widget state before rebuild)")
         # Defer heavy rebuild to next event loop to avoid lag on drop
         def _do_tag_grid_rebuild() -> None:
-            _st0 = {k: sorted(v) for k, v in saved_subtags.items()}
-            print(f"[TAG_DROP] 2 DEFERRED START: saved_categories={sorted(saved_categories)!r} saved_subtags={_st0!r}")
             self._user_tags_config = user_tags_config.load_config()
-            _st1 = {k: sorted(v) for k, v in self._active_subtags.items()}
-            print(f"[TAG_DROP] 3 BEFORE _load_tags_into_grid: _active_categories={sorted(self._active_categories)!r} _active_subtags={_st1!r}")
             self._load_tags_into_grid(skip_sync=True)
-            _st2 = {k: sorted(v) for k, v in self._active_subtags.items()}
-            print(f"[TAG_DROP] 4 AFTER _load_tags_into_grid (before restore): _active_categories={sorted(self._active_categories)!r} _active_subtags={_st2!r} _category_buttons={sorted(self._category_buttons.keys())!r}")
-            self._debug_tag_grid_expand_state("4 AFTER LOAD before restore")
             self._active_categories = saved_categories
             self._active_subtags = saved_subtags
-            _st3 = {k: sorted(v) for k, v in self._active_subtags.items()}
-            print(f"[TAG_DROP] 5 AFTER RESTORE: _active_categories={sorted(self._active_categories)!r} _active_subtags={_st3!r}")
-            self._debug_tag_grid_expand_state("5 AFTER RESTORE")
             if role == "category":
                 self._active_categories.add(key)
                 self._active_subtags.setdefault(key, set())
@@ -2030,16 +2010,7 @@ class MainWindow(QMainWindow):
                 if category:
                     self._active_categories.add(category)
                     self._active_subtags.setdefault(category, set()).add(key)
-                else:
-                    print(f"[TAG_DROP] WARNING: key={key!r} has no _subtag_to_category")
-            _st4 = {k: sorted(v) for k, v in self._active_subtags.items()}
-            print(f"[TAG_DROP] 6 AFTER ADD TARGET: _active_categories={sorted(self._active_categories)!r} _active_subtags={_st4!r}")
-            self._debug_tag_grid_expand_state("6 AFTER ADD TARGET (before sync)")
-            setattr(self, "_tag_drop_debug_sync", True)
             self._sync_tag_grid_state()
-            setattr(self, "_tag_drop_debug_sync", False)
-            print(f"[TAG_DROP] 7 DONE _sync_tag_grid_state")
-            self._debug_tag_grid_expand_state("7 AFTER SYNC")
             # Defer layout/repaint to next event loop; hide/show forces scroll area to relayout
             def _force_layout_update() -> None:
                 for container in self._subcategory_containers.values():
@@ -2057,7 +2028,6 @@ class MainWindow(QMainWindow):
                 self.tags_grid_container.update()
                 if hasattr(self, "tags_scroll_area") and self.tags_scroll_area.viewport():
                     self.tags_scroll_area.viewport().update()
-                self._debug_tag_grid_expand_state("8 AFTER FORCE LAYOUT")
             QTimer.singleShot(0, _force_layout_update)
 
         QTimer.singleShot(0, _do_tag_grid_rebuild)
@@ -2132,27 +2102,58 @@ class MainWindow(QMainWindow):
             if isinstance(pl, dict) and pl.get("parent_tag") == tag
         ]
 
-    def _debug_tag_grid_expand_state(self, label: str) -> None:
-        """Print expand/collapse state: data (_active_categories, _active_subtags) and actual widget visibility."""
-        data_cat = sorted(getattr(self, "_active_categories", set()))
-        data_st = {k: sorted(v) for k, v in getattr(self, "_active_subtags", {}).items()}
-        print(f"[TAG_DROP] === {label} ===")
-        print(f"[TAG_DROP]   DATA: _active_categories={data_cat!r} _active_subtags={data_st!r}")
-        cat_buttons = getattr(self, "_category_buttons", None) or {}
-        sub_buttons = getattr(self, "_subcategory_buttons", None) or {}
-        containers = getattr(self, "_subcategory_containers", None) or {}
-        for cat in sorted(cat_buttons.keys()):
-            btn = cat_buttons.get(cat)
-            cont = containers.get(cat)
-            active_prop = btn.property("tagActive") if btn else "?"
-            cont_vis = cont.isVisible() if cont else "?"
-            cont_h = cont.size().height() if cont else "?"
-            in_data = cat in getattr(self, "_active_categories", set())
-            print(f"[TAG_DROP]   CAT {cat!r}: data_expanded={in_data} cat_btn.tagActive={active_prop} container.isVisible={cont_vis} container.height={cont_h}")
-            for tag, tbtn in (sub_buttons.get(cat) or {}).items():
-                tvis = tbtn.isVisible() if tbtn else "?"
-                print(f"[TAG_DROP]     tag {tag!r}: isVisible={tvis}")
-        print(f"[TAG_DROP] === END {label} ===")
+    def _get_all_descendants(self, tag: str) -> Set[str]:
+        """
+        Return tag plus all tags that are direct or indirect children (parent_tag chain).
+        Used so filtering by a category shows images that have the category or any subtag.
+        """
+        result: Set[str] = {tag}
+        for child in self._get_children_of_tag(tag):
+            result.update(self._get_all_descendants(child))
+        return result
+
+    def _get_category_match_tags(self, category: str) -> Set[str]:
+        """
+        Category name plus all tags displayed under it (direct or nested).
+        """
+        result: Set[str] = {category}
+        for tag in self._subcategory_buttons.get(category, {}):
+            result.update(self._get_all_descendants(tag))
+        return result
+
+    def _get_effective_category_match_tags(self, category: str) -> Set[str]:
+        """
+        Tags that count as matching this category for the current filter.
+        - If only the category is selected: category and all its descendants.
+        - If subtags are selected: only the "leaves" of the selection (most specific) and their descendants.
+          E.g. Animal + Reptile + Tortoise → only Tortoise (Tortoise is the leaf). Reptile only → Reptile + its descendants.
+        """
+        selected = self._active_subtags.get(category, set())
+        if not selected:
+            return self._get_category_match_tags(category)
+        # Leaves = selected tags that have no other selected tag as descendant (most specific wins)
+        selected_leaves: Set[str] = set()
+        for t in selected:
+            desc = self._get_all_descendants(t)
+            if desc & selected == {t}:
+                selected_leaves.add(t)
+        if not selected_leaves:
+            selected_leaves = selected
+        result: Set[str] = set()
+        for tag in selected_leaves:
+            result.update(self._get_all_descendants(tag))
+        return result
+
+    def _get_active_category_match_tags_normalized(self) -> Set[str]:
+        """
+        Precompute once: normalized set of tags that match any active category.
+        Used so we do not recompute descendant sets for every image (perf).
+        """
+        out: Set[str] = set()
+        for category in self._active_categories:
+            for t in self._get_effective_category_match_tags(category):
+                out.add(self._normalize_tag_for_match(t))
+        return out
 
     def _sync_tag_grid_state(self) -> None:
         """
@@ -2162,15 +2163,10 @@ class MainWindow(QMainWindow):
         its children on the next row(s), then the rest. Rebuilds each category's tag container
         layout with only visible tags so the grid has no holes.
         """
-        if getattr(self, "_tag_drop_debug_sync", False):
-            _st = {k: sorted(v) for k, v in self._active_subtags.items()}
-            print(f"[TAG_DROP] _sync_tag_grid_state ENTRY: _active_categories={sorted(self._active_categories)!r} _active_subtags={_st!r} _category_buttons keys={sorted(self._category_buttons.keys())!r}")
         max_cols = 3
         placements = self._user_tags_config.get("placements", {})
         for category, button in self._category_buttons.items():
             is_active = category in self._active_categories
-            if getattr(self, "_tag_drop_debug_sync", False):
-                print(f"[TAG_DROP]   category {category!r} is_active={is_active} (in _active_categories={category in self._active_categories})")
             self._set_button_active(button, is_active)
             category_subtags = self._active_subtags.get(category, set())
             for tag, tag_button in self._subcategory_buttons.get(category, {}).items():
@@ -2360,22 +2356,15 @@ class MainWindow(QMainWindow):
             return all_images
 
         constraining_normalized = {self._normalize_tag_for_match(t) for t in constraining_tags}
+        # Precompute once: tags that match any active category (narrowed by selected subtags: Animal → Reptile → Tortoise)
+        allowed_norm = self._get_active_category_match_tags_normalized() if self._active_categories else None
 
-        # Step 1: images matching at least one active regular category (with its sub-tags)
         if self._active_categories:
-            category_matched = []
-            for metadata in all_images:
-                image_tags_norm = {self._normalize_tag_for_match(t) for t in metadata.tags}
-                for category in self._active_categories:
-                    if self._normalize_tag_for_match(category) not in image_tags_norm:
-                        continue
-                    required = self._active_subtags.get(category, set())
-                    required_norm = {self._normalize_tag_for_match(t) for t in required}
-                    if required_norm.issubset(image_tags_norm):
-                        category_matched.append(metadata)
-                        break
+            category_matched = [
+                m for m in all_images
+                if allowed_norm & {self._normalize_tag_for_match(t) for t in m.tags}
+            ]
         else:
-            # No category selected: start from all images (then apply constraining tags only)
             category_matched = list(all_images)
 
         # Step 2: apply constraining tags (label categories) as global AND
