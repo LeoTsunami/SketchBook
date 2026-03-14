@@ -57,23 +57,15 @@ class ImageManager:
         Returns:
             True if the image is a duplicate
         """
-        print(f"\n=== Starting duplicate check for: {source_path} ===")
         source_name = source_path.stem.lower()  # Nom sans extension en minuscules
         source_size = source_path.stat().st_size
         source_resolution = source_img.size
-        
-        print(f"Source details:")
-        print(f"- Name (without extension): {source_name}")
-        print(f"- Size: {source_size} bytes")
-        print(f"- Resolution: {source_resolution}")
-        
+
         for metadata in self.db.list_images():
             # Si le chemin original est le même, c'est un doublon
             if metadata.original_path and Path(metadata.original_path) == source_path:
-                print(f"\n=== DUPLICATE FOUND (same path) ===")
-                print(f"Matches with: {metadata.original_filename}")
                 return True
-            
+
             # Compare la taille et la résolution
             if metadata.file_size == source_size and \
                metadata.width == source_resolution[0] and \
@@ -81,14 +73,8 @@ class ImageManager:
                 # Si même taille et résolution, on compare les noms (sans extension)
                 existing_name = metadata.original_filename.rsplit('.', 1)[0].lower()
                 if source_name == existing_name:
-                    print(f"\n=== DUPLICATE FOUND ===")
-                    print(f"Matches with: {metadata.original_filename}")
-                    print(f"Same name: {source_name}")
-                    print(f"Same size: {source_size}")
-                    print(f"Same resolution: {source_resolution}")
                     return True
-        
-        print(f"\n=== No duplicates found ===\n")
+
         return False
     
     def find_images_in_directory(self, directory: Path) -> List[Path]:

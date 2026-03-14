@@ -49,7 +49,6 @@ class ImageImportWorker(QRunnable):
     def _log(self, message: str, level: str = "INFO"):
         """Emit a log message."""
         self.signals.log.emit(message, level)
-        print(f"[{level}] {message}")  # Add console logging for debugging
         
     @Slot()
     def run(self):

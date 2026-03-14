@@ -93,11 +93,9 @@ def build_course_run(
     # Use exact order if requested (for course_random mode), otherwise shuffle
     if use_exact_order:
         ids = list(image_ids)  # Use exact order from grid
-        print(f"[DEBUG] build_course_run: Using EXACT order (no shuffle) - First 5 IDs: {ids[:5]}")
     else:
         # Use deterministic shuffle to match grid sort order
         ids = _shuffle_image_ids_for_session(image_ids, shuffle_iteration=shuffle_iteration)
-        print(f"[DEBUG] build_course_run: Shuffled - First 5 IDs: {ids[:5]}")
     
     run: List[Tuple[str, int]] = []
     n = 0
@@ -221,10 +219,6 @@ class SessionManager:
                 (p for p in presets if p["duration_minutes"] == course_duration_minutes),
                 None,
             )
-            # Debug: print what we receive
-            print(f"[DEBUG] start_session (Course): Received {len(image_ids)} image IDs")
-            print(f"[DEBUG] start_session (Course): First 5 IDs: {image_ids[:5]}")
-            
             self.session_run = build_course_run(
                 image_ids, 
                 presets, 
@@ -247,11 +241,9 @@ class SessionManager:
             # Use exact order if requested (for course_random mode), otherwise shuffle
             if use_exact_order:
                 ids = list(image_ids)  # Use exact order from grid
-                print(f"[DEBUG] start_session (Constant): Using EXACT order (no shuffle) - First 5 IDs: {ids[:5]}")
             else:
                 # Use deterministic shuffle to match grid sort order
                 ids = _shuffle_image_ids_for_session(image_ids, shuffle_iteration=shuffle_iteration)
-                print(f"[DEBUG] start_session (Constant): Shuffled - First 5 IDs: {ids[:5]}")
             
             self.session_run = [(iid, interval_seconds) for iid in ids]
             self._session_display_name = f"Constant {interval_seconds}s"

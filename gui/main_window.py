@@ -35,6 +35,7 @@ from qtpy.QtWidgets import (
     QMenu,
     QRubberBand,
     QApplication,
+    QLayout,
 )
 from qtpy.QtCore import (
     Qt,
@@ -150,9 +151,11 @@ class TagGridDropFilter(QObject):
                 pos = event.position().toPoint() if hasattr(event, "position") and hasattr(event.position(), "toPoint") else event.pos()
                 target = self._main._get_tag_grid_drop_target_at(pos)
                 self._main._set_tag_grid_drop_highlight(target)
+                self._main._on_tag_grid_drag_hover(target)
             return True
         if event.type() == _drag_leave:
             self._main._set_tag_grid_drop_highlight(None)
+            self._main._tag_grid_hover_expand_cancel()
             return False
         if event.type() == _drop_type:
             self._main._on_tag_grid_drop(event)
@@ -271,6 +274,8 @@ class MainWindow(QMainWindow):
         self._tag_drop_was_on_grid: bool = False  # True when last drop was on tag grid (reparent), so button was destroyed
         self._tag_drag_in_progress: bool = False
         self._tag_drag_scroll_timer: Optional[QTimer] = None  # auto-scroll tag library during drag
+        self._tag_grid_hover_expand_timer: Optional[QTimer] = None  # expand category/tag after 0.5s hover during drag
+        self._tag_grid_hover_target: Optional[Tuple[str, str]] = None  # (role, key) under cursor
 
         # Window setup
         self.setWindowTitle("SketchBook")
@@ -420,11 +425,13 @@ class MainWindow(QMainWindow):
         self.tags_grid_layout = QGridLayout(self.tags_grid_container)
         self.tags_grid_layout.setContentsMargins(0, 0, 0, 0)
         self.tags_grid_layout.setSpacing(10)
-        # Align content to top
         self.tags_grid_layout.setAlignment(Qt.AlignTop)
+        # So layout reports minimum size needed for visible content (fixes expand/collapse after drop)
+        self.tags_grid_layout.setSizeConstraint(QLayout.SetMinimumSize)
 
         self.tags_scroll_area = QScrollArea()
-        self.tags_scroll_area.setWidgetResizable(True)
+        # False so content widget uses sizeHint() from layout; expanded rows then get correct height
+        self.tags_scroll_area.setWidgetResizable(False)
         self.tags_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.tags_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.tags_scroll_area.setFrameShape(QFrame.NoFrame)
@@ -644,7 +651,6 @@ class MainWindow(QMainWindow):
         middle_layout.addLayout(grid_controls)
         
         # Create image grid
-        print("Creating image grid")
         self.image_grid = ImageGrid(self.image_manager)
         self.image_grid.set_columns(self.columns_slider.value())
         self.image_grid.image_double_clicked.connect(self._on_image_clicked)
@@ -782,10 +788,7 @@ class MainWindow(QMainWindow):
         # Store filtered list for session (for course_random mode only)
         if sort_by == "course_random":
             self._filtered_course_random_list = images_to_display.copy()
-            # Debug: print what's stored for grid
-            first_5_ids = [img.id for img in images_to_display[:5]]
-            print(f"[DEBUG] GRID DISPLAY - {len(images_to_display)} images | First 5 IDs: {first_5_ids}")
-    
+
     def _filter_images_by_category_from_list(self, images: List[ImageMetadata]) -> List[ImageMetadata]:
         """
         Filter images from a given list by category/subtag filters (keeps original order).
@@ -895,11 +898,7 @@ class MainWindow(QMainWindow):
             "course_random", 
             shuffle_iteration=self._shuffle_counter
         )
-        
-        # Debug: print the global list
-        print(f"[DEBUG] INIT/SHUFFLE: Generated random list ({len(self._course_random_images_list)} images)")
-        print(f"[DEBUG] First 5 IDs: {[img.id for img in self._course_random_images_list[:5]]}")
-    
+
     def _apply_and_or_filters(self, images: List) -> List:
         """
         Apply AND/OR filters to the image list (only on user tags).
@@ -1002,11 +1001,7 @@ class MainWindow(QMainWindow):
             else:
                 # Use the stored filtered list (same as grid)
                 filtered_images = self._filtered_course_random_list
-            
-            # Debug: print first 5 elements sent to session
-            first_5_ids = [img.id for img in filtered_images[:5]]
-            print(f"[DEBUG] SESSION BEGIN - {len(filtered_images)} images | First 5 IDs: {first_5_ids}")
-            
+
             shuffle_iteration = self._shuffle_counter
         else:
             # For other sort modes, get current filtered images
@@ -1026,10 +1021,6 @@ class MainWindow(QMainWindow):
         window_mode = settings_dict["window_mode"]
         # Use image IDs in the stored order (for course_random) or current order (for others)
         image_ids = [m.id for m in filtered_images]
-        
-        # Debug: print IDs being sent
-        print(f"[DEBUG] _on_session_settings_clicked: Sending {len(image_ids)} IDs to session")
-        print(f"[DEBUG] _on_session_settings_clicked: First 5 IDs: {image_ids[:5]}")
 
         course_duration_minutes: Optional[int] = None
         interval_seconds: Optional[int] = None
@@ -1120,8 +1111,10 @@ class MainWindow(QMainWindow):
                     changed = True
         return result
 
-    def _load_tags_into_grid(self):
-        """Load tags from JSON and user config into the tags grid."""
+    def _load_tags_into_grid(self, skip_sync: bool = False) -> None:
+        """Load tags from JSON and user config into the tags grid.
+        If skip_sync is True, do not call _sync_tag_grid_state at the end (caller will sync after restoring expand state).
+        """
         while self.tags_grid_layout.count():
             item = self.tags_grid_layout.takeAt(0)
             if item.widget():
@@ -1195,6 +1188,7 @@ class MainWindow(QMainWindow):
                     tag_container_layout = QGridLayout(tag_container)
                     tag_container_layout.setContentsMargins(0, 0, 0, 0)
                     tag_container_layout.setSpacing(10)
+                    tag_container_layout.setSizeConstraint(QLayout.SetMinimumSize)
                     subtag_buttons: Dict[str, QPushButton] = {}
                     for idx, tag in enumerate(unique_subtags):
                         is_user_tag = tag in user_tags_set
@@ -1238,7 +1232,8 @@ class MainWindow(QMainWindow):
                 max_row = max(max_row, row + row_span - 1)
         if max_row >= 0:
             self.tags_grid_layout.setRowStretch(max_row + 1, 1)
-        self._sync_tag_grid_state()
+        if not skip_sync:
+            self._sync_tag_grid_state()
 
 
     def _build_tag_button(self, tag: str, is_user_tag: bool = False) -> QPushButton:
@@ -1919,9 +1914,54 @@ class MainWindow(QMainWindow):
             widget.style().unpolish(widget)
             widget.style().polish(widget)
 
+    def _on_tag_grid_drag_hover(self, target: Optional[QWidget]) -> None:
+        """While dragging over the tag grid: start 0.5s timer to expand category/tag under cursor."""
+        if target is None:
+            self._tag_grid_hover_expand_cancel()
+            return
+        role = target.property("tagGridRole") if target else None
+        key = target.property("tagGridKey") if target else None
+        if not role or not key:
+            self._tag_grid_hover_expand_cancel()
+            return
+        current = (role, key)
+        if current == self._tag_grid_hover_target:
+            return
+        self._tag_grid_hover_expand_cancel()
+        self._tag_grid_hover_target = current
+        if self._tag_grid_hover_expand_timer is None:
+            self._tag_grid_hover_expand_timer = QTimer(self)
+            self._tag_grid_hover_expand_timer.setSingleShot(True)
+            self._tag_grid_hover_expand_timer.timeout.connect(self._tag_grid_hover_expand_fire)
+        self._tag_grid_hover_expand_timer.start(500)
+
+    def _tag_grid_hover_expand_cancel(self) -> None:
+        """Cancel hover-expand timer and clear target (e.g. on DragLeave or when target changes)."""
+        if self._tag_grid_hover_expand_timer is not None:
+            self._tag_grid_hover_expand_timer.stop()
+            self._tag_grid_hover_expand_timer = None
+        self._tag_grid_hover_target = None
+
+    def _tag_grid_hover_expand_fire(self) -> None:
+        """Expand the category or tag that was hovered for 0.5s (so user can see where to drop)."""
+        if self._tag_grid_hover_target is None:
+            return
+        role, key = self._tag_grid_hover_target
+        self._tag_grid_hover_target = None
+        if role == "category":
+            self._active_categories.add(key)
+            self._active_subtags.setdefault(key, set())
+        else:
+            category = self._subtag_to_category.get(key)
+            if category:
+                self._active_categories.add(category)
+                self._active_subtags.setdefault(category, set()).add(key)
+        self._sync_tag_grid_state()
+
     def _on_tag_grid_drop(self, event: "QDropEvent") -> None:
         """Reposition a user tag when dropped on a category or tag in the grid."""
         self._set_tag_grid_drop_highlight(None)
+        self._tag_grid_hover_expand_cancel()
         if not event.mimeData().hasFormat(TAG_LIBRARY_MIME):
             return
         raw = event.mimeData().data(TAG_LIBRARY_MIME)
@@ -1960,18 +2000,67 @@ class MainWindow(QMainWindow):
             cfg.get("icons", {}),
             cfg.get("registered_only"),
         )
-        self._user_tags_config = user_tags_config.load_config()
-        self._load_tags_into_grid()
-        # Expand the drop target (category or parent tag) so the result is visible
-        if role == "category":
-            self._active_categories.add(key)
-            self._active_subtags.setdefault(key, set())
-        else:
-            category = self._subtag_to_category.get(key)
-            if category:
-                self._active_categories.add(category)
-                self._active_subtags.setdefault(category, set()).add(key)
-        self._sync_tag_grid_state()
+        # Preserve expand/filter state so source category stays expanded and active
+        saved_categories = set(self._active_categories)
+        saved_subtags = {k: set(v) for k, v in self._active_subtags.items()}
+        _sr = {k: sorted(v) for k, v in saved_subtags.items()}
+        print(f"[TAG_DROP] 1 SAVED AT DROP: saved_categories={sorted(saved_categories)!r} saved_subtags={_sr!r} role={role!r} key={key!r}")
+        self._debug_tag_grid_expand_state("1 SAVED AT DROP (widget state before rebuild)")
+        # Defer heavy rebuild to next event loop to avoid lag on drop
+        def _do_tag_grid_rebuild() -> None:
+            _st0 = {k: sorted(v) for k, v in saved_subtags.items()}
+            print(f"[TAG_DROP] 2 DEFERRED START: saved_categories={sorted(saved_categories)!r} saved_subtags={_st0!r}")
+            self._user_tags_config = user_tags_config.load_config()
+            _st1 = {k: sorted(v) for k, v in self._active_subtags.items()}
+            print(f"[TAG_DROP] 3 BEFORE _load_tags_into_grid: _active_categories={sorted(self._active_categories)!r} _active_subtags={_st1!r}")
+            self._load_tags_into_grid(skip_sync=True)
+            _st2 = {k: sorted(v) for k, v in self._active_subtags.items()}
+            print(f"[TAG_DROP] 4 AFTER _load_tags_into_grid (before restore): _active_categories={sorted(self._active_categories)!r} _active_subtags={_st2!r} _category_buttons={sorted(self._category_buttons.keys())!r}")
+            self._debug_tag_grid_expand_state("4 AFTER LOAD before restore")
+            self._active_categories = saved_categories
+            self._active_subtags = saved_subtags
+            _st3 = {k: sorted(v) for k, v in self._active_subtags.items()}
+            print(f"[TAG_DROP] 5 AFTER RESTORE: _active_categories={sorted(self._active_categories)!r} _active_subtags={_st3!r}")
+            self._debug_tag_grid_expand_state("5 AFTER RESTORE")
+            if role == "category":
+                self._active_categories.add(key)
+                self._active_subtags.setdefault(key, set())
+            else:
+                category = self._subtag_to_category.get(key)
+                if category:
+                    self._active_categories.add(category)
+                    self._active_subtags.setdefault(category, set()).add(key)
+                else:
+                    print(f"[TAG_DROP] WARNING: key={key!r} has no _subtag_to_category")
+            _st4 = {k: sorted(v) for k, v in self._active_subtags.items()}
+            print(f"[TAG_DROP] 6 AFTER ADD TARGET: _active_categories={sorted(self._active_categories)!r} _active_subtags={_st4!r}")
+            self._debug_tag_grid_expand_state("6 AFTER ADD TARGET (before sync)")
+            setattr(self, "_tag_drop_debug_sync", True)
+            self._sync_tag_grid_state()
+            setattr(self, "_tag_drop_debug_sync", False)
+            print(f"[TAG_DROP] 7 DONE _sync_tag_grid_state")
+            self._debug_tag_grid_expand_state("7 AFTER SYNC")
+            # Defer layout/repaint to next event loop; hide/show forces scroll area to relayout
+            def _force_layout_update() -> None:
+                for container in self._subcategory_containers.values():
+                    lay = container.layout()
+                    if lay:
+                        lay.invalidate()
+                        lay.activate()
+                self.tags_grid_layout.invalidate()
+                self.tags_grid_layout.activate()
+                self.tags_grid_container.updateGeometry()
+                self.tags_grid_container.adjustSize()
+                # Force QScrollArea to recompute content size (hide/show triggers full relayout)
+                self.tags_grid_container.setVisible(False)
+                self.tags_grid_container.setVisible(True)
+                self.tags_grid_container.update()
+                if hasattr(self, "tags_scroll_area") and self.tags_scroll_area.viewport():
+                    self.tags_scroll_area.viewport().update()
+                self._debug_tag_grid_expand_state("8 AFTER FORCE LAYOUT")
+            QTimer.singleShot(0, _force_layout_update)
+
+        QTimer.singleShot(0, _do_tag_grid_rebuild)
 
     def _on_add_user_tag_clicked(self) -> None:
         """Open dialog to add a new user tag (name + optional icon)."""
@@ -2043,6 +2132,28 @@ class MainWindow(QMainWindow):
             if isinstance(pl, dict) and pl.get("parent_tag") == tag
         ]
 
+    def _debug_tag_grid_expand_state(self, label: str) -> None:
+        """Print expand/collapse state: data (_active_categories, _active_subtags) and actual widget visibility."""
+        data_cat = sorted(getattr(self, "_active_categories", set()))
+        data_st = {k: sorted(v) for k, v in getattr(self, "_active_subtags", {}).items()}
+        print(f"[TAG_DROP] === {label} ===")
+        print(f"[TAG_DROP]   DATA: _active_categories={data_cat!r} _active_subtags={data_st!r}")
+        cat_buttons = getattr(self, "_category_buttons", None) or {}
+        sub_buttons = getattr(self, "_subcategory_buttons", None) or {}
+        containers = getattr(self, "_subcategory_containers", None) or {}
+        for cat in sorted(cat_buttons.keys()):
+            btn = cat_buttons.get(cat)
+            cont = containers.get(cat)
+            active_prop = btn.property("tagActive") if btn else "?"
+            cont_vis = cont.isVisible() if cont else "?"
+            cont_h = cont.size().height() if cont else "?"
+            in_data = cat in getattr(self, "_active_categories", set())
+            print(f"[TAG_DROP]   CAT {cat!r}: data_expanded={in_data} cat_btn.tagActive={active_prop} container.isVisible={cont_vis} container.height={cont_h}")
+            for tag, tbtn in (sub_buttons.get(cat) or {}).items():
+                tvis = tbtn.isVisible() if tbtn else "?"
+                print(f"[TAG_DROP]     tag {tag!r}: isVisible={tvis}")
+        print(f"[TAG_DROP] === END {label} ===")
+
     def _sync_tag_grid_state(self) -> None:
         """
         Sync tag grid button states with active filters.
@@ -2051,10 +2162,15 @@ class MainWindow(QMainWindow):
         its children on the next row(s), then the rest. Rebuilds each category's tag container
         layout with only visible tags so the grid has no holes.
         """
+        if getattr(self, "_tag_drop_debug_sync", False):
+            _st = {k: sorted(v) for k, v in self._active_subtags.items()}
+            print(f"[TAG_DROP] _sync_tag_grid_state ENTRY: _active_categories={sorted(self._active_categories)!r} _active_subtags={_st!r} _category_buttons keys={sorted(self._category_buttons.keys())!r}")
         max_cols = 3
         placements = self._user_tags_config.get("placements", {})
         for category, button in self._category_buttons.items():
             is_active = category in self._active_categories
+            if getattr(self, "_tag_drop_debug_sync", False):
+                print(f"[TAG_DROP]   category {category!r} is_active={is_active} (in _active_categories={category in self._active_categories})")
             self._set_button_active(button, is_active)
             category_subtags = self._active_subtags.get(category, set())
             for tag, tag_button in self._subcategory_buttons.get(category, {}).items():
@@ -2108,6 +2224,7 @@ class MainWindow(QMainWindow):
                         tag_button.setStyleSheet("QPushButton { text-align: left; padding: 2px 4px; }")
 
         # Rebuild each category container with only visible tags (no holes).
+        # Use visibility condition (not btn.isVisible()): after takeAt(0) Qt may clear visibility.
         # When a selected tag is a sub-category (has children), show it first then its children on the next row(s), then the rest.
         label_categories_set = {"Miscellaneous:", "Camera-Angle:"}
         for category in self._subcategory_tag_order:
@@ -2124,6 +2241,14 @@ class MainWindow(QMainWindow):
             tag_order = self._subcategory_tag_order[category]
             category_subtags = self._active_subtags.get(category, set())
             subtag_buttons = self._subcategory_buttons.get(category, {})
+            is_active = category in self._active_categories
+            # Helper: should this tag be visible? (same logic as first loop)
+            def _tag_visible(tag: str) -> bool:
+                pl = placements.get(tag)
+                parent_tag = pl.get("parent_tag") if isinstance(pl, dict) else None
+                if parent_tag is not None:
+                    return bool(is_active and parent_tag in category_subtags)
+                return bool(is_active)
             # Clear child-row style from all buttons; will set only on children when expanded
             for btn in subtag_buttons.values():
                 btn.setProperty("tagChildRow", "false")
@@ -2141,43 +2266,66 @@ class MainWindow(QMainWindow):
                 after = tag_order[idx_t + 1:]
                 children = [c for c in self._get_children_of_tag(expanded_parent) if c in tag_order]
                 rest = [x for x in after if x not in children]
-                # Segment 1: before + sub-category (stays in place)
-                # Then new row → Segment 2: children (slightly blue)
-                # Then new row → Segment 3: rest
                 idx = 0
                 for tag in before + [expanded_parent]:
                     btn = subtag_buttons.get(tag)
-                    if btn and btn.isVisible():
+                    if btn and _tag_visible(tag):
                         row, col = idx // max_cols, idx % max_cols
                         layout.addWidget(btn, row, col)
+                        btn.setVisible(True)
                         idx += 1
-                # Force next row before children
                 idx = ((idx + max_cols - 1) // max_cols) * max_cols
                 for tag in children:
                     btn = subtag_buttons.get(tag)
-                    if btn and btn.isVisible():
+                    if btn and _tag_visible(tag):
                         row, col = idx // max_cols, idx % max_cols
                         layout.addWidget(btn, row, col)
                         btn.setProperty("tagChildRow", "true")
                         btn.style().unpolish(btn)
                         btn.style().polish(btn)
+                        btn.setVisible(True)
                         idx += 1
-                # Force next row before rest
                 idx = ((idx + max_cols - 1) // max_cols) * max_cols
                 for tag in rest:
                     btn = subtag_buttons.get(tag)
-                    if btn and btn.isVisible():
+                    if btn and _tag_visible(tag):
                         row, col = idx // max_cols, idx % max_cols
                         layout.addWidget(btn, row, col)
+                        btn.setVisible(True)
                         idx += 1
             else:
                 idx = 0
                 for tag in tag_order:
                     btn = subtag_buttons.get(tag)
-                    if btn and btn.isVisible():
+                    if btn and _tag_visible(tag):
                         row, col = idx // max_cols, idx % max_cols
                         layout.addWidget(btn, row, col)
+                        btn.setVisible(True)
                         idx += 1
+            # Force minimum height when expanded so layout cannot collapse row to 0 (debug showed height=0 at step 8)
+            if is_active:
+                container.setMinimumHeight(60)
+                container.setVisible(True)
+            else:
+                container.setMinimumHeight(0)
+                container.setVisible(True)
+
+        # Force layout recalculation: Qt often does not recalculate when children go from
+        # hidden to visible after a full rebuild. Invalidate then activate inner layouts first,
+        # then the main grid layout (see QTBUG-66151, nested QGridLayout).
+        for container in self._subcategory_containers.values():
+            lay = container.layout()
+            if lay:
+                lay.invalidate()
+                lay.activate()
+            container.updateGeometry()
+        self.tags_grid_layout.invalidate()
+        self.tags_grid_layout.activate()
+        self.tags_grid_container.updateGeometry()
+        self.tags_grid_container.adjustSize()
+        self.tags_grid_container.update()
+        if hasattr(self, "tags_scroll_area") and self.tags_scroll_area.viewport():
+            self.tags_scroll_area.viewport().update()
 
     @staticmethod
     def _normalize_tag_for_match(tag: str) -> str:

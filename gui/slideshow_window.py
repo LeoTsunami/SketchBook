@@ -72,7 +72,7 @@ def _dbg(msg: str) -> None:
         msg: Debug message to print.
     """
     if _DEBUG_SLIDESHOW_DIMENSIONS:
-        print(f"[Slideshow DEBUG] {msg}")
+        pass  # debug: msg
 
 
 def _dbg_space(msg: str) -> None:
@@ -83,7 +83,7 @@ def _dbg_space(msg: str) -> None:
         msg: Debug message to print.
     """
     if _DEBUG_SPACE_PLAYPAUSE:
-        print(f"[Slideshow Space] {msg}")
+        pass  # debug: msg
 
 
 
