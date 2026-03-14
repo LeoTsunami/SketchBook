@@ -3,6 +3,7 @@ Local database for image metadata management.
 """
 import json
 import re
+import shutil
 import threading
 import time
 import random
@@ -24,6 +25,8 @@ _shuffle_timestamp = int(time.time() * 1000000)
 _SAVE_RETRY_COUNT = 5
 _SAVE_RETRY_DELAY_S = 0.15
 _DEBOUNCE_SAVE_DELAY_S = 0.45
+# Backup: one backup file before each save so a corrupted write can be recovered
+_IMAGES_DB_BACKUP_SUFFIX = ".bak"
 
 @dataclass
 class ImageMetadata:
@@ -46,6 +49,7 @@ class ImageDatabase:
         """Initialize the database."""
         # Use user data directory for database
         self._db_path = user_data.get_images_db_path()
+        self._backup_path = self._db_path.parent / (self._db_path.name + _IMAGES_DB_BACKUP_SUFFIX)
         self._db_path.parent.mkdir(parents=True, exist_ok=True)
         self._images = {}
         self._save_lock = threading.Lock()
@@ -53,9 +57,46 @@ class ImageDatabase:
         self._save_timer = None  # threading.Timer for debounced save
         self._load_db()
     
+    def _load_data_from_path(self, path: Path) -> Optional[Dict]:
+        """Load and parse JSON from path. Returns dict of id -> metadata dict, or None on error."""
+        if not path.exists():
+            return None
+        try:
+            with open(path, "r", encoding="utf-8") as f:
+                return json.load(f)
+        except (json.JSONDecodeError, OSError):
+            return None
+
+    def _try_restore_from_backup(self) -> bool:
+        """
+        If main DB is missing or corrupted, try loading from backup.
+        On success, sets self._images and overwrites main file with backup. Returns True.
+        """
+        data = self._load_data_from_path(self._backup_path)
+        if data is None:
+            return False
+        try:
+            self._images = {
+                id: ImageMetadata(**{
+                    k: set(v) if k == "tags" else v
+                    for k, v in metadata.items()
+                })
+                for id, metadata in data.items()
+            }
+        except (TypeError, KeyError):
+            return False
+        try:
+            shutil.copy2(self._backup_path, self._db_path)
+        except OSError:
+            pass
+        print("Image database restored from backup (images.json.bak).")
+        return True
+
     def _load_db(self):
         """Load the database from disk. Tries to repair common JSON errors (e.g. trailing commas)."""
         if not self._db_path.exists():
+            if self._try_restore_from_backup():
+                return
             return
         try:
             with open(self._db_path, "r", encoding="utf-8") as f:
@@ -101,6 +142,8 @@ class ImageDatabase:
                     except json.JSONDecodeError:
                         pass
                 print(f"Error loading image database: {e}")
+                if self._try_restore_from_backup():
+                    return
                 self._images = {}
                 return
             self._images = {
@@ -114,10 +157,12 @@ class ImageDatabase:
             print("Image database repaired (trailing commas removed) and saved.")
         except Exception as e:
             print(f"Error loading image database: {str(e)}")
+            if self._try_restore_from_backup():
+                return
             self._images = {}
     
     def _save_db_impl(self) -> None:
-        """Write DB to a temp file then replace target. Retry on Windows 'file in use'."""
+        """Write DB to a temp file then replace target. Backup current file before overwrite."""
         tmp_path = self._db_path.with_suffix(self._db_path.suffix + ".tmp")
         data = {
             id: {
@@ -128,6 +173,12 @@ class ImageDatabase:
         }
         with open(tmp_path, "w", encoding="utf-8") as f:
             json.dump(data, f, indent=2)
+        # Backup current DB before overwrite so corruption can be recovered
+        if self._db_path.exists():
+            try:
+                shutil.copy2(self._db_path, self._backup_path)
+            except OSError:
+                pass  # Non-fatal; proceed with replace
         # On Windows, replace() can fail with WinError 32 if target is still in use; retry
         last_error = None
         for attempt in range(_SAVE_RETRY_COUNT):

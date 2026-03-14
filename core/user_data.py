@@ -111,10 +111,15 @@ class UserDataManager:
         dirs = [
             base / "images",
             base / "sessions",
-            base / "config"
+            base / "config",
+            self.get_backup_dir(),
         ]
         for dir_path in dirs:
             dir_path.mkdir(parents=True, exist_ok=True)
+
+    def get_backup_dir(self) -> Path:
+        """Get the config backup directory (config/backup). Created on first backup or ensure_directories."""
+        return self.get_config_dir() / "backup"
     
     def get_images_dir(self) -> Path:
         """Get the images directory path."""

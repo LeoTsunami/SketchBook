@@ -4,12 +4,14 @@ SketchBook - A desktop application for timed life drawing sessions.
 """
 import sys
 import os
+import threading
 from pathlib import Path
 from qtpy.QtWidgets import QApplication
 from qtpy.QtGui import QFontDatabase, QFont
 from gui.main_window import MainWindow
 from core.settings import settings
 from core.user_data import user_data
+from core.config_backup import run_config_backup
 
 
 # Force stdout to be unbuffered for immediate print output
@@ -77,7 +79,11 @@ def main():
     
     # Ensure directories exist
     setup_directories()
-    
+
+    # Backup config JSONs to config/backup/ in a background thread (date-time in name, keep 5)
+    backup_thread = threading.Thread(target=run_config_backup, daemon=True)
+    backup_thread.start()
+
     # Initialize and show main window
     window = MainWindow()
     window.show()
