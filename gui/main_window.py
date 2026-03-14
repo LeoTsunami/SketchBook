@@ -832,7 +832,7 @@ class MainWindow(QMainWindow):
         filtered = []
         constraining_and_norm = {self._normalize_tag_for_match(t) for t in constraining_tags_and}
         constraining_or_norm = {self._normalize_tag_for_match(t) for t in constraining_tags_or}
-        allowed_norm = self._get_active_category_match_tags_normalized() if self._active_categories else None
+        category_filter_data = self._get_active_category_filter_data() if self._active_categories else []
 
         for metadata in images:
             image_tags_norm = {self._normalize_tag_for_match(t) for t in metadata.tags}
@@ -840,7 +840,12 @@ class MainWindow(QMainWindow):
             if not self._active_categories:
                 category_match = True
             else:
-                category_match = bool(image_tags_norm & allowed_norm)
+                # Image must match at least one category: in category AND has all its selected subtags (AND)
+                category_match = False
+                for allowed_norm, required_norm in category_filter_data:
+                    if (image_tags_norm & allowed_norm) and required_norm.issubset(image_tags_norm):
+                        category_match = True
+                        break
             if not category_match:
                 continue
             if constraining_and_norm and not constraining_and_norm.issubset(image_tags_norm):
@@ -2146,39 +2151,21 @@ class MainWindow(QMainWindow):
             result.update(self._get_all_descendants(tag))
         return result
 
-    def _get_effective_category_match_tags(self, category: str) -> Set[str]:
+    def _get_active_category_filter_data(self) -> List[Tuple[Set[str], Set[str]]]:
         """
-        Tags that count as matching this category for the current filter.
-        - If only the category is selected: category and all its descendants.
-        - If subtags are selected: only the "leaves" of the selection (most specific) and their descendants.
-          E.g. Animal + Reptile + Tortoise → only Tortoise (Tortoise is the leaf). Reptile only → Reptile + its descendants.
+        Precompute per active category: (allowed_tags_norm, required_subtags_norm).
+        - allowed: tags that count as "in this category" (category + descendants).
+        - required: selected subtags for this category; image must have ALL (AND).
+        Returns list of (allowed_norm, required_norm) for each active category.
         """
-        selected = self._active_subtags.get(category, set())
-        if not selected:
-            return self._get_category_match_tags(category)
-        # Leaves = selected tags that have no other selected tag as descendant (most specific wins)
-        selected_leaves: Set[str] = set()
-        for t in selected:
-            desc = self._get_all_descendants(t)
-            if desc & selected == {t}:
-                selected_leaves.add(t)
-        if not selected_leaves:
-            selected_leaves = selected
-        result: Set[str] = set()
-        for tag in selected_leaves:
-            result.update(self._get_all_descendants(tag))
-        return result
-
-    def _get_active_category_match_tags_normalized(self) -> Set[str]:
-        """
-        Precompute once: normalized set of tags that match any active category.
-        Used so we do not recompute descendant sets for every image (perf).
-        """
-        out: Set[str] = set()
+        result: List[Tuple[Set[str], Set[str]]] = []
         for category in self._active_categories:
-            for t in self._get_effective_category_match_tags(category):
-                out.add(self._normalize_tag_for_match(t))
-        return out
+            allowed = self._get_category_match_tags(category)
+            allowed_norm = {self._normalize_tag_for_match(t) for t in allowed}
+            required = self._active_subtags.get(category, set())
+            required_norm = {self._normalize_tag_for_match(t) for t in required}
+            result.append((allowed_norm, required_norm))
+        return result
 
     def _sync_tag_grid_state(self) -> None:
         """
@@ -2388,13 +2375,16 @@ class MainWindow(QMainWindow):
 
         constraining_and_norm = {self._normalize_tag_for_match(t) for t in constraining_tags_and}
         constraining_or_norm = {self._normalize_tag_for_match(t) for t in constraining_tags_or}
-        allowed_norm = self._get_active_category_match_tags_normalized() if self._active_categories else None
+        category_filter_data = self._get_active_category_filter_data() if self._active_categories else []
 
         if self._active_categories:
-            category_matched = [
-                m for m in all_images
-                if allowed_norm & {self._normalize_tag_for_match(t) for t in m.tags}
-            ]
+            category_matched = []
+            for m in all_images:
+                image_tags_norm = {self._normalize_tag_for_match(t) for t in m.tags}
+                for allowed_norm, required_norm in category_filter_data:
+                    if (image_tags_norm & allowed_norm) and required_norm.issubset(image_tags_norm):
+                        category_matched.append(m)
+                        break
         else:
             category_matched = list(all_images)
 
