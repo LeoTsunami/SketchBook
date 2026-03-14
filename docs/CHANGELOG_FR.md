@@ -1,5 +1,15 @@
 # Journal des modifications
 
+## 2026-03-14 (Bibliothèque de tags : « Parent to tag... » depuis le menu contextuel)
+### ✅ Tâches :
+- Ajout de « Parent to tag... » au menu contextuel de la bibliothèque de tags (tags utilisateur uniquement)
+
+- **Sélection multiple** : Ctrl+clic sur des tags utilisateur pour en sélectionner plusieurs ; clic droit sur l’un d’eux → « Parent to tag... » pour déplacer tous les tags sélectionnés sous un parent choisi.
+- **Mode choix du parent** : Après « Parent to tag... », les tags à déplacer sont grisés. Une barre apparaît en haut de la bibliothèque : « Select parent tag: (none) » avec **OK** et **Cancel**. Cliquer sur un autre tag ou une catégorie le définit comme parent (le libellé se met à jour). **OK** applique le même placement que le glisser-déposer (les tags deviennent enfants de ce tag ou de cette catégorie) ; **Cancel** quitte sans modification.
+- **Implémentation** : `_tag_library_selection` pour le Ctrl+clic, `_parent_select_mode` avec la barre et `_on_parent_select_ok` / `_on_parent_select_cancel` ; `eventFilter` sur les boutons de tags utilisateur pour le Ctrl+clic ; `_sync_tag_grid_state` grise les boutons dans `_tags_to_parent` en mode parent.
+ → Résultat : On peut reparenter un ou plusieurs tags utilisateur sans glisser-déposer, en choisissant le parent puis en confirmant.
+---
+
 ## 2026-02-11 (Visionneuse : crop avec grille des tiers et 4 points déplaçables)
 ### ✅ Tâches :
 - Remplacer le crop par glisser-droite par un mode crop dédié : grille en tiers + Valider/Annuler

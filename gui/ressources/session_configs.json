@@ -3,7 +3,7 @@
     {
       "duration_minutes": 10,
       "phases": [
-        { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 5 },
+        { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 1 },
         { "name": "Gesture", "duration_seconds_per_image": 60, "count": 2 },
         { "name": "Short pose", "duration_seconds_per_image": 150, "count": 1 },
         { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 1 },
@@ -13,39 +13,39 @@
     {
       "duration_minutes": 20,
       "phases": [
-        { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 8 },
-        { "name": "Gesture", "duration_seconds_per_image": 60, "count": 6 },
+        { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 2 },
+        { "name": "Gesture", "duration_seconds_per_image": 60, "count": 4 },
         { "name": "Short pose", "duration_seconds_per_image": 150, "count": 2 },
-        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 1 },
+        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 2 },
         { "name": "Shading", "duration_seconds_per_image": 600, "count": 0 }
       ]
     },
     {
       "duration_minutes": 30,
       "phases": [
-        { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 8 },
-        { "name": "Gesture", "duration_seconds_per_image": 60, "count": 6 },
+        { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 4 },
+        { "name": "Gesture", "duration_seconds_per_image": 60, "count": 3 },
         { "name": "Short pose", "duration_seconds_per_image": 150, "count": 2 },
-        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 1 },
+        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 2 },
         { "name": "Shading", "duration_seconds_per_image": 600, "count": 1 }
       ]
     },
     {
       "duration_minutes": 40,
       "phases": [
-        { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 8 },
-        { "name": "Gesture", "duration_seconds_per_image": 60, "count": 6 },
-        { "name": "Short pose", "duration_seconds_per_image": 150, "count": 2 },
-        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 1 },
-        { "name": "Shading", "duration_seconds_per_image": 600, "count": 2 }
+        { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 4 },
+        { "name": "Gesture", "duration_seconds_per_image": 60, "count": 3 },
+        { "name": "Short pose", "duration_seconds_per_image": 150, "count": 4 },
+        { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 3 },
+        { "name": "Shading", "duration_seconds_per_image": 600, "count": 1 }
       ]
     },
     {
       "duration_minutes": 50,
       "phases": [
-        { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 8 },
-        { "name": "Gesture", "duration_seconds_per_image": 60, "count": 6 },
-        { "name": "Short pose", "duration_seconds_per_image": 150, "count": 2 },
+        { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 4 },
+        { "name": "Gesture", "duration_seconds_per_image": 60, "count": 3 },
+        { "name": "Short pose", "duration_seconds_per_image": 150, "count": 4 },
         { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 3 },
         { "name": "Shading", "duration_seconds_per_image": 600, "count": 2 }
       ]
@@ -53,9 +53,9 @@
     {
       "duration_minutes": 60,
       "phases": [
-        { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 8 },
-        { "name": "Gesture", "duration_seconds_per_image": 60, "count": 6 },
-        { "name": "Short pose", "duration_seconds_per_image": 150, "count": 2 },
+        { "name": "Warm-up", "duration_seconds_per_image": 30, "count": 4 },
+        { "name": "Gesture", "duration_seconds_per_image": 60, "count": 3 },
+        { "name": "Short pose", "duration_seconds_per_image": 150, "count": 4 },
         { "name": "Anatomy", "duration_seconds_per_image": 300, "count": 3 },
         { "name": "Shading", "duration_seconds_per_image": 600, "count": 3 }
       ]

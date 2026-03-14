@@ -73,6 +73,7 @@ Categories act as a global OR (Human OR Animal). Sub-tags act as AND within thei
 - **User tags** (tags you added or that exist only on your images) can be edited:
   - **Rename**: Right-click a user tag → "Rename...". The tag is renamed on all images that have it.
   - **Move**: Drag a user tag and drop it onto a category (e.g. "Human") to place it under that category, or onto another tag to make that tag the parent (the user tag then appears under it in the grid).
+  - **Parent to tag...**: Right-click a user tag → "Parent to tag...". The selected tag(s) are grayed out; a bar appears at the top: "Select parent tag: (none)" with **OK** and **Cancel**. Click another tag or a category to set it as the parent (the label updates). Click **OK** to move the grayed tags under that parent (same result as drag-and-drop); **Cancel** exits without changing anything. To parent **several tags at once**, hold **Ctrl** and click the user tags you want to move so they are selected, then right-click one of them and choose "Parent to tag...".
   - **Add tag**: Click "Add tag" above the grid. Enter a name and optionally pick an icon from the list. The new tag appears under "Miscellaneous:" until you move it by drag-and-drop. You can then apply it to images like any other tag.
 
 ### Tags Library Notes

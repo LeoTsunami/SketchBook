@@ -33,6 +33,8 @@ from qtpy.QtWidgets import (
     QCompleter,
     QInputDialog,
     QMenu,
+    QRubberBand,
+    QApplication,
 )
 from qtpy.QtCore import (
     Qt,
@@ -49,6 +51,8 @@ from qtpy.QtCore import (
     Signal,
     QEvent,
     QObject,
+    QRect,
+    QPoint,
 )
 from qtpy.QtGui import (
     QAction,
@@ -75,7 +79,6 @@ from gui.session_settings_dialog import SessionSettingsDialog
 from gui.image_viewer_window import ImageViewerWindow
 from gui.slideshow_window import SlideshowWindow
 from core.session_manager import SessionManager
-from qtpy.QtWidgets import QApplication
 from gui.icon_utils import find_tag_icon, invert_icon
 import os
 import json
@@ -127,14 +130,28 @@ class TagGridDropFilter(QObject):
             return False
         try:
             _drag_enter = QEvent.Type.DragEnter
+            _drag_move = QEvent.Type.DragMove
+            _drag_leave = QEvent.Type.DragLeave
             _drop_type = QEvent.Type.Drop
         except AttributeError:
             _drag_enter = QEvent.DragEnter
+            _drag_move = QEvent.DragMove
+            _drag_leave = QEvent.DragLeave
             _drop_type = QEvent.Drop
         if event.type() == _drag_enter:
             if event.mimeData().hasFormat(TAG_LIBRARY_MIME):
                 event.acceptProposedAction()
             return True
+        if event.type() == _drag_move:
+            if event.mimeData().hasFormat(TAG_LIBRARY_MIME):
+                event.acceptProposedAction()
+                pos = event.position().toPoint() if hasattr(event, "position") and hasattr(event.position(), "toPoint") else event.pos()
+                target = self._main._get_tag_grid_drop_target_at(pos)
+                self._main._set_tag_grid_drop_highlight(target)
+            return True
+        if event.type() == _drag_leave:
+            self._main._set_tag_grid_drop_highlight(None)
+            return False
         if event.type() == _drop_type:
             self._main._on_tag_grid_drop(event)
             return True
@@ -234,6 +251,22 @@ class MainWindow(QMainWindow):
         self._shuffle_counter: int = 0  # Counter for shuffle iterations (increments on each shuffle)
         self._course_random_images_list: List[ImageMetadata] = []  # Global list of ALL images in random order (only changed by shuffle button)
         self._filtered_course_random_list: List[ImageMetadata] = []  # Filtered list from grid (same as what's displayed)
+        # Tag library: Ctrl+click selection for "Parent to tag..." (user tags only)
+        self._tag_library_selection: Set[str] = set()
+        # Parent-to-tag mode: tags to move, chosen parent key/role, and bar widgets
+        self._parent_select_mode: bool = False
+        self._tags_to_parent: Set[str] = set()
+        self._parent_select_key: Optional[str] = None  # category or tag name
+        self._parent_select_role: Optional[str] = None  # "category" or "tag"
+        # Tag library selection (drag, shift-range, ctrl-toggle): display order and drag state
+        self._user_tag_display_order: List[str] = []  # user tag names in grid order (for shift range)
+        self._last_selected_tag: Optional[str] = None
+        self._tag_library_selection_start: Optional[QPoint] = None  # viewport coords
+        self._tag_library_is_selecting: bool = False
+        self._tag_library_drag_start_tag: Optional[str] = None  # when press on user tag, for drag-from-tag
+        self._tag_library_drag_start_button: Optional[QWidget] = None
+        self._tag_grid_drop_highlight_widget: Optional[QWidget] = None  # widget highlighted as drop target during drag
+        self._tag_drop_was_on_grid: bool = False  # True when last drop was on tag grid (reparent), so button was destroyed
 
         # Window setup
         self.setWindowTitle("SketchBook")
@@ -358,6 +391,26 @@ class MainWindow(QMainWindow):
         tags_header_layout.addWidget(add_tag_btn)
         tags_tree_layout.addLayout(tags_header_layout)
 
+        # Bar shown in "Parent to tag..." mode: label + OK / Cancel
+        self._parent_select_bar = QWidget()
+        parent_select_layout = QHBoxLayout(self._parent_select_bar)
+        parent_select_layout.setContentsMargins(0, 4, 0, 4)
+        self._parent_select_label = QLabel("Select parent tag: (none)")
+        self._parent_select_label.setStyleSheet("font-size: 11px; color: #888;")
+        parent_select_layout.addWidget(self._parent_select_label)
+        parent_select_layout.addStretch()
+        self._parent_ok_btn = QPushButton("OK")
+        self._parent_ok_btn.setEnabled(False)
+        self._parent_ok_btn.setFixedWidth(60)
+        self._parent_ok_btn.clicked.connect(self._on_parent_select_ok)
+        self._parent_cancel_btn = QPushButton("Cancel")
+        self._parent_cancel_btn.setFixedWidth(60)
+        self._parent_cancel_btn.clicked.connect(self._on_parent_select_cancel)
+        parent_select_layout.addWidget(self._parent_ok_btn)
+        parent_select_layout.addWidget(self._parent_cancel_btn)
+        self._parent_select_bar.setVisible(False)
+        tags_tree_layout.addWidget(self._parent_select_bar)
+
         # Scrollable grid widget for tags
         self.tags_grid_container = QWidget()
         self.tags_grid_layout = QGridLayout(self.tags_grid_container)
@@ -376,6 +429,22 @@ class MainWindow(QMainWindow):
         self.tags_grid_container.setAcceptDrops(True)
         self._tag_grid_drop_filter = TagGridDropFilter(self)
         self.tags_grid_container.installEventFilter(self._tag_grid_drop_filter)
+        # Rubber band for drag-selection in tag library (same style as image grid)
+        tag_viewport = self.tags_scroll_area.viewport()
+        try:
+            rb_shape = QRubberBand.Shape.Rectangle
+        except AttributeError:
+            rb_shape = QRubberBand.Rectangle
+        self._tag_library_rubber_band = QRubberBand(rb_shape, tag_viewport)
+        self._tag_library_rubber_band.setStyleSheet("""
+            QRubberBand {
+                background-color: rgba(0, 120, 215, 0.2);
+                border: 2px solid rgb(0, 120, 215);
+                border-radius: 2px;
+            }
+        """)
+        self._tag_library_rubber_band.raise_()
+        QApplication.instance().installEventFilter(self)
 
         # Load tags into grid
         self._load_tags_into_grid()
@@ -1059,6 +1128,7 @@ class MainWindow(QMainWindow):
         self._subcategory_tag_order = {}
         self._user_tag_buttons = {}
         self._subtag_to_category = {}
+        self._user_tag_display_order = []  # user tags in grid order for shift-range selection
 
         self._user_tags_config = user_tags_config.load_config()
         placements = self._user_tags_config.get("placements", {})
@@ -1132,6 +1202,8 @@ class MainWindow(QMainWindow):
                         tag_button.setProperty("tagGridRole", "tag")
                         tag_button.setProperty("tagGridKey", tag)
                         tag_button.contextMenuRequested.connect(self._on_tag_context_menu_requested)
+                        if is_user_tag:
+                            self._user_tag_display_order.append(tag)
                         tr, tc = idx // max_tags_per_row, idx % max_tags_per_row
                         tag_container_layout.addWidget(tag_button, tr, tc)
                         subtag_buttons[tag] = tag_button
@@ -1221,15 +1293,20 @@ class MainWindow(QMainWindow):
     def _on_tag_button_clicked(self, tag: str, category_override: Optional[str] = None) -> None:
         """
         Toggle tag in filters from tag buttons.
+        When in "Parent to tag..." mode, clicking a tag or category sets it as parent instead.
 
         Args:
             tag: Tag name to toggle.
             category_override: When set, use this category (for tags that appear in multiple categories, e.g. Weapon).
         """
+        if self._parent_select_mode:
+            self._on_tag_clicked_in_parent_mode(tag, category_override)
+            return
         # Label categories are not real tags and should never be added to active categories
         label_categories = ["Miscellaneous:", "Camera-Angle:"]
 
         if tag in self._category_buttons:
+            # Toggle expand/collapse so sub-tags are visible when expanded
             if tag in self._active_categories:
                 self._active_categories.remove(tag)
                 self._active_subtags.pop(tag, None)
@@ -1308,15 +1385,277 @@ class MainWindow(QMainWindow):
         self._apply_category_filters()
         self._sync_tag_grid_state()
 
+    def _is_in_tag_library(self, widget: QObject) -> bool:
+        """Return True if widget is the tag library scroll area or any of its descendants."""
+        w = widget
+        scroll = getattr(self, "tags_scroll_area", None)
+        if not scroll:
+            return False
+        while w:
+            if w == scroll:
+                return True
+            w = w.parent() if hasattr(w, "parent") else None
+        return False
+
+    def _get_tag_library_viewport_pos(self, obj: QObject, pos: QPoint) -> Optional[QPoint]:
+        """Map a position from obj's coordinates to tag library viewport coordinates."""
+        viewport = getattr(self, "tags_scroll_area", None) and self.tags_scroll_area.viewport()
+        if not viewport or not obj:
+            return None
+        if hasattr(obj, "mapToGlobal") and hasattr(viewport, "mapFromGlobal"):
+            global_pos = obj.mapToGlobal(pos) if hasattr(pos, "x") else obj.mapToGlobal(QPoint(pos.x(), pos.y()))
+            return viewport.mapFromGlobal(global_pos)
+        return None
+
+    def _start_tag_button_drag(self, button: QWidget, tag_text: str) -> None:
+        """
+        Start a drag from a tag button (Trello-style): remove from layout, pixmap follows cursor,
+        restore to original place if dropped on nothing.
+        """
+        self._tag_drop_was_on_grid = False
+        container = button.parentWidget()
+        layout = container.layout() if container else None
+        layout_row, layout_col, layout_row_span, layout_col_span = -1, -1, 1, 1
+        if layout and hasattr(layout, "indexOf"):
+            idx = layout.indexOf(button)
+            if idx >= 0 and hasattr(layout, "getItemPosition"):
+                layout_row, layout_col, layout_row_span, layout_col_span = layout.getItemPosition(idx)
+        # Pixmap from actual button (tag "accroché" to cursor, same size as button)
+        pixmap = button.grab()
+        if pixmap.isNull():
+            pixmap = QPixmap(max(120, button.width()), max(28, button.height()))
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            painter.setPen(Qt.white)
+            painter.drawText(pixmap.rect(), Qt.AlignCenter, tag_text)
+            painter.end()
+        # Remove from layout so others reflow (Trello-style hole)
+        if layout is not None and layout_row >= 0:
+            layout.removeWidget(button)
+        button.hide()
+        drag = QDrag(button)
+        mime_data = QMimeData()
+        mime_data.setText(tag_text)
+        if button.property("userTag"):
+            mime_data.setData(TAG_LIBRARY_MIME, tag_text.encode("utf-8"))
+        drag.setMimeData(mime_data)
+        drag.setPixmap(pixmap)
+        drag.setHotSpot(pixmap.rect().center())
+        result = drag.exec_(Qt.MoveAction)
+        # Restore to original place if drop was cancelled or on image (grid not reloaded)
+        if not self._tag_drop_was_on_grid and container is not None and layout is not None and layout_row >= 0:
+            try:
+                if button.parent() is container:
+                    layout.addWidget(button, layout_row, layout_col, layout_row_span, layout_col_span)
+                    button.show()
+                    self._sync_tag_grid_state()
+                    # Force immediate update so the tag reappears without needing a click elsewhere
+                    button.update()
+                    container.updateGeometry()
+                    container.update()
+                    if hasattr(self, "tags_grid_container") and self.tags_grid_container:
+                        self.tags_grid_container.update()
+                    if hasattr(self, "tags_scroll_area") and self.tags_scroll_area.viewport():
+                        self.tags_scroll_area.viewport().update()
+                    QApplication.processEvents()
+            except Exception:
+                pass
+
+    def _get_user_tag_at_viewport_pos(self, viewport_pos: QPoint) -> Optional[str]:
+        """Return the user tag name whose button contains viewport_pos, or None."""
+        container = getattr(self, "tags_grid_container", None)
+        if not container:
+            return None
+        viewport = self.tags_scroll_area.viewport()
+        container_pos = container.mapFrom(viewport, viewport_pos)
+        w = container.childAt(container_pos)
+        while w:
+            if isinstance(w, DraggableTagButton) and w.property("userTag"):
+                return w.text()
+            p = w.mapFrom(container, container_pos)
+            next_w = w.childAt(p) if hasattr(w, "childAt") else None
+            w = next_w
+        return None
+
+    def _get_user_tag_buttons_viewport_rects(self) -> List[Tuple[str, QRect]]:
+        """Return list of (tag_name, viewport_QRect) for each visible user tag button."""
+        viewport = getattr(self, "tags_scroll_area", None) and self.tags_scroll_area.viewport()
+        if not viewport:
+            return []
+        result: List[Tuple[str, QRect]] = []
+        for category, buttons in getattr(self, "_subcategory_buttons", {}).items():
+            for tag, btn in buttons.items():
+                if not btn.property("userTag") or not btn.isVisible():
+                    continue
+                global_rect = btn.rect()
+                top_left_global = btn.mapToGlobal(global_rect.topLeft())
+                viewport_tl = viewport.mapFromGlobal(top_left_global)
+                viewport_rect = QRect(viewport_tl, btn.size())
+                result.append((tag, viewport_rect))
+        return result
+
+    def _tag_library_finish_selection(
+        self, release_viewport_pos: QPoint, modifiers: Qt.KeyboardModifiers
+    ) -> None:
+        """Apply selection after mouse release: single-click (shift/ctrl/none) or drag rect."""
+        start = self._tag_library_selection_start
+        if start is None:
+            return
+        dx = abs(release_viewport_pos.x() - start.x())
+        dy = abs(release_viewport_pos.y() - start.y())
+        is_drag = (dx > 5) or (dy > 5)
+        tag_at_release = self._get_user_tag_at_viewport_pos(release_viewport_pos)
+
+        if is_drag:
+            selection_rect = QRect(start, release_viewport_pos).normalized()
+            add_to_selection = modifiers & Qt.ControlModifier
+            if not add_to_selection:
+                self._tag_library_selection.clear()
+            last_tag = None
+            for tag, rect in self._get_user_tag_buttons_viewport_rects():
+                if selection_rect.intersects(rect):
+                    if add_to_selection and tag in self._tag_library_selection:
+                        self._tag_library_selection.discard(tag)
+                    else:
+                        self._tag_library_selection.add(tag)
+                        last_tag = tag
+            if last_tag:
+                self._last_selected_tag = last_tag
+        else:
+            # Single click
+            if tag_at_release and tag_at_release in self._get_user_tags():
+                if modifiers & Qt.ShiftModifier:
+                    if (
+                        self._last_selected_tag
+                        and self._last_selected_tag in self._user_tag_display_order
+                        and tag_at_release in self._user_tag_display_order
+                    ):
+                        try:
+                            i0 = self._user_tag_display_order.index(self._last_selected_tag)
+                            i1 = self._user_tag_display_order.index(tag_at_release)
+                            i0, i1 = min(i0, i1), max(i0, i1)
+                            for i in range(i0, i1 + 1):
+                                if i < len(self._user_tag_display_order):
+                                    t = self._user_tag_display_order[i]
+                                    if t in self._get_user_tags():
+                                        self._tag_library_selection.add(t)
+                        except ValueError:
+                            self._tag_library_selection.add(tag_at_release)
+                    else:
+                        self._tag_library_selection.add(tag_at_release)
+                    self._last_selected_tag = tag_at_release
+                elif modifiers & Qt.ControlModifier:
+                    if tag_at_release in self._tag_library_selection:
+                        self._tag_library_selection.discard(tag_at_release)
+                    else:
+                        self._tag_library_selection.add(tag_at_release)
+                    self._last_selected_tag = tag_at_release
+                else:
+                    self._tag_library_selection = {tag_at_release}
+                    self._last_selected_tag = tag_at_release
+                    self._on_tag_button_clicked(tag_at_release, self._subtag_to_category.get(tag_at_release))
+            else:
+                if not (modifiers & (Qt.ShiftModifier | Qt.ControlModifier)):
+                    self._tag_library_selection.clear()
+                    self._last_selected_tag = None
+        self._tag_library_selection_start = None
+        self._tag_library_is_selecting = False
+        self._tag_library_drag_start_tag = None
+        self._tag_library_drag_start_button = None
+        self._sync_tag_grid_state()
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        """Tag library selection: drag rectangle, shift-range, ctrl-toggle (like image grid)."""
+        try:
+            _mouse_press = QEvent.Type.MouseButtonPress
+            _mouse_move = QEvent.Type.MouseMove
+            _mouse_release = QEvent.Type.MouseButtonRelease
+        except AttributeError:
+            _mouse_press = QEvent.MouseButtonPress
+            _mouse_move = QEvent.MouseMove
+            _mouse_release = QEvent.MouseButtonRelease
+
+        if event.type() == _mouse_move and self._tag_library_is_selecting:
+            viewport = getattr(self, "tags_scroll_area", None) and self.tags_scroll_area.viewport()
+            if viewport and hasattr(event, "globalPos"):
+                vp_pos = viewport.mapFromGlobal(event.globalPos())
+                # If drag started on a user tag and moved past threshold, start tag drag (reparent / apply to images)
+                if (
+                    self._tag_library_drag_start_button is not None
+                    and self._tag_library_selection_start is not None
+                    and (vp_pos - self._tag_library_selection_start).manhattanLength() >= 10
+                ):
+                    self._tag_library_rubber_band.hide()
+                    self._tag_library_is_selecting = False
+                    self._tag_library_selection_start = None
+                    btn = self._tag_library_drag_start_button
+                    tag_text = self._tag_library_drag_start_tag or ""
+                    self._tag_library_drag_start_button = None
+                    self._tag_library_drag_start_tag = None
+                    if tag_text and btn:
+                        self._start_tag_button_drag(btn, tag_text)
+                    return True
+                if self._tag_library_selection_start is not None:
+                    self._tag_library_rubber_band.setGeometry(
+                        QRect(self._tag_library_selection_start, vp_pos).normalized()
+                    )
+            return False
+
+        if event.type() == _mouse_release and event.button() == Qt.LeftButton and self._tag_library_is_selecting:
+            viewport = getattr(self, "tags_scroll_area", None) and self.tags_scroll_area.viewport()
+            if viewport and hasattr(event, "globalPos"):
+                vp_pos = viewport.mapFromGlobal(event.globalPos())
+                self._tag_library_rubber_band.hide()
+                self._tag_library_finish_selection(vp_pos, event.modifiers())
+            else:
+                self._tag_library_is_selecting = False
+                self._tag_library_selection_start = None
+            self._tag_library_drag_start_tag = None
+            self._tag_library_drag_start_button = None
+            return True
+
+        if event.type() == _mouse_press and event.button() == Qt.LeftButton and self._is_in_tag_library(obj):
+            viewport = self.tags_scroll_area.viewport()
+            vp_pos = self._get_tag_library_viewport_pos(obj, event.pos())
+            if vp_pos is None:
+                return False
+            # Only consume on user tag buttons or empty area (viewport/container); let category buttons through
+            is_user_tag_btn = isinstance(obj, DraggableTagButton) and obj.property("userTag")
+            is_empty_area = obj == viewport or obj == self.tags_grid_container
+            if not (is_user_tag_btn or is_empty_area):
+                return False
+            self._tag_library_selection_start = vp_pos
+            self._tag_library_is_selecting = True
+            if is_user_tag_btn:
+                self._tag_library_drag_start_tag = obj.text()
+                self._tag_library_drag_start_button = obj
+            else:
+                self._tag_library_drag_start_tag = None
+                self._tag_library_drag_start_button = None
+            self._tag_library_rubber_band.setGeometry(QRect(vp_pos, QSize()))
+            self._tag_library_rubber_band.show()
+            self._tag_library_rubber_band.raise_()
+            return True  # Consume so button doesn't get click (we handle in release)
+        return False
+
     def _on_tag_context_menu_requested(self, tag_text: str) -> None:
-        """Show context menu for tag button; only user tags get Rename and Change icon."""
+        """Show context menu for tag button; only user tags get Rename, Change icon, Parent to tag..."""
         user_tags = self._get_user_tags()
         if tag_text not in user_tags:
             return
         menu = QMenu(self)
         rename_action = menu.addAction("Rename...")
         change_icon_action = menu.addAction("Change icon...")
+        parent_to_tag_action = menu.addAction("Parent to tag...")
         action = menu.exec_(QCursor.pos())
+        if action == parent_to_tag_action:
+            tags_to_parent = (
+                set(self._tag_library_selection) if tag_text in self._tag_library_selection else {tag_text}
+            )
+            tags_to_parent = {t for t in tags_to_parent if t in user_tags}
+            if tags_to_parent:
+                self._enter_parent_select_mode(tags_to_parent)
+            return
         if action == change_icon_action:
             cfg = self._user_tags_config
             current = cfg.get("icons", {}).get(tag_text)
@@ -1378,8 +1717,117 @@ class MainWindow(QMainWindow):
                     f"Tag renamed on {n} image(s).",
                 )
 
+    def _enter_parent_select_mode(self, tags_to_parent: Set[str]) -> None:
+        """Enter 'Parent to tag...' mode: gray given tags, show bar to select parent, OK/Cancel."""
+        self._parent_select_mode = True
+        self._tags_to_parent = set(tags_to_parent)
+        self._parent_select_key = None
+        self._parent_select_role = None
+        self._parent_select_label.setText("Select parent tag: (none)")
+        self._parent_ok_btn.setEnabled(False)
+        self._parent_select_bar.setVisible(True)
+        self._sync_tag_grid_state()
+
+    def _exit_parent_select_mode(self) -> None:
+        """Leave 'Parent to tag...' mode and refresh grid. Clears tag library selection."""
+        self._parent_select_mode = False
+        self._tags_to_parent = set()
+        self._parent_select_key = None
+        self._parent_select_role = None
+        self._parent_select_bar.setVisible(False)
+        self._tag_library_selection = set()
+        self._sync_tag_grid_state()
+
+    def _on_tag_clicked_in_parent_mode(self, tag: str, category_override: Optional[str] = None) -> None:
+        """
+        When in parent-select mode: clicking a category sets it as selected parent AND expands it
+        so sub-tags are visible; clicking a (sub-)tag sets it as parent AND expands it so its
+        children are visible. Categories always expand on click (or on drop).
+        """
+        if tag in self._tags_to_parent:
+            return  # Do not allow selecting a tag we're moving as parent
+        if tag in self._category_buttons:
+            # Set category as selected parent and expand it so its sub-tags are visible
+            self._parent_select_key = tag
+            self._parent_select_role = "category"
+            self._parent_select_label.setText(f"Select parent tag: {self._parent_select_key}")
+            self._parent_ok_btn.setEnabled(True)
+            self._active_categories.add(tag)
+            self._active_subtags.setdefault(tag, set())
+            self._apply_category_filters()
+            self._sync_tag_grid_state()
+            return
+        # Sub-tag clicked: set as parent and expand so its children (if any) are visible
+        self._parent_select_key = tag
+        self._parent_select_role = "tag"
+        self._parent_select_label.setText(f"Select parent tag: {self._parent_select_key}")
+        self._parent_ok_btn.setEnabled(True)
+        category = category_override if category_override is not None else self._subtag_to_category.get(tag)
+        if category:
+            self._active_categories.add(category)
+            self._active_subtags.setdefault(category, set()).add(tag)
+        self._apply_category_filters()
+        self._sync_tag_grid_state()
+
+    def _on_parent_select_ok(self) -> None:
+        """Apply reparenting: move _tags_to_parent under _parent_select_key, then exit mode.
+        Does not clear _active_categories / _active_subtags so expanded categories stay expanded.
+        """
+        if not self._parent_select_key or not self._parent_select_role or not self._tags_to_parent:
+            return
+        cfg = self._user_tags_config
+        placements = dict(cfg.get("placements", {}))
+        for tag in self._tags_to_parent:
+            if self._parent_select_role == "category":
+                placements[tag] = {"category": self._parent_select_key}
+            else:
+                placements[tag] = {"parent_tag": self._parent_select_key}
+        user_tags_config.save_config(
+            placements,
+            cfg.get("icons", {}),
+            cfg.get("registered_only"),
+        )
+        self._user_tags_config = user_tags_config.load_config()
+        # Reason: do not clear _active_categories / _active_subtags so tag panel stays expanded
+        self._load_tags_into_grid()
+        self._exit_parent_select_mode()
+        self._sync_tag_grid_state()
+
+    def _on_parent_select_cancel(self) -> None:
+        """Cancel parent-select mode without applying."""
+        self._exit_parent_select_mode()
+
+    def _get_tag_grid_drop_target_at(self, pos: QPoint) -> Optional[QWidget]:
+        """Return the category or tag button (widget with tagGridRole) at pos in container coords, or None."""
+        container = getattr(self, "tags_grid_container", None)
+        if not container:
+            return None
+        w = container.childAt(pos)
+        while w and w != container:
+            if w.property("tagGridRole"):
+                return w
+            local = w.mapFrom(container, pos)
+            next_w = w.childAt(local) if hasattr(w, "childAt") else None
+            w = next_w
+        return None
+
+    def _set_tag_grid_drop_highlight(self, widget: Optional[QWidget]) -> None:
+        """Set or clear the drop-target highlight (same look as image grid: dragOver property + style polish)."""
+        prev = self._tag_grid_drop_highlight_widget
+        if prev is not None:
+            prev.setProperty("dragOver", False)
+            prev.style().unpolish(prev)
+            prev.style().polish(prev)
+        self._tag_grid_drop_highlight_widget = widget
+        if widget is not None:
+            widget.setProperty("dragOver", True)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+
     def _on_tag_grid_drop(self, event: "QDropEvent") -> None:
         """Reposition a user tag when dropped on a category or tag in the grid."""
+        self._tag_drop_was_on_grid = True
+        self._set_tag_grid_drop_highlight(None)
         if not event.mimeData().hasFormat(TAG_LIBRARY_MIME):
             return
         raw = event.mimeData().data(TAG_LIBRARY_MIME)
@@ -1387,9 +1835,7 @@ class MainWindow(QMainWindow):
         if dropped_tag not in self._get_user_tags():
             return
         pos = event.position().toPoint() if hasattr(event.position(), "toPoint") else event.pos()
-        child = self.tags_grid_container.childAt(pos)
-        while child and child != self.tags_grid_container and not child.property("tagGridRole"):
-            child = child.parentWidget() if hasattr(child, "parentWidget") else None
+        child = self._get_tag_grid_drop_target_at(pos)
         if not child or not child.property("tagGridRole"):
             return
         role = child.property("tagGridRole")
@@ -1412,6 +1858,15 @@ class MainWindow(QMainWindow):
         )
         self._user_tags_config = user_tags_config.load_config()
         self._load_tags_into_grid()
+        # Expand the drop target (category or parent tag) so the result is visible
+        if role == "category":
+            self._active_categories.add(key)
+            self._active_subtags.setdefault(key, set())
+        else:
+            category = self._subtag_to_category.get(key)
+            if category:
+                self._active_categories.add(category)
+                self._active_subtags.setdefault(category, set()).add(key)
         self._sync_tag_grid_state()
 
     def _on_add_user_tag_clicked(self) -> None:
@@ -1506,6 +1961,20 @@ class MainWindow(QMainWindow):
                 else:
                     tag_button.setVisible(is_active)
                 self._set_button_active(tag_button, tag in category_subtags)
+                # In "Parent to tag..." mode, gray out tags being moved
+                if getattr(self, "_parent_select_mode", False) and tag in getattr(self, "_tags_to_parent", set()):
+                    tag_button.setEnabled(False)
+                    tag_button.setStyleSheet(
+                        "QPushButton { text-align: left; padding: 2px 4px; opacity: 0.6; background-color: #444; color: #888; }"
+                    )
+                elif tag in getattr(self, "_tag_library_selection", set()):
+                    tag_button.setEnabled(True)
+                    tag_button.setStyleSheet(
+                        "QPushButton { text-align: left; padding: 2px 4px; border: 2px solid rgb(0, 120, 215); }"
+                    )
+                else:
+                    tag_button.setEnabled(True)
+                    tag_button.setStyleSheet("QPushButton { text-align: left; padding: 2px 4px; }")
 
         # Label categories: set visibility
         label_categories = ["Miscellaneous:", "Camera-Angle:"]
@@ -1520,6 +1989,19 @@ class MainWindow(QMainWindow):
                     else:
                         tag_button.setVisible(True)
                     self._set_button_active(tag_button, tag in label_subtags)
+                    if getattr(self, "_parent_select_mode", False) and tag in getattr(self, "_tags_to_parent", set()):
+                        tag_button.setEnabled(False)
+                        tag_button.setStyleSheet(
+                            "QPushButton { text-align: left; padding: 2px 4px; opacity: 0.6; background-color: #444; color: #888; }"
+                        )
+                    elif tag in getattr(self, "_tag_library_selection", set()):
+                        tag_button.setEnabled(True)
+                        tag_button.setStyleSheet(
+                            "QPushButton { text-align: left; padding: 2px 4px; border: 2px solid rgb(0, 120, 215); }"
+                        )
+                    else:
+                        tag_button.setEnabled(True)
+                        tag_button.setStyleSheet("QPushButton { text-align: left; padding: 2px 4px; }")
 
         # Rebuild each category container with only visible tags (no holes).
         # When a selected tag is a sub-category (has children), show it first then its children on the next row(s), then the rest.

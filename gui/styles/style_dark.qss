@@ -117,6 +117,12 @@ QFrame#ImageThumbnail[dragOver="true"] {
     border: 3px dashed #ffffff;
 }
 
+/* Tag library: drop target when dragging a tag (same look as image thumbnail) */
+QPushButton#TagGridButton[dragOver="true"] {
+    background-color: #5d7bc0;
+    border: 3px dashed #ffffff;
+}
+
 /* Tag Components */
 QFrame#DraggableTagChip {
     background-color: #3c3f41;

@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-03-14 (Tag library: "Parent to tag..." from right-click menu)
+### ✅ Tasks:
+- Add "Parent to tag..." to tag library context menu (user tags only)
+
+- **Multi-select**: Ctrl+click on user tags to select several; right-click one of them → "Parent to tag..." to move all selected tags under a chosen parent.
+- **Parent-select mode**: After choosing "Parent to tag...", the tags to move are grayed out. A bar appears at the top of the Tags Library: "Select parent tag: (none)" with **OK** and **Cancel**. Click any other tag or category to set it as the parent (label updates to "Select parent tag: &lt;name&gt;"). **OK** applies the same placement as drag-and-drop (tags become children of that tag or under that category); **Cancel** exits without changes.
+- **Implementation**: `_tag_library_selection` for Ctrl+click, `_parent_select_mode` with bar widgets and `_on_parent_select_ok` / `_on_parent_select_cancel`; `eventFilter` on user tag buttons for Ctrl+click; `_sync_tag_grid_state` grays buttons in `_tags_to_parent` when in parent mode.
+ → Result: Users can reparent one or several user tags without drag-and-drop, by choosing a parent then confirming.
+---
+
 ## 2026-02-11 (Image viewer: crop with rule-of-thirds grid and 4 draggable points)
 ### ✅ Tasks:
 - Replace right-drag crop with a dedicated crop mode: grid in thirds + Valider/Annuler

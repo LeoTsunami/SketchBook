@@ -259,4 +259,64 @@ def test_invalid_drop(main_window, qtbot, tmp_path):
         Qt.NoModifier
     )
     main_window.dragEnterEvent(drag_event)
-    assert not drag_event.isAccepted() 
+    assert not drag_event.isAccepted()
+
+
+def test_toggle_tag_library_selection(main_window):
+    """Tag library selection: add and remove user tags with Ctrl+click (logic only)."""
+    main_window._tag_library_selection = set()
+    main_window._toggle_tag_library_selection("TagA")
+    assert main_window._tag_library_selection == {"TagA"}
+    main_window._toggle_tag_library_selection("TagB")
+    assert main_window._tag_library_selection == {"TagA", "TagB"}
+    main_window._toggle_tag_library_selection("TagA")
+    assert main_window._tag_library_selection == {"TagB"}
+
+
+def test_enter_exit_parent_select_mode(main_window):
+    """Parent-to-tag mode: enter shows bar and state, exit hides bar and clears selection."""
+    main_window._enter_parent_select_mode({"MyTag"})
+    assert main_window._parent_select_mode is True
+    assert main_window._tags_to_parent == {"MyTag"}
+    assert main_window._parent_select_bar.isVisible()
+    assert not main_window._parent_ok_btn.isEnabled()
+    main_window._exit_parent_select_mode()
+    assert main_window._parent_select_mode is False
+    assert main_window._tags_to_parent == set()
+    assert not main_window._parent_select_bar.isVisible()
+    assert main_window._tag_library_selection == set()
+
+
+def test_parent_select_ok_updates_placements(main_window, monkeypatch):
+    """When OK in parent-select mode, placements are saved with parent_tag or category."""
+    from core import user_tags_config
+
+    saved_placements = {}
+    saved_icons = {}
+    saved_registered = []
+
+    def capture_save(placements, icons, registered_only=None):
+        saved_placements.clear()
+        saved_placements.update(placements)
+        saved_icons.update(icons)
+        if registered_only is not None:
+            saved_registered[:] = registered_only
+        return True
+
+    monkeypatch.setattr(user_tags_config, "save_config", capture_save)
+    main_window._user_tags_config = {
+        "placements": {"Child1": {"category": "Human"}, "Child2": {"category": "Animal"}},
+        "icons": {},
+        "registered_only": [],
+    }
+    main_window._tags_to_parent = {"Child1", "Child2"}
+    main_window._parent_select_key = "Portrait"
+    main_window._parent_select_role = "tag"
+    main_window._parent_select_mode = True
+    monkeypatch.setattr(main_window, "_load_tags_into_grid", lambda: None)
+
+    main_window._on_parent_select_ok()
+
+    assert saved_placements.get("Child1") == {"parent_tag": "Portrait"}
+    assert saved_placements.get("Child2") == {"parent_tag": "Portrait"}
+    assert not main_window._parent_select_mode

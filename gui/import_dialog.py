@@ -2,7 +2,7 @@
 Dialog for selecting tags before importing images.
 """
 from pathlib import Path
-from typing import List, Set, Dict, Optional
+from typing import List, Set, Dict, Optional, Any
 from qtpy.QtWidgets import (
     QDialog,
     QVBoxLayout,
@@ -20,6 +20,7 @@ from qtpy.QtCore import Qt, QSize
 from qtpy.QtGui import QPixmap, QIcon, QImage
 from PIL import Image
 from core.image_manager import ImageManager
+from core import user_tags_config
 from gui.icon_utils import find_tag_icon, invert_icon
 
 
@@ -49,10 +50,14 @@ class ImportDialog(QDialog):
         self.first_image_path = first_image_path
         self.selected_tags: Set[str] = set()
         
-        # Tag buttons storage
+        # Tag buttons storage (same structure as main window tag library)
         self._category_buttons: Dict[str, QPushButton] = {}
         self._subcategory_buttons: Dict[str, Dict[str, QPushButton]] = {}
+        self._subcategory_containers: Dict[str, QWidget] = {}
+        self._subcategory_tag_order: Dict[str, List[str]] = {}
+        self._subtag_to_category: Dict[str, str] = {}
         self._user_tag_buttons: Dict[str, QPushButton] = {}
+        self._user_tags_config: Dict[str, Any] = {}
         
         self._setup_ui()
     
@@ -181,6 +186,50 @@ class ImportDialog(QDialog):
         
         layout.addLayout(button_layout)
     
+    def _build_subtags_for_category(
+        self,
+        category: str,
+        default_subtags: List[str],
+        user_tags: List[str],
+        placements: Dict[str, Any],
+    ) -> List[str]:
+        """
+        Build ordered subtag list for a category: default tags + user tags by placement.
+        User tags with placement "category" are appended; with "parent_tag" inserted after parent.
+        Same logic as main window tag library.
+        """
+        result = list(dict.fromkeys(default_subtags))
+        for ut in user_tags:
+            pl = placements.get(ut)
+            if pl is None:
+                if category == "Miscellaneous:":
+                    result.append(ut)
+                continue
+            if pl.get("category") == category:
+                if ut not in result:
+                    result.append(ut)
+        changed = True
+        while changed:
+            changed = False
+            for ut in user_tags:
+                pl = placements.get(ut)
+                if pl is None or "parent_tag" not in pl:
+                    continue
+                parent = pl["parent_tag"]
+                if parent in result and ut not in result:
+                    idx = result.index(parent) + 1
+                    result.insert(idx, ut)
+                    changed = True
+        return result
+
+    def _get_children_of_tag(self, tag: str) -> List[str]:
+        """Return list of tags whose placement has parent_tag = tag (sub-category children)."""
+        placements = self._user_tags_config.get("placements", {})
+        return [
+            t for t, pl in placements.items()
+            if isinstance(pl, dict) and pl.get("parent_tag") == tag
+        ]
+
     def _load_preview_image(self):
         """Load and display the first image preview."""
         if not self.first_image_path or not self.first_image_path.exists():
@@ -208,121 +257,113 @@ class ImportDialog(QDialog):
             self.preview_label.setText(f"Preview error:\n{str(e)}")
     
     def _load_tags_into_grid(self):
-        """Load tags from JSON into the tags grid."""
-        # Load default tags from JSON
+        """Load tags from JSON and user config into the grid, same structure as main tag library."""
+        max_cols = 3
+        max_tags_per_row = 3
+        label_categories_set = {"Miscellaneous:", "Camera-Angle:"}
+
+        self._user_tags_config = user_tags_config.load_config()
+        placements = self._user_tags_config.get("placements", {})
+        user_tags_list: List[str] = []
+        if self.image_manager:
+            all_tags = set()
+            for metadata in self.image_manager.db.list_images():
+                all_tags.update(metadata.tags)
+            default_set = self._get_default_tags()
+            user_tags_list = sorted(all_tags - default_set)
+        user_tags_list = list(
+            dict.fromkeys(user_tags_list + self._user_tags_config.get("registered_only", []))
+        )
+
         default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
+        if not default_tags_path.exists():
+            return
+        try:
+            import json
+            with open(default_tags_path, "r", encoding="utf-8") as f:
+                default_tags = json.load(f)
+
+            def collect_subtags(data, collected: List[str]) -> None:
+                if isinstance(data, list):
+                    for item in data:
+                        collect_subtags(item, collected)
+                elif isinstance(data, dict):
+                    for key, value in data.items():
+                        collected.append(key)
+                        collect_subtags(value, collected)
+                elif isinstance(data, str):
+                    collected.append(data)
+
+            categories_list = list(default_tags.items())
+            current_row = 0
+            for category_idx, (category, tags) in enumerate(categories_list):
+                is_label_category = category in label_categories_set
+                default_st: List[str] = []
+                collect_subtags(tags, default_st)
+                default_st = list(dict.fromkeys(default_st))
+                unique_subtags = self._build_subtags_for_category(
+                    category, default_st, user_tags_list, placements
+                )
+                self._subcategory_tag_order[category] = list(unique_subtags)
+
+                row = current_row
+                tag_container = QWidget()
+                tag_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+                tag_container.setMinimumHeight(0)
+                tag_container_layout = QGridLayout(tag_container)
+                tag_container_layout.setContentsMargins(0, 0, 0, 0)
+                tag_container_layout.setSpacing(10)
+                subtag_buttons: Dict[str, QPushButton] = {}
+                for tag in unique_subtags:
+                    tag_button = self._build_tag_button(tag)
+                    tag_button.setCheckable(True)
+                    tag_button.clicked.connect(lambda _=False, name=tag: self._on_tag_button_clicked(name))
+                    subtag_buttons[tag] = tag_button
+                    self._subtag_to_category[tag] = category
+                    tag_button.setVisible(is_label_category)
+
+                self.tags_grid_layout.addWidget(tag_container, row + 1, 0, 1, max_cols)
+                self._subcategory_containers[category] = tag_container
+                self._subcategory_buttons[category] = subtag_buttons
+
+                if is_label_category:
+                    category_label = QLabel(category)
+                    category_label.setStyleSheet(
+                        "font-weight: bold; font-size: 12px; padding: 4px; background-color: transparent;"
+                    )
+                    category_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+                    self.tags_grid_layout.addWidget(category_label, row, 0, 1, max_cols)
+                else:
+                    category_button = self._build_tag_button(category)
+                    category_button.setCheckable(True)
+                    category_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+                    category_button.clicked.connect(lambda _=False, name=category: self._on_tag_button_clicked(name))
+                    self.tags_grid_layout.addWidget(category_button, row, 0, 1, max_cols)
+                    self._category_buttons[category] = category_button
+
+                current_row = row + 2
+                if category_idx < len(categories_list) - 1:
+                    separator = QFrame()
+                    separator.setFrameShape(QFrame.Shape.HLine)
+                    separator.setFrameShadow(QFrame.Shadow.Sunken)
+                    separator.setStyleSheet("QFrame { color: #666; }")
+                    self.tags_grid_layout.addWidget(separator, current_row, 0, 1, max_cols)
+                    current_row += 1
+            max_row = current_row - 1
+            if max_row >= 0:
+                self.tags_grid_layout.setRowStretch(max_row + 1, 1)
+            self._sync_import_subtags_visibility()
+        except Exception as e:
+            print(f"Error loading default tags: {str(e)}")
         
-        if default_tags_path.exists():
-            try:
-                import json
-                with open(default_tags_path, "r", encoding="utf-8") as f:
-                    default_tags = json.load(f)
-                
-                def collect_subtags(data, collected: List[str]) -> None:
-                    """Recursively collect subtags from nested structures."""
-                    if isinstance(data, list):
-                        for item in data:
-                            collect_subtags(item, collected)
-                    elif isinstance(data, dict):
-                        for key, value in data.items():
-                            collected.append(key)
-                            collect_subtags(value, collected)
-                    elif isinstance(data, str):
-                        collected.append(data)
-                
-                # Process each category
-                categories_list = list(default_tags.items())
-                max_cols = 3
-                max_tags_per_row = 3
-                
-                # First pass: calculate rows
-                category_row_counts: List[int] = []
-                for category, tags in categories_list:
-                    subtags: List[str] = []
-                    collect_subtags(tags, subtags)
-                    unique_subtags = list(dict.fromkeys(subtags))
-                    subtag_rows = max(1, (len(unique_subtags) + max_tags_per_row - 1) // max_tags_per_row) if unique_subtags else 0
-                    num_rows = 1 + subtag_rows
-                    category_row_counts.append(num_rows)
-                
-                # Calculate starting rows
-                current_row = 0
-                category_start_rows: List[int] = []
-                for num_rows in category_row_counts:
-                    category_start_rows.append(current_row)
-                    current_row += num_rows + 1
-                
-                # Second pass: create UI
-                for category_idx, (category, tags) in enumerate(categories_list):
-                    row = category_start_rows[category_idx]
-                    num_rows = category_row_counts[category_idx]
-                    
-                    is_label_category = category in ["Miscellaneous:", "Camera-Angle:"]
-                    
-                    # Collect subtags first
-                    subtags: List[str] = []
-                    collect_subtags(tags, subtags)
-                    unique_subtags = list(dict.fromkeys(subtags))
-                    
-                    # Create subtag buttons
-                    subtag_buttons: Dict[str, QPushButton] = {}
-                    for idx, tag in enumerate(unique_subtags):
-                        tag_button = self._build_tag_button(tag)
-                        tag_button.setCheckable(True)
-                        tag_button.clicked.connect(lambda _, name=tag: self._on_tag_button_clicked(name))
-                        tag_row = row + 1 + (idx // max_tags_per_row)
-                        tag_col = idx % max_tags_per_row
-                        self.tags_grid_layout.addWidget(tag_button, tag_row, tag_col)
-                        subtag_buttons[tag] = tag_button
-                        # Initially visible only for label categories
-                        tag_button.setVisible(is_label_category)
-                    
-                    self._subcategory_buttons[category] = subtag_buttons
-                    
-                    # Category button/label
-                    if is_label_category:
-                        category_label = QLabel(category)
-                        category_label.setStyleSheet("font-weight: bold; font-size: 12px; padding: 4px; background-color: transparent;")
-                        category_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                        self.tags_grid_layout.addWidget(category_label, row, 0, 1, max_cols)
-                    else:
-                        category_button = self._build_tag_button(category)
-                        category_button.setCheckable(True)
-                        category_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-                        category_button.clicked.connect(lambda _, name=category: self._on_tag_button_clicked(name))
-                        self.tags_grid_layout.addWidget(category_button, row, 0, 1, max_cols)
-                        self._category_buttons[category] = category_button
-                    
-                    # Separator
-                    if category_idx < len(categories_list) - 1:
-                        separator = QFrame()
-                        separator.setFrameShape(QFrame.Shape.HLine)
-                        separator.setFrameShadow(QFrame.Shadow.Sunken)
-                        separator.setStyleSheet("QFrame { color: #666; }")
-                        separator_row = row + num_rows
-                        self.tags_grid_layout.addWidget(separator, separator_row, 0, 1, max_cols)
-                
-                # Add spacer
-                max_row = 0
-                for i in range(self.tags_grid_layout.count()):
-                    item = self.tags_grid_layout.itemAt(i)
-                    if item:
-                        row, col, row_span, col_span = self.tags_grid_layout.getItemPosition(i)
-                        max_row = max(max_row, row + row_span - 1)
-                if max_row >= 0:
-                    self.tags_grid_layout.setRowStretch(max_row + 1, 1)
-            
-            except Exception as e:
-                print(f"Error loading default tags: {str(e)}")
-        
-        # Load user tags
+        # Load user tags (only those not already placed in a category)
         if self.image_manager:
             all_tags = set()
             for metadata in self.image_manager.db.list_images():
                 all_tags.update(metadata.tags)
             default_tags_set = self._get_default_tags()
             user_tags = sorted(all_tags - default_tags_set)
-            
+            user_tags = [t for t in user_tags if t not in self._subtag_to_category]
             if user_tags:
                 # Add separator
                 separator = QFrame()
@@ -378,9 +419,9 @@ class ImportDialog(QDialog):
     
     
     def _build_tag_button(self, tag: str) -> QPushButton:
-        """Build a tag button with icon."""
+        """Build a tag button with icon (uses user_tags_config for user tag icons)."""
         button = QPushButton(tag)
-        icon = find_tag_icon(tag)
+        icon = find_tag_icon(tag, user_config=getattr(self, "_user_tags_config", {}))
         if not icon.isNull():
             button.setIcon(invert_icon(icon, 28))
             button.setIconSize(QSize(28, 28))
@@ -413,7 +454,7 @@ class ImportDialog(QDialog):
         self._update_button_style(tag_button, True)
 
     def _on_tag_button_clicked(self, tag: str):
-        """Handle tag button click - toggle selection."""
+        """Handle tag button click - toggle selection. Category click expands/collapses subtags."""
         button = self._get_tag_button(tag)
         if not button:
             return
@@ -426,9 +467,8 @@ class ImportDialog(QDialog):
             self.selected_tags.add(tag)
             button.setChecked(True)
             self._update_button_style(button, True)
-            # Show subtags if it's a category
-            if tag in self._category_buttons:
-                self._show_category_subtags(tag)
+        # Sync subtag visibility: show subtags only when their category is selected (expanded)
+        self._sync_import_subtags_visibility()
     
     def _update_button_style(self, button: QPushButton, checked: bool):
         """Update button style based on checked state."""
@@ -457,12 +497,81 @@ class ImportDialog(QDialog):
         
         return None
     
-    def _show_category_subtags(self, category: str):
-        """Show subtags for a category."""
-        if category in self._subcategory_buttons:
-            for tag_button in self._subcategory_buttons[category].values():
-                tag_button.setVisible(True)
-    
+    def _sync_import_subtags_visibility(self) -> None:
+        """
+        Sync subtag visibility and layout with selection. When category is expanded, show only
+        top-level tags; tags with a parent_tag (sub-category children) are visible only when
+        their parent is selected. Rebuild layout with grouping when a sub-category is expanded.
+        """
+        max_cols = 3
+        label_categories = {"Miscellaneous:", "Camera-Angle:"}
+        placements = self._user_tags_config.get("placements", {})
+        for category in self._subcategory_tag_order:
+            container = self._subcategory_containers.get(category)
+            if not container:
+                continue
+            is_label = category in label_categories
+            expanded = is_label or (category in self.selected_tags)
+            container.setVisible(expanded)
+            if not expanded:
+                continue
+            tag_order = self._subcategory_tag_order[category]
+            subtag_buttons = self._subcategory_buttons.get(category, {})
+            # Sub-category children visible only when their parent is selected (like main tag library)
+            for tag, btn in subtag_buttons.items():
+                pl = placements.get(tag)
+                parent_tag = pl.get("parent_tag") if isinstance(pl, dict) else None
+                if parent_tag is not None:
+                    btn.setVisible(parent_tag in self.selected_tags)
+                else:
+                    btn.setVisible(True)
+            layout = container.layout()
+            if not layout:
+                continue
+            while layout.count():
+                layout.takeAt(0)
+            category_selected = [t for t in tag_order if t in self.selected_tags]
+            expanded_parent = None
+            for t in category_selected:
+                if self._get_children_of_tag(t):
+                    expanded_parent = t
+                    break
+            if expanded_parent is not None and expanded_parent in tag_order:
+                idx_t = tag_order.index(expanded_parent)
+                before = tag_order[:idx_t]
+                after = tag_order[idx_t + 1:]
+                children = [c for c in self._get_children_of_tag(expanded_parent) if c in tag_order]
+                rest = [x for x in after if x not in children]
+                idx = 0
+                for tag in before + [expanded_parent]:
+                    btn = subtag_buttons.get(tag)
+                    if btn and btn.isVisible():
+                        r, c = idx // max_cols, idx % max_cols
+                        layout.addWidget(btn, r, c)
+                        idx += 1
+                idx = ((idx + max_cols - 1) // max_cols) * max_cols
+                for tag in children:
+                    btn = subtag_buttons.get(tag)
+                    if btn and btn.isVisible():
+                        r, c = idx // max_cols, idx % max_cols
+                        layout.addWidget(btn, r, c)
+                        idx += 1
+                idx = ((idx + max_cols - 1) // max_cols) * max_cols
+                for tag in rest:
+                    btn = subtag_buttons.get(tag)
+                    if btn and btn.isVisible():
+                        r, c = idx // max_cols, idx % max_cols
+                        layout.addWidget(btn, r, c)
+                        idx += 1
+            else:
+                idx = 0
+                for tag in tag_order:
+                    btn = subtag_buttons.get(tag)
+                    if btn and btn.isVisible():
+                        r, c = idx // max_cols, idx % max_cols
+                        layout.addWidget(btn, r, c)
+                        idx += 1
+
     def get_selected_tags(self) -> Set[str]:
         """
         Get selected tags.

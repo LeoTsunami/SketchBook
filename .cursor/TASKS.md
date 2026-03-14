@@ -21,6 +21,7 @@ Update this file via prompt:
 - [x] Tag removal on selection moved to background thread (same TagApplyWorker as assign) (2026-01-30)
 - [x] Camera-Angle (and label categories) as global AND constraint for all category filters (2026-01-30)
 - [x] Tag library: edit user tags – rename (right-click), drag-drop onto category/tag, Add tag with icon (2026-02-03)
+- [x] Tag library: "Parent to tag..." in right-click menu – multi-select (Ctrl+click), gray tags, select parent then OK/Cancel (2026-03-14)
 - [x] Persist grid column count in user settings so same value on reopen (2026-02-05)
 - [x] Code cleanup: remove unused code, factorize duplicates, improve maintainability (2026-02-06)
 - [x] Add "Session Course Random" sort option to preview session order before starting (2026-02-06)
