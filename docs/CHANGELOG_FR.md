@@ -1,5 +1,14 @@
 # Journal des modifications
 
+## 2026-03-14 (Bibliothèque de tags : défilement auto pendant le glisser de tags)
+### ✅ Tâches :
+- Défilement automatique de la bibliothèque de tags lorsque l’on glisse des tags près du haut ou du bas
+
+- **Comportement** : Pendant le glisser d’un ou plusieurs tags utilisateur, si le curseur est à moins de 40 px du haut ou du bas de la zone défilable, la zone défile automatiquement (toutes les 120 ms) pour atteindre les tags au-dessus ou en dessous sans lâcher le glisser.
+- **Implémentation** : flag `_tag_drag_in_progress` et timer `_tag_drag_scroll_timer` (QTimer) démarré avant `drag.exec_()` et arrêté dans un `finally` ; `_on_tag_drag_scroll_tick()` utilise la position globale du curseur et le rect du viewport pour ajuster la barre de défilement verticale.
+ → Résultat : Glisser des tags pour les reparenter ou les appliquer aux images est plus simple lorsque la liste est longue ; la liste défile en approchant le curseur des bords.
+---
+
 ## 2026-03-14 (Bibliothèque de tags : « Parent to tag... » depuis le menu contextuel)
 ### ✅ Tâches :
 - Ajout de « Parent to tag... » au menu contextuel de la bibliothèque de tags (tags utilisateur uniquement)

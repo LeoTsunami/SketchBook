@@ -116,6 +116,8 @@ class DraggableTreeWidget(QTreeWidget):
 
 # MIME type for drag from tag library (reposition user tag); plain text used for drop on images
 TAG_LIBRARY_MIME = "application/x-sketchbook-tag-library"
+# MIME for multi-tag drag (all selected tags when dropping on images)
+TAG_LIBRARY_MULTI_MIME = "application/x-sketchbook-tag-library-multi"
 
 
 class TagGridDropFilter(QObject):
@@ -267,6 +269,8 @@ class MainWindow(QMainWindow):
         self._tag_library_drag_start_button: Optional[QWidget] = None
         self._tag_grid_drop_highlight_widget: Optional[QWidget] = None  # widget highlighted as drop target during drag
         self._tag_drop_was_on_grid: bool = False  # True when last drop was on tag grid (reparent), so button was destroyed
+        self._tag_drag_in_progress: bool = False
+        self._tag_drag_scroll_timer: Optional[QTimer] = None  # auto-scroll tag library during drag
 
         # Window setup
         self.setWindowTitle("SketchBook")
@@ -1407,10 +1411,38 @@ class MainWindow(QMainWindow):
             return viewport.mapFromGlobal(global_pos)
         return None
 
+    def _get_tag_button_for(self, tag_name: str) -> Optional[QWidget]:
+        """Return the tag button widget for the given user tag name, or None."""
+        category = self._subtag_to_category.get(tag_name)
+        if not category:
+            return None
+        buttons = self._subcategory_buttons.get(category, {})
+        return buttons.get(tag_name)
+
+    def _on_tag_drag_scroll_tick(self) -> None:
+        """During tag drag: scroll tag library when cursor is near top or bottom edge."""
+        if not self._tag_drag_in_progress:
+            return
+        scroll = getattr(self, "tags_scroll_area", None)
+        if not scroll:
+            return
+        viewport = scroll.viewport()
+        vbar = scroll.verticalScrollBar()
+        if not viewport or not vbar.isVisible():
+            return
+        margin = 40
+        step = 24
+        global_rect = QRect(viewport.mapToGlobal(QPoint(0, 0)), viewport.size())
+        pos = QCursor.pos()
+        if pos.y() < global_rect.top() + margin:
+            vbar.setValue(max(0, vbar.value() - step))
+        elif pos.y() > global_rect.bottom() - margin:
+            vbar.setValue(min(vbar.maximum(), vbar.value() + step))
+
     def _start_tag_button_drag(self, button: QWidget, tag_text: str) -> None:
         """
         Start a drag from a tag button (Trello-style): remove from layout, pixmap follows cursor,
-        restore to original place if dropped on nothing.
+        restore to original place if dropped on nothing. When multiple tags selected, pixmap shows all (stacked).
         """
         self._tag_drop_was_on_grid = False
         container = button.parentWidget()
@@ -1420,8 +1452,37 @@ class MainWindow(QMainWindow):
             idx = layout.indexOf(button)
             if idx >= 0 and hasattr(layout, "getItemPosition"):
                 layout_row, layout_col, layout_row_span, layout_col_span = layout.getItemPosition(idx)
-        # Pixmap from actual button (tag "accroché" to cursor, same size as button)
-        pixmap = button.grab()
+        # Build list of tags we're dragging (for multi pixmap and MIME)
+        tags_to_drop = (
+            set(self._tag_library_selection)
+            if tag_text in self._tag_library_selection
+            else {tag_text}
+        )
+        # Composite pixmap: all selected tags stacked (before we remove any button)
+        pixmap = None
+        hot_spot: Optional[QPoint] = None
+        if len(tags_to_drop) > 1:
+            tag_list = sorted(tags_to_drop)
+            grabs: List[QPixmap] = []
+            for t in tag_list:
+                btn = self._get_tag_button_for(t)
+                if btn and btn.isVisible():
+                    g = btn.grab()
+                    if not g.isNull():
+                        grabs.append(g)
+            if grabs:
+                offset = 6
+                w = max(p.width() for p in grabs) + (len(grabs) - 1) * offset
+                h = max(p.height() for p in grabs) + (len(grabs) - 1) * offset
+                pixmap = QPixmap(w, h)
+                pixmap.fill(Qt.transparent)
+                painter = QPainter(pixmap)
+                for i, p in enumerate(grabs):
+                    painter.drawPixmap(i * offset, i * offset, p)
+                painter.end()
+                hot_spot = QPoint(grabs[0].width() // 2, grabs[0].height() // 2)
+        if pixmap is None or pixmap.isNull():
+            pixmap = button.grab()
         if pixmap.isNull():
             pixmap = QPixmap(max(120, button.width()), max(28, button.height()))
             pixmap.fill(Qt.transparent)
@@ -1429,35 +1490,69 @@ class MainWindow(QMainWindow):
             painter.setPen(Qt.white)
             painter.drawText(pixmap.rect(), Qt.AlignCenter, tag_text)
             painter.end()
-        # Remove from layout so others reflow (Trello-style hole)
-        if layout is not None and layout_row >= 0:
-            layout.removeWidget(button)
-        button.hide()
+        if hot_spot is None:
+            hot_spot = pixmap.rect().center()
+        # Remove all selected tags from their layouts and hide (so they're all "with the cursor")
+        restore_list: List[Tuple[QWidget, QWidget, Any, int, int, int, int]] = []
+        for t in tags_to_drop:
+            btn = self._get_tag_button_for(t)
+            if not btn or not btn.isVisible():
+                continue
+            cont = btn.parentWidget()
+            lay = cont.layout() if cont else None
+            r, c, rspan, cspan = -1, -1, 1, 1
+            if lay and hasattr(lay, "indexOf"):
+                idx = lay.indexOf(btn)
+                if idx >= 0 and hasattr(lay, "getItemPosition"):
+                    r, c, rspan, cspan = lay.getItemPosition(idx)
+            if lay is not None and r >= 0:
+                lay.removeWidget(btn)
+            btn.hide()
+            restore_list.append((btn, cont, lay, r, c, rspan, cspan))
         drag = QDrag(button)
         mime_data = QMimeData()
         mime_data.setText(tag_text)
         if button.property("userTag"):
             mime_data.setData(TAG_LIBRARY_MIME, tag_text.encode("utf-8"))
+            if len(tags_to_drop) > 1:
+                mime_data.setData(
+                    TAG_LIBRARY_MULTI_MIME,
+                    "\n".join(sorted(tags_to_drop)).encode("utf-8"),
+                )
         drag.setMimeData(mime_data)
         drag.setPixmap(pixmap)
-        drag.setHotSpot(pixmap.rect().center())
-        result = drag.exec_(Qt.MoveAction)
-        # Restore to original place if drop was cancelled or on image (grid not reloaded)
-        if not self._tag_drop_was_on_grid and container is not None and layout is not None and layout_row >= 0:
+        drag.setHotSpot(hot_spot)
+        # Auto-scroll tag library when cursor near top/bottom during drag (timer runs in nested event loop)
+        self._tag_drag_in_progress = True
+        if self._tag_drag_scroll_timer is None:
+            self._tag_drag_scroll_timer = QTimer(self)
+            self._tag_drag_scroll_timer.timeout.connect(self._on_tag_drag_scroll_tick)
+        self._tag_drag_scroll_timer.start(120)
+        try:
+            result = drag.exec_(Qt.MoveAction)
+        finally:
+            self._tag_drag_in_progress = False
+            if self._tag_drag_scroll_timer is not None:
+                self._tag_drag_scroll_timer.stop()
+        # Restore all removed tags to their original place if drop was cancelled or on empty/image (grid not reloaded)
+        if not self._tag_drop_was_on_grid and restore_list:
             try:
-                if button.parent() is container:
-                    layout.addWidget(button, layout_row, layout_col, layout_row_span, layout_col_span)
-                    button.show()
-                    self._sync_tag_grid_state()
-                    # Force immediate update so the tag reappears without needing a click elsewhere
-                    button.update()
-                    container.updateGeometry()
-                    container.update()
-                    if hasattr(self, "tags_grid_container") and self.tags_grid_container:
-                        self.tags_grid_container.update()
-                    if hasattr(self, "tags_scroll_area") and self.tags_scroll_area.viewport():
-                        self.tags_scroll_area.viewport().update()
-                    QApplication.processEvents()
+                for btn, cont, lay, r, c, rspan, cspan in restore_list:
+                    if cont is not None and lay is not None and r >= 0 and btn.parent() is cont:
+                        lay.addWidget(btn, r, c, rspan, cspan)
+                        btn.show()
+                self._sync_tag_grid_state()
+                button.update()
+                if restore_list:
+                    first_cont = restore_list[0][1]
+                    if first_cont is not None:
+                        first_cont.updateGeometry()
+                        first_cont.update()
+                if hasattr(self, "tags_grid_container") and self.tags_grid_container:
+                    self.tags_grid_container.update()
+                if hasattr(self, "tags_scroll_area") and self.tags_scroll_area.viewport():
+                    self.tags_scroll_area.viewport().update()
+                QApplication.processEvents()
             except Exception:
                 pass
 
@@ -1826,7 +1921,6 @@ class MainWindow(QMainWindow):
 
     def _on_tag_grid_drop(self, event: "QDropEvent") -> None:
         """Reposition a user tag when dropped on a category or tag in the grid."""
-        self._tag_drop_was_on_grid = True
         self._set_tag_grid_drop_highlight(None)
         if not event.mimeData().hasFormat(TAG_LIBRARY_MIME):
             return
@@ -1842,15 +1936,25 @@ class MainWindow(QMainWindow):
         key = child.property("tagGridKey")
         if dropped_tag == key:
             return
+        # Only set after we know the drop is valid (so restore runs when drop on empty area)
+        self._tag_drop_was_on_grid = True
         if role == "category":
             placement = {"category": key}
         elif role == "tag":
             placement = {"parent_tag": key}
         else:
             return
+        # Reparent all selected tags (or just the dragged one if not in selection)
+        user_tags = self._get_user_tags()
+        tags_to_reparent = (
+            set(self._tag_library_selection) if dropped_tag in self._tag_library_selection
+            else {dropped_tag}
+        )
+        tags_to_reparent = {t for t in tags_to_reparent if t in user_tags and t != key}
         cfg = self._user_tags_config
         placements = dict(cfg.get("placements", {}))
-        placements[dropped_tag] = placement
+        for tag in tags_to_reparent:
+            placements[tag] = placement
         user_tags_config.save_config(
             placements,
             cfg.get("icons", {}),

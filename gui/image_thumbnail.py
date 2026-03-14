@@ -574,8 +574,8 @@ class ImageThumbnail(QFrame):
             self.style().unpolish(self)
             self.style().polish(self)
             return
-        # Tag drag from library: hasText() only (no URLs)
-        if md.hasText() and md.text().strip():
+        # Tag drag from library: hasText() or multi-tag MIME (no URLs)
+        if md.hasFormat("application/x-sketchbook-tag-library-multi") or (md.hasText() and md.text().strip()):
             event.acceptProposedAction()
             self.setProperty("dragOver", True)
             self.style().unpolish(self)
@@ -605,16 +605,15 @@ class ImageThumbnail(QFrame):
             self.style().polish(self)
             return
 
-        # Tag drop (from tag library): hasText() and no URLs
-        if not md.hasText():
-            event.ignore()
-            self.setProperty("dragOver", False)
-            self.style().unpolish(self)
-            self.style().polish(self)
-            return
-
-        tag_text = md.text().strip()
-        if not tag_text:
+        # Tag drop (from tag library): multi-tag MIME or hasText(), no URLs
+        tag_list: list[str] = []
+        if md.hasFormat("application/x-sketchbook-tag-library-multi"):
+            raw = md.data("application/x-sketchbook-tag-library-multi")
+            if raw:
+                tag_list = [t.strip() for t in bytes(raw).decode("utf-8").split("\n") if t.strip()]
+        if not tag_list and md.hasText() and md.text().strip():
+            tag_list = [md.text().strip()]
+        if not tag_list:
             event.ignore()
             self.setProperty("dragOver", False)
             self.style().unpolish(self)
@@ -639,7 +638,8 @@ class ImageThumbnail(QFrame):
         parent = self.parent()
         while parent:
             if hasattr(parent, "apply_tag_to_images_async"):
-                parent.apply_tag_to_images_async(tag_text, images_to_tag)
+                for tag_text in tag_list:
+                    parent.apply_tag_to_images_async(tag_text, images_to_tag)
                 break
             parent = parent.parent()
 

@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-03-14 (Tag library: auto-scroll during tag drag)
+### ✅ Tasks:
+- Auto-scroll tag library when dragging tags near top or bottom edge
+
+- **Behavior**: While dragging one or more user tags, if the cursor is within 40 px of the top or bottom of the tag library scroll area, the area scrolls up or down automatically (every 120 ms) so you can reach tags above or below without releasing the drag.
+- **Implementation**: `_tag_drag_in_progress` flag and `_tag_drag_scroll_timer` (QTimer) started before `drag.exec_()` and stopped in a `finally` block; `_on_tag_drag_scroll_tick()` uses global cursor position and viewport rect to adjust `tags_scroll_area.verticalScrollBar()`.
+ → Result: Dragging tags to reparent or apply to images is easier when the list is long; the list scrolls as you move the cursor toward the edges.
+---
+
 ## 2026-03-14 (Tag library: "Parent to tag..." from right-click menu)
 ### ✅ Tasks:
 - Add "Parent to tag..." to tag library context menu (user tags only)
