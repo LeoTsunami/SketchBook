@@ -2640,10 +2640,16 @@ class MainWindow(QMainWindow):
         
         if dialog.exec_() != QDialog.Accepted:
             return
-        
+
         # Get selected tags
         selected_tags = dialog.get_selected_tags()
-        
+
+        # Refresh tag library so any new tags added in the import dialog appear
+        self._user_tags_config = user_tags_config.load_config()
+        self._load_tags_into_grid()
+        self._update_tag_search_completer()
+        self._sync_tag_grid_state()
+
         # Create progress bar in status bar
         progress_bar = self._create_status_progress_bar()
         

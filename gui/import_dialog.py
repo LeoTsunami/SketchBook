@@ -16,12 +16,94 @@ from qtpy.QtWidgets import (
     QFrame,
     QSizePolicy,
 )
-from qtpy.QtCore import Qt, QSize
-from qtpy.QtGui import QPixmap, QIcon, QImage
+from qtpy.QtCore import Qt, QSize, QPoint, QEvent, QObject
+from qtpy.QtGui import QPixmap, QIcon, QImage, QDrag, QPainter
+from qtpy.QtCore import QMimeData
 from PIL import Image
 from core.image_manager import ImageManager
 from core import user_tags_config
 from gui.icon_utils import find_tag_icon, invert_icon
+
+# MIME type for drag from tag library (reparent in grid); must match main window
+TAG_LIBRARY_MIME = "application/x-sketchbook-tag-library"
+
+
+class DraggableTagLibraryButton(QPushButton):
+    """Tag button that can be dragged onto category/tag in the grid to reparent (same as main tag library)."""
+
+    def __init__(self, text: str, parent=None):
+        super().__init__(text, parent)
+        self._drag_start_pos = None
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton:
+            self._drag_start_pos = event.pos()
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if (
+            event.buttons() & Qt.LeftButton
+            and self._drag_start_pos is not None
+            and (event.pos() - self._drag_start_pos).manhattanLength() >= 10
+        ):
+            tag_text = self.text()
+            if not tag_text:
+                return
+            drag = QDrag(self)
+            mime_data = QMimeData()
+            mime_data.setText(tag_text)
+            mime_data.setData(TAG_LIBRARY_MIME, tag_text.encode("utf-8"))
+            drag.setMimeData(mime_data)
+            pixmap = QPixmap(120, 28)
+            pixmap.fill(Qt.transparent)
+            painter = QPainter(pixmap)
+            painter.setPen(Qt.white)
+            painter.drawText(pixmap.rect(), Qt.AlignCenter, tag_text)
+            painter.end()
+            drag.setPixmap(pixmap)
+            drag.exec_(Qt.MoveAction)
+            return
+        super().mouseMoveEvent(event)
+
+
+class ImportTagGridDropFilter(QObject):
+    """Event filter to accept tag drag/drop on the import dialog tag grid (reparent user tags)."""
+
+    def __init__(self, dialog: "ImportDialog"):
+        super().__init__(dialog)
+        self._dialog = dialog
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if obj != self._dialog.tags_container:
+            return False
+        try:
+            _drag_enter = QEvent.Type.DragEnter
+            _drag_move = QEvent.Type.DragMove
+            _drag_leave = QEvent.Type.DragLeave
+            _drop_type = QEvent.Type.Drop
+        except AttributeError:
+            _drag_enter = QEvent.DragEnter
+            _drag_move = QEvent.DragMove
+            _drag_leave = QEvent.DragLeave
+            _drop_type = QEvent.Drop
+        if event.type() == _drag_enter:
+            if event.mimeData().hasFormat(TAG_LIBRARY_MIME):
+                event.acceptProposedAction()
+            return True
+        if event.type() == _drag_move:
+            if event.mimeData().hasFormat(TAG_LIBRARY_MIME):
+                event.acceptProposedAction()
+                pos = event.position().toPoint() if hasattr(event, "position") and hasattr(event.position(), "toPoint") else event.pos()
+                target = self._dialog._get_import_drop_target_at(pos)
+                self._dialog._set_import_drop_highlight(target)
+            return True
+        if event.type() == _drag_leave:
+            self._dialog._set_import_drop_highlight(None)
+            return False
+        if event.type() == _drop_type:
+            self._dialog._on_import_grid_drop(event)
+            return True
+        return False
 
 
 class ImportDialog(QDialog):
@@ -58,7 +140,10 @@ class ImportDialog(QDialog):
         self._subtag_to_category: Dict[str, str] = {}
         self._user_tag_buttons: Dict[str, QPushButton] = {}
         self._user_tags_config: Dict[str, Any] = {}
-        
+        self._tags_added_during_session: Set[str] = set()
+        self._added_row_buttons: Dict[str, QPushButton] = {}
+        self._import_drop_highlight_widget: Optional[QWidget] = None
+
         self._setup_ui()
     
     def _setup_ui(self):
@@ -152,8 +237,9 @@ class ImportDialog(QDialog):
         self.tags_grid_layout.setAlignment(Qt.AlignTop)
         
         self._load_tags_into_grid()
-        
+
         self.tags_scroll_area.setWidget(self.tags_container)
+        self.tags_container.installEventFilter(ImportTagGridDropFilter(self))
         tags_layout.addWidget(self.tags_scroll_area)
         
         content_layout.addWidget(tags_panel, 2)  # Give tags panel more space
@@ -168,6 +254,7 @@ class ImportDialog(QDialog):
         cancel_button.clicked.connect(self.reject)
         
         import_button = QPushButton("Import")
+        import_button.clicked.connect(self._on_import_clicked)
         import_button.setStyleSheet("""
             QPushButton {
                 background-color: #4CAF50;
@@ -179,7 +266,6 @@ class ImportDialog(QDialog):
                 background-color: #45a049;
             }
         """)
-        import_button.clicked.connect(self.accept)
         
         button_layout.addWidget(cancel_button)
         button_layout.addWidget(import_button)
@@ -315,9 +401,11 @@ class ImportDialog(QDialog):
                 tag_container_layout.setSpacing(10)
                 subtag_buttons: Dict[str, QPushButton] = {}
                 for tag in unique_subtags:
-                    tag_button = self._build_tag_button(tag)
+                    tag_button = self._build_tag_button(tag, is_user_tag=False)
                     tag_button.setCheckable(True)
                     tag_button.clicked.connect(lambda _=False, name=tag: self._on_tag_button_clicked(name))
+                    tag_button.setProperty("tagGridRole", "tag")
+                    tag_button.setProperty("tagGridKey", tag)
                     subtag_buttons[tag] = tag_button
                     self._subtag_to_category[tag] = category
                     tag_button.setVisible(is_label_category)
@@ -334,10 +422,12 @@ class ImportDialog(QDialog):
                     category_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                     self.tags_grid_layout.addWidget(category_label, row, 0, 1, max_cols)
                 else:
-                    category_button = self._build_tag_button(category)
+                    category_button = self._build_tag_button(category, is_user_tag=False)
                     category_button.setCheckable(True)
                     category_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
                     category_button.clicked.connect(lambda _=False, name=category: self._on_tag_button_clicked(name))
+                    category_button.setProperty("tagGridRole", "category")
+                    category_button.setProperty("tagGridKey", category)
                     self.tags_grid_layout.addWidget(category_button, row, 0, 1, max_cols)
                     self._category_buttons[category] = category_button
 
@@ -381,7 +471,7 @@ class ImportDialog(QDialog):
                 for idx, tag in enumerate(user_tags):
                     tag_row = current_row + 2 + (idx // max_cols)
                     tag_col = idx % max_cols
-                    tag_button = self._build_tag_button(tag)
+                    tag_button = self._build_tag_button(tag, is_user_tag=True)
                     tag_button.setCheckable(True)
                     tag_button.clicked.connect(lambda _, name=tag: self._on_tag_button_clicked(name))
                     self.tags_grid_layout.addWidget(tag_button, tag_row, tag_col)
@@ -418,9 +508,13 @@ class ImportDialog(QDialog):
         return tag_set
     
     
-    def _build_tag_button(self, tag: str) -> QPushButton:
-        """Build a tag button with icon (uses user_tags_config for user tag icons)."""
-        button = QPushButton(tag)
+    def _build_tag_button(self, tag: str, is_user_tag: bool = False) -> QPushButton:
+        """Build a tag button with icon. If is_user_tag, use draggable button for reparenting in grid."""
+        if is_user_tag:
+            button = DraggableTagLibraryButton(tag)
+            button.setProperty("userTag", True)
+        else:
+            button = QPushButton(tag)
         icon = find_tag_icon(tag, user_config=getattr(self, "_user_tags_config", {}))
         if not icon.isNull():
             button.setIcon(invert_icon(icon, 28))
@@ -445,11 +539,13 @@ class ImportDialog(QDialog):
             self._update_button_style(button, True)
             return
         self.selected_tags.add(tag)
-        tag_button = self._build_tag_button(tag)
+        self._tags_added_during_session.add(tag)
+        tag_button = self._build_tag_button(tag, is_user_tag=True)
         tag_button.setCheckable(True)
         tag_button.setChecked(True)
         tag_button.clicked.connect(lambda _, name=tag: self._on_tag_button_clicked(name))
         self._user_tag_buttons[tag] = tag_button
+        self._added_row_buttons[tag] = tag_button
         self._added_user_tags_layout.addWidget(tag_button)
         self._update_button_style(tag_button, True)
 
@@ -480,6 +576,66 @@ class ImportDialog(QDialog):
         else:
             button.setStyleSheet(base_style)
     
+    def _get_import_drop_target_at(self, pos: QPoint) -> Optional[QWidget]:
+        """Return the category or tag button (widget with tagGridRole) at pos in container coords."""
+        container = getattr(self, "tags_container", None)
+        if not container:
+            return None
+        w = container.childAt(pos)
+        while w and w != container:
+            if w.property("tagGridRole"):
+                return w
+            local = w.mapFrom(container, pos)
+            next_w = w.childAt(local) if hasattr(w, "childAt") else None
+            w = next_w
+        return None
+
+    def _set_import_drop_highlight(self, widget: Optional[QWidget]) -> None:
+        """Set or clear the drop-target highlight."""
+        prev = self._import_drop_highlight_widget
+        if prev is not None:
+            prev.setProperty("dragOver", False)
+            prev.style().unpolish(prev)
+            prev.style().polish(prev)
+        self._import_drop_highlight_widget = widget
+        if widget is not None:
+            widget.setProperty("dragOver", True)
+            widget.style().unpolish(widget)
+            widget.style().polish(widget)
+
+    def _on_import_grid_drop(self, event) -> None:
+        """Reposition a user tag when dropped on a category or tag in the import grid."""
+        self._set_import_drop_highlight(None)
+        if not event.mimeData().hasFormat(TAG_LIBRARY_MIME):
+            return
+        raw = event.mimeData().data(TAG_LIBRARY_MIME)
+        dropped_tag = bytes(raw).decode("utf-8") if raw else ""
+        pos = event.position().toPoint() if hasattr(event, "position") and hasattr(event.position(), "toPoint") else event.pos()
+        child = self._get_import_drop_target_at(pos)
+        if not child or not child.property("tagGridRole"):
+            return
+        role = child.property("tagGridRole")
+        key = child.property("tagGridKey")
+        if dropped_tag == key:
+            return
+        cfg = self._user_tags_config
+        placements = dict(cfg.get("placements", {}))
+        if role == "category":
+            placements[dropped_tag] = {"category": key}
+        else:
+            placements[dropped_tag] = {"parent_tag": key}
+        ro = list(cfg.get("registered_only", []))
+        if dropped_tag not in ro:
+            ro.append(dropped_tag)
+        user_tags_config.save_config(placements, cfg.get("icons", {}), ro)
+        self._user_tags_config = user_tags_config.load_config()
+        self._load_tags_into_grid()
+        self._sync_import_subtags_visibility()
+        if dropped_tag in self._added_row_buttons:
+            btn = self._added_row_buttons.pop(dropped_tag)
+            self._added_user_tags_layout.removeWidget(btn)
+            btn.deleteLater()
+
     def _get_tag_button(self, tag: str) -> Optional[QPushButton]:
         """Get tag button by tag name."""
         # Check category buttons
@@ -572,10 +728,24 @@ class ImportDialog(QDialog):
                         layout.addWidget(btn, r, c)
                         idx += 1
 
+    def _on_import_clicked(self) -> None:
+        """Persist tags added during this session to config, then close with Accept."""
+        if self._tags_added_during_session:
+            cfg = self._user_tags_config
+            placements = dict(cfg.get("placements", {}))
+            ro = list(cfg.get("registered_only", []))
+            for tag in self._tags_added_during_session:
+                if tag not in placements:
+                    placements[tag] = {"category": "Miscellaneous:"}
+                if tag not in ro:
+                    ro.append(tag)
+            user_tags_config.save_config(placements, cfg.get("icons", {}), ro)
+        self.accept()
+
     def get_selected_tags(self) -> Set[str]:
         """
         Get selected tags.
-        
+
         Returns:
             Set of selected tag names
         """
