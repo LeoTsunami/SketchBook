@@ -38,7 +38,7 @@ SketchBook/
 ## Architecture
 
 ### GUI (gui/)
-- `main_window.py` : Fenêtre principale. Crée et cache la fenêtre au lancement d’une session ; réaffiche à la fermeture de la session. Bibliothèque de tags : sélection multi-tags (Ctrl+clic), menu « Parent to tag... » avec mode parent (barre OK/Cancel), `_on_parent_select_ok` applique placements (category/parent_tag).
+- `main_window.py` : Fenêtre principale. Crée et cache la fenêtre au lancement d’une session ; réaffiche à la fermeture de la session. Bibliothèque de tags : sélection multi-tags (Ctrl+clic), menu « Parent to tag... » avec mode parent (barre OK/Cancel), `_on_parent_select_ok` applique placements (category/parent_tag). Session : `_on_session_settings_clicked(start_from_image_id=...)` permet de démarrer depuis une image de la grille, en réutilisant le même dialogue.
 - `slideshow_window.py` : Fenêtre de session (plein écran ou toujours au premier plan). Décompte en haut à droite, barre de contrôles (Play/Pause, Précédent, Suivant). Appelle `SessionManager.start_session` avec les image_ids filtrés et les paramètres du dialogue.
 - `session_settings_dialog.py` : Type de session (Course / Constant), durée course (10–60 min) ou intervalle, mode fenêtre.
 - `image_viewer_window.py` : Fenêtre de visualisation d’une image (zoom molette, Précédent/Suivant, rotation, crop). Mode crop : clic sur Crop affiche une grille règle des tiers et 4 poignées (`CropHandleItem`) déplaçables ; Valider applique le crop (Pillow) et met à jour les métadonnées, Annuler quitte le mode. Overlay (rect, lignes, poignées) créés dans la scène et retirés à la sortie du mode pour éviter des références invalides après `scene.clear()`.
@@ -412,5 +412,11 @@ def _do_relayout(self):
     """Performs the actual grid layout update, maintaining proper
     thumbnail sizes and aspect ratios."""
 ```
+
+### Session start from grid context menu
+- `ImageGrid` exposes a context menu action **"Start session from this image"** only when exactly one image is selected.
+- The grid emits `start_session_from_image_requested(image_id)`.
+- `MainWindow` listens to this signal and calls `_on_session_settings_clicked(start_from_image_id=image_id)`.
+- Image slicing is centralized in `_slice_images_from_start(images, start_image_id)` so session order is preserved while removing preceding images.
 
 --- 

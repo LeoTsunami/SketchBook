@@ -320,3 +320,37 @@ def test_parent_select_ok_updates_placements(main_window, monkeypatch):
     assert saved_placements.get("Child1") == {"parent_tag": "Portrait"}
     assert saved_placements.get("Child2") == {"parent_tag": "Portrait"}
     assert not main_window._parent_select_mode
+
+
+class _ImageLike:
+    """Lightweight image object for session start slicing tests."""
+
+    def __init__(self, image_id: str) -> None:
+        self.id = image_id
+
+
+def test_slice_images_from_start_expected_use() -> None:
+    """Return list from selected image when ID exists."""
+    images = [_ImageLike("a"), _ImageLike("b"), _ImageLike("c")]
+
+    sliced = MainWindow._slice_images_from_start(images, "b")
+
+    assert [img.id for img in sliced] == ["b", "c"]
+
+
+def test_slice_images_from_start_edge_case_first_image() -> None:
+    """Keep full list when selected image is already first."""
+    images = [_ImageLike("a"), _ImageLike("b"), _ImageLike("c")]
+
+    sliced = MainWindow._slice_images_from_start(images, "a")
+
+    assert [img.id for img in sliced] == ["a", "b", "c"]
+
+
+def test_slice_images_from_start_failure_case_unknown_image() -> None:
+    """Fallback to full list when selected image does not exist."""
+    images = [_ImageLike("a"), _ImageLike("b"), _ImageLike("c")]
+
+    sliced = MainWindow._slice_images_from_start(images, "missing")
+
+    assert [img.id for img in sliced] == ["a", "b", "c"]

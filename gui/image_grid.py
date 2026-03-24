@@ -41,6 +41,7 @@ class ImageGrid(QScrollArea):
     image_clicked = Signal(str)  # Emits image ID when clicked (single click)
     image_double_clicked = Signal(str)  # Emits image ID when double-clicked (open viewer)
     selection_changed = Signal(list)  # Emits list of selected image IDs
+    start_session_from_image_requested = Signal(str)  # Emits selected image ID (must be exactly one)
     grid_needs_refresh = Signal()  # Emits when DB changed (delete, etc.) so main window can reload
     tag_remove_progress = Signal(str, int, int)  # tag, current, total
     tag_remove_finished = Signal(str, list, int)  # tag, image_ids, total
@@ -191,6 +192,11 @@ class ImageGrid(QScrollArea):
         self.rotate_cw_action.triggered.connect(self._rotate_selected_clockwise)
         self.rotate_ccw_action = self.context_menu.addAction("Rotate 90° counterclockwise")
         self.rotate_ccw_action.triggered.connect(self._rotate_selected_counterclockwise)
+        self.context_menu.addSeparator()
+        self.start_session_from_image_action = self.context_menu.addAction("Start session from this image")
+        self.start_session_from_image_action.triggered.connect(
+            self._start_session_from_selected_image
+        )
         self.context_menu.addSeparator()
         self.delete_action = self.context_menu.addAction("Delete from Library")
         self.delete_action.triggered.connect(self._delete_selected)
@@ -1193,7 +1199,17 @@ class ImageGrid(QScrollArea):
     def contextMenuEvent(self, event):
         """Show context menu."""
         if self.selected_images:  # Only show if there are selected images
+            has_single_selection = len(self.selected_images) == 1
+            self.start_session_from_image_action.setEnabled(has_single_selection)
+            self.start_session_from_image_action.setVisible(has_single_selection)
             self.context_menu.popup(event.globalPos())
+
+    def _start_session_from_selected_image(self) -> None:
+        """Emit a request to start a session from the currently selected image."""
+        if len(self.selected_images) != 1:
+            return
+        selected_image_id = next(iter(self.selected_images))
+        self.start_session_from_image_requested.emit(selected_image_id)
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         """Accept file/folder drops so they are handled as import (not as tag on thumbnail)."""

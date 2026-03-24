@@ -1,5 +1,16 @@
 # Journal des modifications
 
+## 2026-03-24 (Démarrer une session depuis l’image sélectionnée dans la grille)
+### ✅ Tâches :
+- Ajouter une action de menu contextuel pour démarrer une session depuis une image unique sélectionnée dans la grille
+
+- **Comportement du menu contextuel** : Dans `ImageGrid`, le clic droit affiche désormais **« Start session from this image »** uniquement quand exactement une image est sélectionnée.
+- **Comportement de démarrage de session** : Cette action ouvre la fenêtre Session Settings existante et démarre la session à partir de l’image sélectionnée ; les images précédentes dans l’ordre courant sont ignorées pour cette session.
+- **Implémentation** : Ajout du signal `start_session_from_image_requested` dans `ImageGrid`, connecté dans `MainWindow` vers un nouveau handler qui réutilise `_on_session_settings_clicked(start_from_image_id=...)`. Ajout du helper `_slice_images_from_start()` pour conserver l’ordre tout en supprimant les images précédentes.
+- **Tests** : Ajout de tests unitaires pour la logique de découpe (cas attendu, cas limite, cas d’échec) dans `tests/test_main_window.py`.
+ → Résultat : Un clic droit sur une seule miniature permet de lancer une session qui commence exactement à cette image, puis continue dans l’ordre courant.
+---
+
 ## 2026-03-14 (Bibliothèque de tags : défilement auto pendant le glisser de tags)
 ### ✅ Tâches :
 - Défilement automatique de la bibliothèque de tags lorsque l’on glisse des tags près du haut ou du bas

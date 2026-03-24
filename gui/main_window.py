@@ -667,6 +667,9 @@ class MainWindow(QMainWindow):
             Qt.QueuedConnection,
         )
         self.image_grid.selection_changed.connect(self._on_selection_changed)
+        self.image_grid.start_session_from_image_requested.connect(
+            self._on_start_session_from_grid_image
+        )
         self.image_grid.grid_needs_refresh.connect(self._apply_category_filters)
         self.image_grid.set_import_drop_callback(self._import_from_urls)
         middle_layout.addWidget(self.image_grid)
@@ -1006,8 +1009,35 @@ class MainWindow(QMainWindow):
         total_mb = total_bytes / (1024 * 1024)
         self.selection_info_label.setText(f"  |  Selected: {len(image_ids)} | {total_mb:.2f} MB")
     
-    def _on_session_settings_clicked(self):
-        """Handle Session Settings button click: open dialog then start session window."""
+    @staticmethod
+    def _slice_images_from_start(
+        images: List[Any], start_image_id: Optional[str]
+    ) -> List[Any]:
+        """Return images from start_image_id to end, preserving original order.
+
+        Args:
+            images: Ordered list of image-like objects containing an `id` attribute.
+            start_image_id: ID of the first image to keep.
+
+        Returns:
+            List[Any]: Sliced list, or the original list when no valid start ID is provided.
+        """
+        if not start_image_id:
+            return images
+
+        for index, image in enumerate(images):
+            if getattr(image, "id", None) == start_image_id:
+                return images[index:]
+        return images
+
+    def _on_start_session_from_grid_image(self, image_id: str) -> None:
+        """Open session settings and start a session from the selected grid image."""
+        self._on_session_settings_clicked(start_from_image_id=image_id)
+
+    def _on_session_settings_clicked(
+        self, start_from_image_id: Optional[str] = None
+    ) -> None:
+        """Handle Session Settings button click and optionally start from one image."""
         # Get current sort order
         sort_by = self._get_current_sort_order()
         
@@ -1035,6 +1065,9 @@ class MainWindow(QMainWindow):
             filtered_images = self.image_manager.db._sort_images(filtered_images, sort_by)
             shuffle_iteration = 0
         
+        filtered_images = self._slice_images_from_start(
+            filtered_images, start_from_image_id
+        )
         image_count = len(filtered_images)
 
         dialog = SessionSettingsDialog(self.image_manager, image_count, self)

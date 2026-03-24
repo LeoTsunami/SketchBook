@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-03-24 (Session start from selected image in grid)
+### ✅ Tasks:
+- Add a context-menu action to start a session from one selected image in the image grid
+
+- **Context menu behavior**: In `ImageGrid`, right-click now shows **"Start session from this image"** only when exactly one image is selected.
+- **Session start behavior**: Triggering this action opens the existing Session Settings dialog and starts the session from that selected image onward; images before it in the current ordered list are ignored for that session.
+- **Implementation**: Added `start_session_from_image_requested` signal in `ImageGrid`, connected in `MainWindow` to a new handler that reuses `_on_session_settings_clicked(start_from_image_id=...)`. Added `_slice_images_from_start()` helper to keep list order while cutting preceding images.
+- **Tests**: Added unit tests for session-start slicing logic (expected use, edge case, failure case) in `tests/test_main_window.py`.
+ → Result: You can right-click a single thumbnail and launch a session that begins exactly at that image, continuing with the same current order.
+---
+
 ## 2026-03-14 (Tag library: auto-scroll during tag drag)
 ### ✅ Tasks:
 - Auto-scroll tag library when dragging tags near top or bottom edge

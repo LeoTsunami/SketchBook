@@ -95,6 +95,13 @@ You can run timed drawing sessions using the images currently shown (filtered by
 
 The main window is hidden and the session window opens. The image list is built from your filtered images, in random order.
 
+### Start from a specific image (right-click in grid)
+
+- Select **exactly one image** in the grid.
+- Right-click it and choose **"Start session from this image"**.
+- The Session Settings window opens as usual.
+- When the session starts, SketchBook uses that image as the first step and keeps only the images after it in the current grid order; images before it are ignored for that session.
+
 ### Session Window
 - **Screen awake**: While the session window is open, the screen and computer stay awake (no sleep or screen saver). Normal power behavior is restored when you close the session.
 - **Countdown**: Shown in the top-left for the current image; it decreases second by second and turns red as time approaches zero.
