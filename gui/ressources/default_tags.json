@@ -7,8 +7,6 @@
     "Weapon"
   ],
   "Animal": [
-    "Quadruped",
-    "Biped",
     "Insect",
     "Bird",
     "Terrestrial",

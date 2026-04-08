@@ -6,6 +6,8 @@
 
 - **Recursive filtering**: In `MainWindow`, category and label filters now expand selected tags with all recursive descendants before matching image tags. This makes parent sub-categories behave as expected (e.g. selecting `Felin` also matches images tagged with `Chat`, `Tiger`, `Lion`).
 - **OR descendant matching for selected sub-category**: each selected sub-category now creates an OR group made of itself + recursive descendants (instead of a global AND on all descendants). This fixes the "0 images" case when selecting a parent sub-category like `Felin`.
+- **Hierarchy visual cues**: categories and tags now display expand/collapse arrows when they have children (`▶` collapsed, `▼` expanded). Added depth-based hierarchy coloring for tags and categories so nested levels are easier to identify in the grid.
+- **Consistent tag interactions**: simple click now stays dedicated to filter/expand-collapse behavior. Tag-library multi-selection is now only done via modifier+drag (`Ctrl` or `Shift` + drag), avoiding accidental click selection.
 - **Cycle safety**: Added cycle protection in descendant traversal to avoid infinite recursion if an invalid parent loop exists in user placements.
 - **Tests**: Added unit tests in `tests/test_main_window.py` for expected recursive expansion, leaf-tag edge case, and cycle failure case.
  → Result: Tag hierarchy supports unlimited nested sub-categories/sub-tags for filtering, and clicking a parent sub-category now includes images tagged with deeper child tags.

@@ -4,7 +4,7 @@ Tests for the main window.
 import pytest
 from pathlib import Path
 from PIL import Image
-from qtpy.QtCore import Qt, QMimeData, QUrl
+from qtpy.QtCore import Qt, QMimeData, QUrl, QPoint, QRect
 from qtpy.QtGui import QDragEnterEvent, QDropEvent
 from gui.main_window import MainWindow
 from core.settings import settings
@@ -150,6 +150,67 @@ def test_filter_images_by_category(main_window, monkeypatch):
     assert result_ids == {"img1", "img2"}
 
 
+def test_deactivate_category_clears_subtags_and_tag_filters(main_window):
+    """Disabling a category clears its subtags and related AND/OR tags."""
+    main_window._load_tags_into_grid()
+    main_window._active_categories = {"Animal"}
+    main_window._active_subtags = {"Animal": {"Terrestrial"}}
+    main_window.and_zone.add_tag("Animal")
+    main_window.and_zone.add_tag("Terrestrial")
+    main_window.or_zone.add_tag("Terrestrial")
+
+    main_window._on_tag_button_clicked("Animal")
+
+    assert "Animal" not in main_window._active_categories
+    assert "Animal" not in main_window._active_subtags
+    assert "Animal" not in main_window.and_zone.get_tags()
+    assert "Terrestrial" not in main_window.and_zone.get_tags()
+    assert "Terrestrial" not in main_window.or_zone.get_tags()
+
+
+def test_deactivate_category_removes_hidden_residual_and_or_tags(main_window):
+    """Disabling category removes AND/OR tags mapped to it, even if not in visible descendants."""
+    main_window._load_tags_into_grid()
+    main_window._active_categories = {"Animal"}
+    main_window._active_subtags = {"Animal": {"Terrestrial"}}
+    main_window._subtag_to_category["Emu"] = "Animal"
+    main_window.and_zone.add_tag("Emu")
+    main_window.or_zone.add_tag("Emu")
+
+    main_window._on_tag_button_clicked("Animal")
+
+    assert "Emu" not in main_window.and_zone.get_tags()
+    assert "Emu" not in main_window.or_zone.get_tags()
+
+
+def test_deactivate_subcategory_clears_descendants_and_filters(main_window):
+    """Disabling a sub-category removes descendant active tags and related AND/OR filters."""
+    main_window._load_tags_into_grid()
+    main_window._active_categories = {"Animal"}
+    main_window._active_subtags = {"Animal": {"Terrestrial", "Felin", "Emu"}}
+    main_window._user_tags_config.setdefault("placements", {})
+    main_window._user_tags_config["placements"].update(
+        {
+            "Felin": {"parent_tag": "Terrestrial"},
+            "Emu": {"parent_tag": "Felin"},
+        }
+    )
+    main_window._subtag_to_category["Felin"] = "Animal"
+    main_window._subtag_to_category["Emu"] = "Animal"
+    main_window.and_zone.add_tag("Felin")
+    main_window.and_zone.add_tag("Emu")
+    main_window.or_zone.add_tag("Emu")
+
+    main_window._on_tag_button_clicked("Felin", "Animal")
+
+    active_subtags = main_window._active_subtags.get("Animal", set())
+    assert "Felin" not in active_subtags
+    assert "Emu" not in active_subtags
+    assert "Felin" not in main_window.and_zone.get_tags()
+    assert "Emu" not in main_window.and_zone.get_tags()
+    assert "Emu" not in main_window.or_zone.get_tags()
+
+
 def test_get_default_tags_with_nested_data(main_window, tmp_path):
     """Test loading nested default tags from JSON."""
     tags_path = tmp_path / "default_tags.json"
@@ -262,15 +323,41 @@ def test_invalid_drop(main_window, qtbot, tmp_path):
     assert not drag_event.isAccepted()
 
 
-def test_toggle_tag_library_selection(main_window):
-    """Tag library selection: add and remove user tags with Ctrl+click (logic only)."""
-    main_window._tag_library_selection = set()
-    main_window._toggle_tag_library_selection("TagA")
-    assert main_window._tag_library_selection == {"TagA"}
-    main_window._toggle_tag_library_selection("TagB")
-    assert main_window._tag_library_selection == {"TagA", "TagB"}
-    main_window._toggle_tag_library_selection("TagA")
-    assert main_window._tag_library_selection == {"TagB"}
+def test_tag_library_finish_selection_expected_use_drag_adds_selection() -> None:
+    """Modifier+drag selection adds intersecting user tags."""
+    window = MainWindow.__new__(MainWindow)
+    window._tag_library_selection_start = QPoint(0, 0)
+    window._tag_library_selection = set()
+    window._last_selected_tag = None
+    window._tag_library_is_selecting = True
+    window._tag_library_drag_start_tag = "TagA"
+    window._tag_library_drag_start_button = object()
+    window._sync_tag_grid_state = lambda: None
+    window._get_user_tag_buttons_viewport_rects = lambda: [
+        ("TagA", QRect(0, 0, 20, 20)),
+        ("TagB", QRect(30, 0, 20, 20)),
+    ]
+
+    window._tag_library_finish_selection(QPoint(35, 10), Qt.ControlModifier)
+
+    assert window._tag_library_selection == {"TagA", "TagB"}
+
+
+def test_tag_library_finish_selection_edge_case_click_without_drag() -> None:
+    """Modifier click without drag does not alter selection."""
+    window = MainWindow.__new__(MainWindow)
+    window._tag_library_selection_start = QPoint(10, 10)
+    window._tag_library_selection = set()
+    window._last_selected_tag = None
+    window._tag_library_is_selecting = True
+    window._tag_library_drag_start_tag = "TagA"
+    window._tag_library_drag_start_button = object()
+    window._sync_tag_grid_state = lambda: None
+    window._get_user_tag_buttons_viewport_rects = lambda: [("TagA", QRect(0, 0, 20, 20))]
+
+    window._tag_library_finish_selection(QPoint(12, 11), Qt.ControlModifier)
+
+    assert window._tag_library_selection == set()
 
 
 def test_enter_exit_parent_select_mode(main_window):
@@ -419,3 +506,29 @@ def test_active_category_filter_data_recursive_group_or_expected_use() -> None:
     assert "animal" in allowed_norm
     assert len(required_groups_norm) == 1
     assert required_groups_norm[0] == {"felin", "chat", "tiger", "lion"}
+
+
+def test_with_expand_icon_expected_use() -> None:
+    """Expandable entries show arrow icon prefix."""
+    assert MainWindow._with_expand_icon("Felin", True, False).endswith(" ▶")
+    assert MainWindow._with_expand_icon("Felin", True, True).endswith(" ▼")
+
+
+def test_with_expand_icon_edge_case_no_children() -> None:
+    """Non-expandable entries keep plain label."""
+    assert MainWindow._with_expand_icon("Chat", False, False) == "Chat"
+
+
+def test_get_tag_depth_in_category_failure_case_cycle_safe() -> None:
+    """Depth computation remains finite when hierarchy contains a cycle."""
+    window = MainWindow.__new__(MainWindow)
+    window._user_tags_config = {
+        "placements": {
+            "A": {"parent_tag": "B"},
+            "B": {"parent_tag": "A"},
+        }
+    }
+    window._subtag_to_category = {"A": "Animal", "B": "Animal"}
+    depth = window._get_tag_depth_in_category("A", "Animal")
+    assert isinstance(depth, int)
+    assert depth >= 0

@@ -6,6 +6,8 @@
 
 - **Filtrage récursif** : Dans `MainWindow`, les filtres de catégories et de catégories label étendent désormais les tags sélectionnés avec tous leurs descendants récursifs avant le matching des tags image. Ainsi, sélectionner `Felin` inclut aussi les images taguées `Chat`, `Tiger`, `Lion`.
 - **Matching OR des descendants pour une sous-catégorie sélectionnée** : chaque sous-catégorie sélectionnée crée désormais un groupe OR composé d'elle-même + descendants récursifs (au lieu d'un AND global sur tous les descendants). Cela corrige le cas "0 image" en cliquant un parent comme `Felin`.
+- **Repères visuels de hiérarchie** : catégories et tags affichent désormais une flèche d'expand/collapse lorsqu'ils ont des enfants (`▶` replié, `▼` déplié). Ajout d'une coloration par profondeur pour mieux distinguer les niveaux imbriqués dans la grille.
+- **Interactions tags cohérentes** : le clic simple est maintenant réservé au filtre et à l'expand/collapse. La sélection multiple dans la bibliothèque de tags se fait uniquement via modificateur+drag (`Ctrl` ou `Shift` + glisser), pour éviter les sélections accidentelles au clic.
 - **Sécurité anti-boucle** : Ajout d'une protection contre les cycles dans la traversal des descendants pour éviter une récursion infinie si une boucle parent/enfant invalide existe dans les placements utilisateur.
 - **Tests** : Ajout de tests unitaires dans `tests/test_main_window.py` pour le cas attendu récursif, le cas limite d'un tag feuille, et le cas d'échec avec cycle.
  → Résultat : La hiérarchie de tags supporte des niveaux imbriqués illimités pour le filtrage, et cliquer une sous-catégorie parente remonte bien les images des sous-tags profonds.

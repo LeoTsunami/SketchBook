@@ -8,6 +8,8 @@ Update this file via prompt:
 
 ## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
 
+- [x] Add hierarchy depth colors and expand/collapse arrows for categories and tags with children (2026-04-08)
+- [x] Unify tag interactions: simple click for filter/expand-collapse and modifier+drag for tag-library multi-selection (2026-04-08)
 - [x] Fix recursive tag hierarchy filtering so selecting a parent sub-category includes all nested child tags in the image grid (2026-04-08)
 - [x] Update default tag dictionary and search autocomplete (2026-01-23)
 - [x] Validate tag input with feedback animation (2026-01-23)

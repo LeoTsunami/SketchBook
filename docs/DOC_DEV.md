@@ -398,6 +398,8 @@ The `ImageGrid` class manages the display of image thumbnails in a responsive gr
 - **Regular categories** (Human, Animal, etc.): OR between categories; AND between sub-tags within a category. Example: Human + Portrait = images with Human and Portrait.
 - **Label categories** ("Camera-Angle:", "Miscellaneous:"): their sub-tags are applied as a **global AND** on top of the category result. Example: Human + Wide-Angle = images that are Human *and* Wide-Angle. Logic in `MainWindow._filter_images_by_category`: first filter by regular categories, then keep only images that also have all selected label-category tags.
 - **Recursive hierarchy support**: selected sub-tags are expanded with all recursive descendants (`parent_tag` chain) before filtering. This enables unlimited nested sub-categories (e.g. selecting `Felin` also matches `Chat`/`Tiger`/`Lion`).
+- **Hierarchy UI rendering**: tag/category buttons now include expand/collapse indicators for entries with children (`▶` / `▼`). A depth-based color style is applied from computed hierarchy depth (`_get_tag_depth_in_category`) to improve visual parsing of nested structures.
+- **Selection interaction model**: tag-library selection mode is now entered only with modifier+drag (`Ctrl` or `Shift` + drag). Simple click is not intercepted by the library selection event filter anymore and falls through to normal tag click behavior (filter + expand/collapse).
 
 ### Key Methods
 ```python

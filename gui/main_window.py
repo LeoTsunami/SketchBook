@@ -66,6 +66,7 @@ from qtpy.QtGui import (
     QIcon,
     QImage,
     QCursor,
+    QColor,
 )
 from core.settings import settings
 from core.image_manager import ImageManager
@@ -179,7 +180,7 @@ class DraggableTagButton(QPushButton):
 
     def contextMenuEvent(self, event):
         """Emit signal so main window can show Rename (user tags only)."""
-        self.contextMenuRequested.emit(self.text())
+        self.contextMenuRequested.emit(self.property("baseLabel") or self.text())
         event.accept()
 
     def mouseMoveEvent(self, event):
@@ -188,7 +189,7 @@ class DraggableTagButton(QPushButton):
             and self._drag_start_pos is not None
             and (event.pos() - self._drag_start_pos).manhattanLength() >= 10
         ):
-            tag_text = self.text()
+            tag_text = self.property("baseLabel") or self.text()
             if not tag_text:
                 return
 
@@ -1319,6 +1320,7 @@ class MainWindow(QMainWindow):
         button = DraggableTagButton(tag)
         button.setObjectName("TagGridButton")
         button.setProperty("userTag", is_user_tag)
+        button.setProperty("baseLabel", tag)
         overrides = getattr(self, "_icon_preview_override", {})
         user_config = getattr(self, "_user_tags_config", {})
         icon = find_tag_icon(tag, user_config=user_config, icon_preview_override=overrides)
@@ -1330,6 +1332,81 @@ class MainWindow(QMainWindow):
             "QPushButton { text-align: left; padding: 2px 4px; }"
         )
         return button
+
+    @staticmethod
+    def _with_expand_icon(label: str, has_children: bool, expanded: bool) -> str:
+        """Return label prefixed with expand/collapse icon when relevant."""
+        if not has_children:
+            return label
+        return f"{label} {'▼' if expanded else '▶'}"
+
+    def _get_tag_depth_in_category(
+        self,
+        tag: str,
+        category: str,
+        visited: Optional[Set[str]] = None,
+    ) -> int:
+        """
+        Compute hierarchy depth of a tag within its category.
+        Root-level subtags are depth 0, their children are depth 1, etc.
+        """
+        if visited is None:
+            visited = set()
+        if tag in visited:
+            return 0
+        visited.add(tag)
+        placements = self._user_tags_config.get("placements", {})
+        pl = placements.get(tag)
+        parent = pl.get("parent_tag") if isinstance(pl, dict) else None
+        if not parent:
+            return 0
+        if self._subtag_to_category.get(parent) != category:
+            return 1
+        return 1 + self._get_tag_depth_in_category(parent, category, visited)
+
+    def _get_hierarchy_background_color(self, branch_key: str, depth: int) -> QColor:
+        """Return a depth-based color for hierarchy visualization."""
+        branch_norm = self._normalize_tag_for_match(branch_key)
+        if branch_norm == "animal":
+            hue = 130  # Green for Animal branch
+        elif branch_norm == "human":
+            hue = 215  # Blue for Human branch
+        else:
+            hue = sum(ord(c) for c in branch_key) % 360
+        sat_pct = min(38 + depth * 4, 68)
+        dark_theme = settings.get("ui.theme", "dark") == "dark"
+        if dark_theme:
+            light_pct = min(24 + depth * 10, 70)
+        else:
+            light_pct = max(90 - depth * 7, 52)
+        return QColor.fromHsl(
+            hue,
+            int(255 * sat_pct / 100),
+            int(255 * light_pct / 100),
+        )
+
+    def _set_hierarchy_button_style(
+        self,
+        button: QPushButton,
+        branch_key: str,
+        depth: int,
+        active: bool,
+    ) -> None:
+        """Apply hierarchy depth color with active-state border."""
+        bg = self._get_hierarchy_background_color(branch_key, depth)
+        dark_theme = settings.get("ui.theme", "dark") == "dark"
+        border = "#4f9dff" if dark_theme else "#2b6cb0"
+        text = "#f0f0f0" if dark_theme else "#1a1a1a"
+        if active:
+            border_css = f"2px solid {border}"
+        else:
+            border_css = "1px solid rgba(120,120,120,0.35)"
+        button.setStyleSheet(
+            "QPushButton { "
+            f"text-align: left; padding: 2px 4px; color: {text}; "
+            f"background-color: {bg.name()}; border: {border_css}; border-radius: 4px; "
+            "}"
+        )
 
     def _on_icon_preview(self, tag: str, icon_filename: Optional[str]) -> None:
         """Live preview: show the chosen icon on the tag button while the icon picker dialog is open."""
@@ -1370,15 +1447,20 @@ class MainWindow(QMainWindow):
         if self._parent_select_mode:
             self._on_tag_clicked_in_parent_mode(tag, category_override)
             return
+        # Reason: simple click drives filter/expand-collapse only; clear any stale tag-library selection highlight.
+        if self._tag_library_selection:
+            self._tag_library_selection.clear()
+            self._last_selected_tag = None
         # Label categories are not real tags and should never be added to active categories
         label_categories = ["Miscellaneous:", "Camera-Angle:"]
 
         if tag in self._category_buttons:
             # Toggle expand/collapse so sub-tags are visible when expanded
             if tag in self._active_categories:
-                self._active_categories.remove(tag)
-                self._active_subtags.pop(tag, None)
+                print(f"[TAG-DEBUG] category_click deactivate requested: {tag}")
+                self._deactivate_category(tag)
             else:
+                print(f"[TAG-DEBUG] category_click activate requested: {tag}")
                 self._active_categories.add(tag)
                 self._active_subtags.setdefault(tag, set())
         else:
@@ -1403,11 +1485,81 @@ class MainWindow(QMainWindow):
                     self._active_categories.add(category)
                 category_tags = self._active_subtags.setdefault(category, set())
                 if tag in category_tags:
-                    category_tags.remove(tag)
+                    self._deactivate_subcategory(category, tag)
                 else:
                     category_tags.add(tag)
         self._apply_category_filters()
         self._sync_tag_grid_state()
+
+    def _deactivate_category(self, category: str) -> None:
+        """
+        Deactivate a category and clear all related active sub-tags/filters.
+
+        Args:
+            category: Category to deactivate.
+        """
+        active_subtags_before = {
+            key: sorted(values) for key, values in self._active_subtags.items()
+        }
+        print(
+            f"[TAG-DEBUG] deactivate_category(before) category={category} "
+            f"active_categories={sorted(self._active_categories)} "
+            f"active_subtags={active_subtags_before}"
+        )
+        self._active_categories.discard(category)
+        self._active_subtags.pop(category, None)
+        # Reason: force-clear any stale subtag entries that still point to this category.
+        for tag in list(self._subtag_to_category.keys()):
+            if self._subtag_to_category.get(tag) == category:
+                for cat_name, selected_tags in list(self._active_subtags.items()):
+                    if tag in selected_tags:
+                        selected_tags.discard(tag)
+                    if not selected_tags:
+                        self._active_subtags.pop(cat_name, None)
+        tags_to_remove = set(self._get_category_match_tags(category))
+        # Reason: also remove any residual AND/OR tag mapped to this category, even if
+        # it is currently hidden or not part of the visible descendants list.
+        and_tags = set(self.and_zone.get_tags())
+        or_tags = set(self.or_zone.get_tags())
+        for tag in and_tags | or_tags:
+            if self._subtag_to_category.get(tag) == category:
+                tags_to_remove.add(tag)
+        for tag in tags_to_remove:
+            if tag in and_tags:
+                self.and_zone.remove_tag(tag)
+            if tag in or_tags:
+                self.or_zone.remove_tag(tag)
+        active_subtags_after = {
+            key: sorted(values) for key, values in self._active_subtags.items()
+        }
+        print(
+            f"[TAG-DEBUG] deactivate_category(after) category={category} "
+            f"active_categories={sorted(self._active_categories)} "
+            f"active_subtags={active_subtags_after}"
+        )
+
+    def _deactivate_subcategory(self, category: str, tag: str) -> None:
+        """
+        Deactivate a sub-category tag and all its descendant tags/filters.
+
+        Args:
+            category: Parent category name.
+            tag: Sub-category tag to deactivate.
+        """
+        category_tags = self._active_subtags.setdefault(category, set())
+        descendants = self._get_all_descendants(tag)
+        for descendant in descendants:
+            category_tags.discard(descendant)
+        if not category_tags:
+            self._active_subtags.pop(category, None)
+
+        and_tags = set(self.and_zone.get_tags())
+        or_tags = set(self.or_zone.get_tags())
+        for descendant in descendants:
+            if descendant in and_tags:
+                self.and_zone.remove_tag(descendant)
+            if descendant in or_tags:
+                self.or_zone.remove_tag(descendant)
 
     def _on_tag_search_return(self) -> None:
         """Handle tag search input return key press (only for user tags)."""
@@ -1630,7 +1782,7 @@ class MainWindow(QMainWindow):
         w = container.childAt(container_pos)
         while w:
             if isinstance(w, DraggableTagButton) and w.property("userTag"):
-                return w.text()
+                return w.property("baseLabel") or w.text()
             p = w.mapFrom(container, container_pos)
             next_w = w.childAt(p) if hasattr(w, "childAt") else None
             w = next_w
@@ -1656,67 +1808,25 @@ class MainWindow(QMainWindow):
     def _tag_library_finish_selection(
         self, release_viewport_pos: QPoint, modifiers: Qt.KeyboardModifiers
     ) -> None:
-        """Apply selection after mouse release: single-click (shift/ctrl/none) or drag rect."""
+        """Apply tag-library selection after modifier+drag rectangle release."""
         start = self._tag_library_selection_start
         if start is None:
             return
         dx = abs(release_viewport_pos.x() - start.x())
         dy = abs(release_viewport_pos.y() - start.y())
         is_drag = (dx > 5) or (dy > 5)
-        tag_at_release = self._get_user_tag_at_viewport_pos(release_viewport_pos)
-
         if is_drag:
             selection_rect = QRect(start, release_viewport_pos).normalized()
-            add_to_selection = modifiers & Qt.ControlModifier
+            add_to_selection = bool(modifiers & (Qt.ControlModifier | Qt.ShiftModifier))
             if not add_to_selection:
                 self._tag_library_selection.clear()
             last_tag = None
             for tag, rect in self._get_user_tag_buttons_viewport_rects():
                 if selection_rect.intersects(rect):
-                    if add_to_selection and tag in self._tag_library_selection:
-                        self._tag_library_selection.discard(tag)
-                    else:
-                        self._tag_library_selection.add(tag)
-                        last_tag = tag
+                    self._tag_library_selection.add(tag)
+                    last_tag = tag
             if last_tag:
                 self._last_selected_tag = last_tag
-        else:
-            # Single click
-            if tag_at_release and tag_at_release in self._get_user_tags():
-                if modifiers & Qt.ShiftModifier:
-                    if (
-                        self._last_selected_tag
-                        and self._last_selected_tag in self._user_tag_display_order
-                        and tag_at_release in self._user_tag_display_order
-                    ):
-                        try:
-                            i0 = self._user_tag_display_order.index(self._last_selected_tag)
-                            i1 = self._user_tag_display_order.index(tag_at_release)
-                            i0, i1 = min(i0, i1), max(i0, i1)
-                            for i in range(i0, i1 + 1):
-                                if i < len(self._user_tag_display_order):
-                                    t = self._user_tag_display_order[i]
-                                    if t in self._get_user_tags():
-                                        self._tag_library_selection.add(t)
-                        except ValueError:
-                            self._tag_library_selection.add(tag_at_release)
-                    else:
-                        self._tag_library_selection.add(tag_at_release)
-                    self._last_selected_tag = tag_at_release
-                elif modifiers & Qt.ControlModifier:
-                    if tag_at_release in self._tag_library_selection:
-                        self._tag_library_selection.discard(tag_at_release)
-                    else:
-                        self._tag_library_selection.add(tag_at_release)
-                    self._last_selected_tag = tag_at_release
-                else:
-                    self._tag_library_selection = {tag_at_release}
-                    self._last_selected_tag = tag_at_release
-                    self._on_tag_button_clicked(tag_at_release, self._subtag_to_category.get(tag_at_release))
-            else:
-                if not (modifiers & (Qt.ShiftModifier | Qt.ControlModifier)):
-                    self._tag_library_selection.clear()
-                    self._last_selected_tag = None
         self._tag_library_selection_start = None
         self._tag_library_is_selecting = False
         self._tag_library_drag_start_tag = None
@@ -1724,7 +1834,7 @@ class MainWindow(QMainWindow):
         self._sync_tag_grid_state()
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
-        """Tag library selection: drag rectangle, shift-range, ctrl-toggle (like image grid)."""
+        """Tag library selection: modifier+drag rectangle only."""
         try:
             _mouse_press = QEvent.Type.MouseButtonPress
             _mouse_move = QEvent.Type.MouseMove
@@ -1778,6 +1888,12 @@ class MainWindow(QMainWindow):
             vp_pos = self._get_tag_library_viewport_pos(obj, event.pos())
             if vp_pos is None:
                 return False
+            modifiers = event.modifiers()
+            has_selection_modifier = bool(modifiers & (Qt.ControlModifier | Qt.ShiftModifier))
+            if not has_selection_modifier:
+                # Simple click is handled by normal button click logic (filter/expand-collapse),
+                # not by tag-library selection mode.
+                return False
             # Only consume on user tag buttons or empty area (viewport/container); let category buttons through
             is_user_tag_btn = isinstance(obj, DraggableTagButton) and obj.property("userTag")
             is_empty_area = obj == viewport or obj == self.tags_grid_container
@@ -1786,7 +1902,7 @@ class MainWindow(QMainWindow):
             self._tag_library_selection_start = vp_pos
             self._tag_library_is_selecting = True
             if is_user_tag_btn:
-                self._tag_library_drag_start_tag = obj.text()
+                self._tag_library_drag_start_tag = obj.property("baseLabel") or obj.text()
                 self._tag_library_drag_start_button = obj
             else:
                 self._tag_library_drag_start_tag = None
@@ -2250,6 +2366,15 @@ class MainWindow(QMainWindow):
         for category, button in self._category_buttons.items():
             is_active = category in self._active_categories
             self._set_button_active(button, is_active)
+            has_category_children = bool(self._subcategory_buttons.get(category))
+            base_label = button.property("baseLabel") or category
+            button.setText(self._with_expand_icon(base_label, has_category_children, is_active))
+            self._set_hierarchy_button_style(
+                button=button,
+                branch_key=category,
+                depth=0,
+                active=is_active,
+            )
             category_subtags = self._active_subtags.get(category, set())
             for tag, tag_button in self._subcategory_buttons.get(category, {}).items():
                 pl = placements.get(tag)
@@ -2258,7 +2383,12 @@ class MainWindow(QMainWindow):
                     tag_button.setVisible(is_active and parent_tag in category_subtags)
                 else:
                     tag_button.setVisible(is_active)
-                self._set_button_active(tag_button, tag in category_subtags)
+                is_tag_active = tag in category_subtags
+                self._set_button_active(tag_button, is_tag_active)
+                has_children = bool(self._get_children_of_tag(tag))
+                base_label = tag_button.property("baseLabel") or tag
+                tag_button.setText(self._with_expand_icon(base_label, has_children, is_tag_active))
+                depth = self._get_tag_depth_in_category(tag, category)
                 # In "Parent to tag..." mode, gray out tags being moved
                 if getattr(self, "_parent_select_mode", False) and tag in getattr(self, "_tags_to_parent", set()):
                     tag_button.setEnabled(False)
@@ -2272,7 +2402,12 @@ class MainWindow(QMainWindow):
                     )
                 else:
                     tag_button.setEnabled(True)
-                    tag_button.setStyleSheet("QPushButton { text-align: left; padding: 2px 4px; }")
+                    self._set_hierarchy_button_style(
+                        button=tag_button,
+                        branch_key=category,
+                        depth=depth + 1,
+                        active=is_tag_active,
+                    )
 
         # Label categories: set visibility
         label_categories = ["Miscellaneous:", "Camera-Angle:"]
@@ -2286,7 +2421,12 @@ class MainWindow(QMainWindow):
                         tag_button.setVisible(parent_tag in label_subtags)
                     else:
                         tag_button.setVisible(True)
-                    self._set_button_active(tag_button, tag in label_subtags)
+                    is_tag_active = tag in label_subtags
+                    self._set_button_active(tag_button, is_tag_active)
+                    has_children = bool(self._get_children_of_tag(tag))
+                    base_label = tag_button.property("baseLabel") or tag
+                    tag_button.setText(self._with_expand_icon(base_label, has_children, is_tag_active))
+                    depth = self._get_tag_depth_in_category(tag, label_category)
                     if getattr(self, "_parent_select_mode", False) and tag in getattr(self, "_tags_to_parent", set()):
                         tag_button.setEnabled(False)
                         tag_button.setStyleSheet(
@@ -2299,7 +2439,12 @@ class MainWindow(QMainWindow):
                         )
                     else:
                         tag_button.setEnabled(True)
-                        tag_button.setStyleSheet("QPushButton { text-align: left; padding: 2px 4px; }")
+                        self._set_hierarchy_button_style(
+                            button=tag_button,
+                            branch_key=label_category,
+                            depth=depth + 1,
+                            active=is_tag_active,
+                        )
 
         # Rebuild each category container with only visible tags (no holes).
         # Use visibility condition (not btn.isVisible()): after takeAt(0) Qt may clear visibility.
