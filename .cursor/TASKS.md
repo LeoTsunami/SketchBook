@@ -8,6 +8,7 @@ Update this file via prompt:
 
 ## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
 
+- [x] Fix recursive tag hierarchy filtering so selecting a parent sub-category includes all nested child tags in the image grid (2026-04-08)
 - [x] Update default tag dictionary and search autocomplete (2026-01-23)
 - [x] Validate tag input with feedback animation (2026-01-23)
 - [x] Collapse tag categories until selected (2026-01-23)

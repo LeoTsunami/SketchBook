@@ -1,5 +1,16 @@
 # Journal des modifications
 
+## 2026-04-08 (Hiérarchie de tags : filtrage récursif des descendants)
+### ✅ Tâches :
+- Corriger le filtrage pour qu'une sous-catégorie parente inclue tous ses descendants imbriqués dans la grille d'images
+
+- **Filtrage récursif** : Dans `MainWindow`, les filtres de catégories et de catégories label étendent désormais les tags sélectionnés avec tous leurs descendants récursifs avant le matching des tags image. Ainsi, sélectionner `Felin` inclut aussi les images taguées `Chat`, `Tiger`, `Lion`.
+- **Matching OR des descendants pour une sous-catégorie sélectionnée** : chaque sous-catégorie sélectionnée crée désormais un groupe OR composé d'elle-même + descendants récursifs (au lieu d'un AND global sur tous les descendants). Cela corrige le cas "0 image" en cliquant un parent comme `Felin`.
+- **Sécurité anti-boucle** : Ajout d'une protection contre les cycles dans la traversal des descendants pour éviter une récursion infinie si une boucle parent/enfant invalide existe dans les placements utilisateur.
+- **Tests** : Ajout de tests unitaires dans `tests/test_main_window.py` pour le cas attendu récursif, le cas limite d'un tag feuille, et le cas d'échec avec cycle.
+ → Résultat : La hiérarchie de tags supporte des niveaux imbriqués illimités pour le filtrage, et cliquer une sous-catégorie parente remonte bien les images des sous-tags profonds.
+---
+
 ## 2026-03-24 (Démarrer une session depuis l’image sélectionnée dans la grille)
 ### ✅ Tâches :
 - Ajouter une action de menu contextuel pour démarrer une session depuis une image unique sélectionnée dans la grille

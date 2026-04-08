@@ -354,3 +354,68 @@ def test_slice_images_from_start_failure_case_unknown_image() -> None:
     sliced = MainWindow._slice_images_from_start(images, "missing")
 
     assert [img.id for img in sliced] == ["a", "b", "c"]
+
+
+def test_expand_tags_with_descendants_expected_use() -> None:
+    """Selecting a parent tag includes all nested child tags."""
+    window = MainWindow.__new__(MainWindow)
+    window._user_tags_config = {
+        "placements": {
+            "Felin": {"parent_tag": "Terrestrial"},
+            "Chat": {"parent_tag": "Felin"},
+            "Tiger": {"parent_tag": "Felin"},
+            "Lion": {"parent_tag": "Felin"},
+        }
+    }
+    expanded = window._expand_tags_with_descendants({"Felin"})
+    assert expanded == {"Felin", "Chat", "Tiger", "Lion"}
+
+
+def test_expand_tags_with_descendants_edge_case_leaf_tag() -> None:
+    """Selecting a leaf tag returns only itself."""
+    window = MainWindow.__new__(MainWindow)
+    window._user_tags_config = {
+        "placements": {
+            "Felin": {"parent_tag": "Terrestrial"},
+            "Chat": {"parent_tag": "Felin"},
+        }
+    }
+    expanded = window._expand_tags_with_descendants({"Chat"})
+    assert expanded == {"Chat"}
+
+
+def test_get_all_descendants_failure_case_cycle_safe() -> None:
+    """A cyclic parent chain does not recurse forever and stays finite."""
+    window = MainWindow.__new__(MainWindow)
+    window._user_tags_config = {
+        "placements": {
+            "A": {"parent_tag": "B"},
+            "B": {"parent_tag": "A"},
+        }
+    }
+    descendants = window._get_all_descendants("A")
+    assert descendants == {"A", "B"}
+
+
+def test_active_category_filter_data_recursive_group_or_expected_use() -> None:
+    """Selected sub-category builds OR group with all recursive descendants."""
+    window = MainWindow.__new__(MainWindow)
+    window._user_tags_config = {
+        "placements": {
+            "Felin": {"parent_tag": "Terrestrial"},
+            "Chat": {"parent_tag": "Felin"},
+            "Tiger": {"parent_tag": "Felin"},
+            "Lion": {"parent_tag": "Felin"},
+        }
+    }
+    window._active_categories = {"Animal"}
+    window._active_subtags = {"Animal": {"Felin"}}
+    window._subcategory_buttons = {"Animal": {"Terrestrial": object(), "Felin": object()}}
+    window._normalize_tag_for_match = MainWindow._normalize_tag_for_match
+
+    filter_data = window._get_active_category_filter_data()
+    allowed_norm, required_groups_norm = filter_data[0]
+
+    assert "animal" in allowed_norm
+    assert len(required_groups_norm) == 1
+    assert required_groups_norm[0] == {"felin", "chat", "tiger", "lion"}

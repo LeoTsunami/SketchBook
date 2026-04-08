@@ -397,6 +397,7 @@ The `ImageGrid` class manages the display of image thumbnails in a responsive gr
 ### Tag filtering (category vs label)
 - **Regular categories** (Human, Animal, etc.): OR between categories; AND between sub-tags within a category. Example: Human + Portrait = images with Human and Portrait.
 - **Label categories** ("Camera-Angle:", "Miscellaneous:"): their sub-tags are applied as a **global AND** on top of the category result. Example: Human + Wide-Angle = images that are Human *and* Wide-Angle. Logic in `MainWindow._filter_images_by_category`: first filter by regular categories, then keep only images that also have all selected label-category tags.
+- **Recursive hierarchy support**: selected sub-tags are expanded with all recursive descendants (`parent_tag` chain) before filtering. This enables unlimited nested sub-categories (e.g. selecting `Felin` also matches `Chat`/`Tiger`/`Lion`).
 
 ### Key Methods
 ```python

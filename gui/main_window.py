@@ -824,10 +824,18 @@ class MainWindow(QMainWindow):
         label_categories_or = ["Camera-Angle:"]
         constraining_tags_and: Set[str] = set()
         for label_cat in label_categories_and:
-            constraining_tags_and.update(self._active_subtags.get(label_cat, set()))
+            constraining_tags_and.update(
+                self._expand_tags_with_descendants(
+                    self._active_subtags.get(label_cat, set())
+                )
+            )
         constraining_tags_or: Set[str] = set()
         for label_cat in label_categories_or:
-            constraining_tags_or.update(self._active_subtags.get(label_cat, set()))
+            constraining_tags_or.update(
+                self._expand_tags_with_descendants(
+                    self._active_subtags.get(label_cat, set())
+                )
+            )
         has_label = bool(constraining_tags_and) or bool(constraining_tags_or)
         if not self._active_categories and not has_label and not self._active_subtags:
             return images
@@ -845,8 +853,11 @@ class MainWindow(QMainWindow):
             else:
                 # Image must match at least one category: in category AND has all its selected subtags (AND)
                 category_match = False
-                for allowed_norm, required_norm in category_filter_data:
-                    if (image_tags_norm & allowed_norm) and required_norm.issubset(image_tags_norm):
+                for allowed_norm, required_groups_norm in category_filter_data:
+                    if not (image_tags_norm & allowed_norm):
+                        continue
+                    group_match = all(bool(image_tags_norm & group) for group in required_groups_norm)
+                    if group_match:
                         category_match = True
                         break
             if not category_match:
@@ -2165,15 +2176,35 @@ class MainWindow(QMainWindow):
             if isinstance(pl, dict) and pl.get("parent_tag") == tag
         ]
 
-    def _get_all_descendants(self, tag: str) -> Set[str]:
+    def _get_all_descendants(self, tag: str, visited: Optional[Set[str]] = None) -> Set[str]:
         """
         Return tag plus all tags that are direct or indirect children (parent_tag chain).
         Used so filtering by a category shows images that have the category or any subtag.
         """
+        if visited is None:
+            visited = set()
+        if tag in visited:
+            return set()
+        visited.add(tag)
         result: Set[str] = {tag}
         for child in self._get_children_of_tag(tag):
-            result.update(self._get_all_descendants(child))
+            result.update(self._get_all_descendants(child, visited))
         return result
+
+    def _expand_tags_with_descendants(self, tags: Set[str]) -> Set[str]:
+        """
+        Expand a selected tag set with all nested descendants.
+
+        Args:
+            tags: Selected tags.
+
+        Returns:
+            Set[str]: Original tags + descendant tags.
+        """
+        expanded: Set[str] = set()
+        for tag in tags:
+            expanded.update(self._get_all_descendants(tag))
+        return expanded
 
     def _get_category_match_tags(self, category: str) -> Set[str]:
         """
@@ -2184,20 +2215,26 @@ class MainWindow(QMainWindow):
             result.update(self._get_all_descendants(tag))
         return result
 
-    def _get_active_category_filter_data(self) -> List[Tuple[Set[str], Set[str]]]:
+    def _get_active_category_filter_data(self) -> List[Tuple[Set[str], List[Set[str]]]]:
         """
-        Precompute per active category: (allowed_tags_norm, required_subtags_norm).
+        Precompute per active category: (allowed_tags_norm, required_subtag_groups_norm).
         - allowed: tags that count as "in this category" (category + descendants).
-        - required: selected subtags for this category; image must have ALL (AND).
-        Returns list of (allowed_norm, required_norm) for each active category.
+        - required groups: one OR group per selected subtag (selected tag + recursive descendants).
+          An image must match at least one tag inside each group.
+        Returns list of (allowed_norm, required_groups_norm) for each active category.
         """
-        result: List[Tuple[Set[str], Set[str]]] = []
+        result: List[Tuple[Set[str], List[Set[str]]]] = []
         for category in self._active_categories:
             allowed = self._get_category_match_tags(category)
             allowed_norm = {self._normalize_tag_for_match(t) for t in allowed}
-            required = self._active_subtags.get(category, set())
-            required_norm = {self._normalize_tag_for_match(t) for t in required}
-            result.append((allowed_norm, required_norm))
+            selected_subtags = self._active_subtags.get(category, set())
+            required_groups_norm: List[Set[str]] = []
+            for selected_tag in selected_subtags:
+                descendants = self._get_all_descendants(selected_tag)
+                group_norm = {self._normalize_tag_for_match(t) for t in descendants}
+                if group_norm:
+                    required_groups_norm.append(group_norm)
+            result.append((allowed_norm, required_groups_norm))
         return result
 
     def _sync_tag_grid_state(self) -> None:
@@ -2394,10 +2431,18 @@ class MainWindow(QMainWindow):
         label_categories_or = ["Camera-Angle:"]
         constraining_tags_and: Set[str] = set()
         for label_cat in label_categories_and:
-            constraining_tags_and.update(self._active_subtags.get(label_cat, set()))
+            constraining_tags_and.update(
+                self._expand_tags_with_descendants(
+                    self._active_subtags.get(label_cat, set())
+                )
+            )
         constraining_tags_or: Set[str] = set()
         for label_cat in label_categories_or:
-            constraining_tags_or.update(self._active_subtags.get(label_cat, set()))
+            constraining_tags_or.update(
+                self._expand_tags_with_descendants(
+                    self._active_subtags.get(label_cat, set())
+                )
+            )
         has_active_filters = (
             bool(self._active_categories)
             or bool(constraining_tags_and)
@@ -2414,8 +2459,11 @@ class MainWindow(QMainWindow):
             category_matched = []
             for m in all_images:
                 image_tags_norm = {self._normalize_tag_for_match(t) for t in m.tags}
-                for allowed_norm, required_norm in category_filter_data:
-                    if (image_tags_norm & allowed_norm) and required_norm.issubset(image_tags_norm):
+                for allowed_norm, required_groups_norm in category_filter_data:
+                    if not (image_tags_norm & allowed_norm):
+                        continue
+                    group_match = all(bool(image_tags_norm & group) for group in required_groups_norm)
+                    if group_match:
                         category_matched.append(m)
                         break
         else:
