@@ -81,6 +81,7 @@ Categories stay collapsed by default and only expand when you add the category t
 Categories are displayed as buttons in the first column, with sub-tag buttons revealed horizontally to the right when active.
 Entries with children now show an expand/collapse arrow (`▶` when collapsed, `▼` when expanded), including both categories and nested sub-categories. The tag buttons also use depth-based colors so parent/child levels are easier to read.
 Simple click is dedicated to filtering and expand/collapse. Multi-selection in the tag library is done with **Ctrl+drag** or **Shift+drag** (drag rectangle); simple click no longer creates tag-library selection.
+When a sub-category is expanded, its children are displayed directly on the next line under that parent. Parent order stays stable in the category list (no jump/reorder when expanding).
 
 ## Drawing Sessions
 

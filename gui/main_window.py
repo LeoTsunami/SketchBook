@@ -1395,12 +1395,17 @@ class MainWindow(QMainWindow):
         """Apply hierarchy depth color with active-state border."""
         bg = self._get_hierarchy_background_color(branch_key, depth)
         dark_theme = settings.get("ui.theme", "dark") == "dark"
-        border = "#4f9dff" if dark_theme else "#2b6cb0"
         text = "#f0f0f0" if dark_theme else "#1a1a1a"
-        if active:
+        if depth > 0:
+            # Reason: show hierarchy frame at every nested level, with max thickness 3px.
+            frame_px = min(depth, 3)
+            frame_color = "rgba(255,255,255,0.58)" if dark_theme else "rgba(255,255,255,0.78)"
+            border_css = f"{frame_px}px solid {frame_color}"
+        elif active:
+            border = "#4f9dff" if dark_theme else "#2b6cb0"
             border_css = f"2px solid {border}"
         else:
-            border_css = "1px solid rgba(120,120,120,0.35)"
+            border_css = "0px solid transparent"
         button.setStyleSheet(
             "QPushButton { "
             f"text-align: left; padding: 2px 4px; color: {text}; "
@@ -2446,9 +2451,8 @@ class MainWindow(QMainWindow):
                             active=is_tag_active,
                         )
 
-        # Rebuild each category container with only visible tags (no holes).
-        # Use visibility condition (not btn.isVisible()): after takeAt(0) Qt may clear visibility.
-        # When a selected tag is a sub-category (has children), show it first then its children on the next row(s), then the rest.
+        # Rebuild each category container with grouped hierarchy blocks.
+        # Children are rendered inside a subtle framed block directly under their parent.
         label_categories_set = {"Miscellaneous:", "Camera-Angle:"}
         for category in self._subcategory_tag_order:
             if category in label_categories_set:
@@ -2460,11 +2464,21 @@ class MainWindow(QMainWindow):
             if not layout:
                 continue
             while layout.count():
-                layout.takeAt(0)
+                item = layout.takeAt(0)
+                widget = item.widget() if item else None
+                if widget and isinstance(widget, QFrame) and widget.objectName() == "TagHierarchyFrame":
+                    # Keep tag buttons alive for reuse before deleting dynamic hierarchy frame.
+                    for child_btn in widget.findChildren(DraggableTagButton):
+                        child_btn.setParent(container)
+                        child_btn.setVisible(False)
+                    widget.deleteLater()
             tag_order = self._subcategory_tag_order[category]
             category_subtags = self._active_subtags.get(category, set())
             subtag_buttons = self._subcategory_buttons.get(category, {})
             is_active = category in self._active_categories
+            for btn in subtag_buttons.values():
+                btn.setVisible(False)
+
             # Helper: should this tag be visible? (same logic as first loop)
             def _tag_visible(tag: str) -> bool:
                 pl = placements.get(tag)
@@ -2472,66 +2486,96 @@ class MainWindow(QMainWindow):
                 if parent_tag is not None:
                     return bool(is_active and parent_tag in category_subtags)
                 return bool(is_active)
-            # Clear child-row style from all buttons; will set only on children when expanded
-            for btn in subtag_buttons.values():
-                btn.setProperty("tagChildRow", "false")
-                btn.style().unpolish(btn)
-                btn.style().polish(btn)
 
-            expanded_parent = None
-            for t in category_subtags:
-                if self._get_children_of_tag(t):
-                    expanded_parent = t
-                    break
-            if expanded_parent is not None and expanded_parent in tag_order:
-                idx_t = tag_order.index(expanded_parent)
-                before = tag_order[:idx_t]
-                after = tag_order[idx_t + 1:]
-                children = [c for c in self._get_children_of_tag(expanded_parent) if c in tag_order]
-                rest = [x for x in after if x not in children]
-                idx = 0
-                for tag in before + [expanded_parent]:
-                    btn = subtag_buttons.get(tag)
-                    if btn and _tag_visible(tag):
-                        row, col = idx // max_cols, idx % max_cols
-                        layout.addWidget(btn, row, col)
-                        btn.setVisible(True)
-                        idx += 1
-                idx = ((idx + max_cols - 1) // max_cols) * max_cols
-                for tag in children:
-                    btn = subtag_buttons.get(tag)
-                    if btn and _tag_visible(tag):
-                        row, col = idx // max_cols, idx % max_cols
-                        layout.addWidget(btn, row, col)
-                        btn.setProperty("tagChildRow", "true")
-                        btn.style().unpolish(btn)
-                        btn.style().polish(btn)
-                        btn.setVisible(True)
-                        idx += 1
-                idx = ((idx + max_cols - 1) // max_cols) * max_cols
-                for tag in rest:
-                    btn = subtag_buttons.get(tag)
-                    if btn and _tag_visible(tag):
-                        row, col = idx // max_cols, idx % max_cols
-                        layout.addWidget(btn, row, col)
-                        btn.setVisible(True)
-                        idx += 1
-            else:
-                idx = 0
-                for tag in tag_order:
-                    btn = subtag_buttons.get(tag)
-                    if btn and _tag_visible(tag):
-                        row, col = idx // max_cols, idx % max_cols
-                        layout.addWidget(btn, row, col)
-                        btn.setVisible(True)
-                        idx += 1
-            # Force minimum height when expanded so layout cannot collapse row to 0 (debug showed height=0 at step 8)
-            if is_active:
-                container.setMinimumHeight(60)
-                container.setVisible(True)
-            else:
-                container.setMinimumHeight(0)
-                container.setVisible(True)
+            # Build parent -> ordered children map based on display order.
+            ordered_visible_tags = [t for t in tag_order if _tag_visible(t)]
+            children_map: Dict[str, List[str]] = {}
+            for tag in ordered_visible_tags:
+                pl = placements.get(tag)
+                parent_tag = pl.get("parent_tag") if isinstance(pl, dict) else None
+                if parent_tag:
+                    children_map.setdefault(parent_tag, []).append(tag)
+
+            root_tags = [
+                t
+                for t in ordered_visible_tags
+                if not (isinstance(placements.get(t), dict) and placements.get(t).get("parent_tag"))
+            ]
+
+            def _build_descendants_block(parent_tag: str, depth: int) -> Optional[QWidget]:
+                children = children_map.get(parent_tag, [])
+                if not children:
+                    return None
+                frame = QFrame()
+                frame.setObjectName("TagHierarchyFrame")
+                frame.setFrameShape(QFrame.StyledPanel)
+                frame.setFocusPolicy(Qt.NoFocus)
+                frame.setStyleSheet(
+                    "QFrame#TagHierarchyFrame { "
+                    f"border: {min(depth, 3)}px solid rgba(255,255,255,0.45); "
+                    "border-radius: 6px; "
+                    "padding: 6px; "
+                    "background: transparent; "
+                    "}"
+                )
+                frame_layout = QVBoxLayout(frame)
+                frame_layout.setContentsMargins(6, 6, 6, 6)
+                frame_layout.setSpacing(6)
+
+                def _new_children_grid() -> QGridLayout:
+                    grid = QGridLayout()
+                    grid.setContentsMargins(0, 0, 0, 0)
+                    grid.setHorizontalSpacing(10)
+                    grid.setVerticalSpacing(6)
+                    return grid
+
+                children_grid = _new_children_grid()
+                idx_child = 0
+
+                def _flush_children_grid() -> None:
+                    nonlocal children_grid, idx_child
+                    if idx_child == 0:
+                        return
+                    frame_layout.addLayout(children_grid)
+                    children_grid = _new_children_grid()
+                    idx_child = 0
+
+                for child in children:
+                    child_btn = subtag_buttons.get(child)
+                    if child_btn:
+                        row_child, col_child = idx_child // max_cols, idx_child % max_cols
+                        children_grid.addWidget(child_btn, row_child, col_child)
+                        child_btn.setVisible(True)
+                        idx_child += 1
+                    if child in category_subtags:
+                        nested = _build_descendants_block(child, depth + 1)
+                        if nested is not None:
+                            # Reason: show nested grid directly under the clicked child, then continue siblings.
+                            _flush_children_grid()
+                            frame_layout.addWidget(nested)
+                _flush_children_grid()
+                return frame
+
+            idx = 0
+            for tag in root_tags:
+                btn = subtag_buttons.get(tag)
+                if not btn:
+                    continue
+                row, col = idx // max_cols, idx % max_cols
+                layout.addWidget(btn, row, col)
+                btn.setVisible(True)
+                idx += 1
+
+                if tag in category_subtags:
+                    descendants_block = _build_descendants_block(tag, 1)
+                    if descendants_block is not None:
+                        idx = ((idx + max_cols - 1) // max_cols) * max_cols
+                        row_block = idx // max_cols
+                        layout.addWidget(descendants_block, row_block, 0, 1, max_cols)
+                        idx += max_cols
+
+            container.setMinimumHeight(0)
+            container.setVisible(True)
 
         # Force layout recalculation: Qt often does not recalculate when children go from
         # hidden to visible after a full rebuild. Invalidate then activate inner layouts first,

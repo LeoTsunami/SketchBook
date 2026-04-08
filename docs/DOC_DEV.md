@@ -400,6 +400,7 @@ The `ImageGrid` class manages the display of image thumbnails in a responsive gr
 - **Recursive hierarchy support**: selected sub-tags are expanded with all recursive descendants (`parent_tag` chain) before filtering. This enables unlimited nested sub-categories (e.g. selecting `Felin` also matches `Chat`/`Tiger`/`Lion`).
 - **Hierarchy UI rendering**: tag/category buttons now include expand/collapse indicators for entries with children (`▶` / `▼`). A depth-based color style is applied from computed hierarchy depth (`_get_tag_depth_in_category`) to improve visual parsing of nested structures.
 - **Selection interaction model**: tag-library selection mode is now entered only with modifier+drag (`Ctrl` or `Shift` + drag). Simple click is not intercepted by the library selection event filter anymore and falls through to normal tag click behavior (filter + expand/collapse).
+- **Stable hierarchy layout**: `_sync_tag_grid_state` now preserves tag order and renders children directly on a new row under each selected parent, instead of moving the selected parent block to the top. Child rows receive a subtle framed style through `is_child=True` in `_set_hierarchy_button_style`.
 
 ### Key Methods
 ```python
