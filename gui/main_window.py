@@ -1391,18 +1391,19 @@ class MainWindow(QMainWindow):
         branch_key: str,
         depth: int,
         active: bool,
+        selected_for_drag: bool = False,
     ) -> None:
-        """Apply hierarchy depth color with active-state border."""
+        """Apply hierarchy depth color and state borders (active/selected)."""
         bg = self._get_hierarchy_background_color(branch_key, depth)
         dark_theme = settings.get("ui.theme", "dark") == "dark"
         text = "#f0f0f0" if dark_theme else "#1a1a1a"
-        if depth > 0:
-            # Reason: show hierarchy frame at every nested level, with max thickness 3px.
-            frame_px = min(depth, 3)
-            frame_color = "rgba(255,255,255,0.58)" if dark_theme else "rgba(255,255,255,0.78)"
-            border_css = f"{frame_px}px solid {frame_color}"
-        elif active:
+        if selected_for_drag:
+            # Blue border for drag/drop selection
             border = "#4f9dff" if dark_theme else "#2b6cb0"
+            border_css = f"2px solid {border}"
+        elif active:
+            # Light green border for active tag/category
+            border = "#8ef58e" if dark_theme else "#2fa84f"
             border_css = f"2px solid {border}"
         else:
             border_css = "0px solid transparent"
@@ -2379,6 +2380,7 @@ class MainWindow(QMainWindow):
                 branch_key=category,
                 depth=0,
                 active=is_active,
+                selected_for_drag=False,
             )
             category_subtags = self._active_subtags.get(category, set())
             for tag, tag_button in self._subcategory_buttons.get(category, {}).items():
@@ -2400,11 +2402,6 @@ class MainWindow(QMainWindow):
                     tag_button.setStyleSheet(
                         "QPushButton { text-align: left; padding: 2px 4px; opacity: 0.6; background-color: #444; color: #888; }"
                     )
-                elif tag in getattr(self, "_tag_library_selection", set()):
-                    tag_button.setEnabled(True)
-                    tag_button.setStyleSheet(
-                        "QPushButton { text-align: left; padding: 2px 4px; border: 2px solid rgb(0, 120, 215); }"
-                    )
                 else:
                     tag_button.setEnabled(True)
                     self._set_hierarchy_button_style(
@@ -2412,6 +2409,7 @@ class MainWindow(QMainWindow):
                         branch_key=category,
                         depth=depth + 1,
                         active=is_tag_active,
+                        selected_for_drag=(tag in getattr(self, "_tag_library_selection", set())),
                     )
 
         # Label categories: set visibility
@@ -2437,11 +2435,6 @@ class MainWindow(QMainWindow):
                         tag_button.setStyleSheet(
                             "QPushButton { text-align: left; padding: 2px 4px; opacity: 0.6; background-color: #444; color: #888; }"
                         )
-                    elif tag in getattr(self, "_tag_library_selection", set()):
-                        tag_button.setEnabled(True)
-                        tag_button.setStyleSheet(
-                            "QPushButton { text-align: left; padding: 2px 4px; border: 2px solid rgb(0, 120, 215); }"
-                        )
                     else:
                         tag_button.setEnabled(True)
                         self._set_hierarchy_button_style(
@@ -2449,6 +2442,7 @@ class MainWindow(QMainWindow):
                             branch_key=label_category,
                             depth=depth + 1,
                             active=is_tag_active,
+                            selected_for_drag=(tag in getattr(self, "_tag_library_selection", set())),
                         )
 
         # Rebuild each category container with grouped hierarchy blocks.
