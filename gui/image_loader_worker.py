@@ -42,14 +42,10 @@ class ImageLoaderWorker(QRunnable):
             if image.isNull():
                 raise ValueError(f"Failed to load image: {self.image_path}")
             
-            # Get target width and calculate new height based on aspect ratio
+            # Fit image into target box while preserving aspect ratio (no crop).
             target_width, target_height = self.target_size
-            
-            if target_width > 0:
-                # Calculate new height preserving aspect ratio
-                aspect_ratio = image.width() / image.height()
-                new_height = int(target_width / aspect_ratio)
-                
+
+            if target_width > 0 and target_height > 0:
                 # Use device pixel ratio for high-DPI displays (usually 1.0, 1.5, or 2.0)
                 # and upscale slightly even on standard displays for crisper thumbnails.
                 # Reason: loading a larger source pixmap and letting Qt downscale improves
@@ -57,17 +53,17 @@ class ImageLoaderWorker(QRunnable):
                 from qtpy.QtWidgets import QApplication
                 app = QApplication.instance()
                 device_pixel_ratio = app.devicePixelRatio() if app else 1.0
-                
+
                 # Scale to account for device pixel ratio for better quality.
                 # Minimum upscale factor of 2.0 on standard DPI screens.
                 scale_factor = max(device_pixel_ratio, 2.0)
                 scaled_width = int(target_width * scale_factor)
-                scaled_height = int(new_height * scale_factor)
-                
+                scaled_height = int(target_height * scale_factor)
+
                 fast_pixmap = QPixmap.fromImage(
                     image.scaled(
                         target_width,
-                        new_height,
+                        target_height,
                         Qt.KeepAspectRatio,
                         Qt.FastTransformation,
                     )

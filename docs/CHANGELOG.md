@@ -1,5 +1,38 @@
 # Changelog
 
+## 2026-04-10 (User-selectable image display mode: Fit All / Fit Height / Fit Width / Crop All)
+### ✅ Tasks:
+- Add a "Display" combo box to the top chrome bar so the user chooses how images are fitted in grid cells
+
+- Extended `gui/thumbnail_fitting.py` with a `FitMode` enum (`FIT_ALL`, `FIT_HEIGHT`, `FIT_WIDTH`, `CROP_ALL`) and corresponding logic in `fit_pixmap_in_view()` and `compute_fitted_size()`.
+- Added `set_fit_mode()` to `ImageThumbnail` and `ImageGrid`; all existing and newly-created thumbnails inherit the current mode.
+- Added a "Display:" combo box in the top chrome bar (next to Columns), wired to `ImageGrid.set_fit_mode()` with persistence via `ui.grid.fit_mode` setting.
+- Updated `tests/test_thumbnail_fitting.py` from 10 to 21 cases covering all four modes plus the enum itself.
+→ Result: Users can now choose their preferred display strategy; the setting is saved and restored on relaunch.
+---
+
+## 2026-04-10 (Unified thumbnail fitting module + top-bar centering fix)
+### ✅ Tasks:
+- Create a dedicated `gui/thumbnail_fitting.py` module as single source of truth for image→cell fitting
+- Fix top chrome bar vertical centering
+
+- Created `gui/thumbnail_fitting.py` with `fit_pixmap_in_view()` (uses `QGraphicsView.fitInView` with `KeepAspectRatio`) and `compute_fitted_size()` (pure geometry computation).
+- Rewrote `ImageThumbnail.set_image()` and `resizeEvent()` to delegate all scaling to `fit_pixmap_in_view()`, replacing the broken `centerOn()`+`resetTransform()` pattern that caused oversized pixmaps to be cropped and undersized ones to stay too small.
+- Enabled `SmoothPixmapTransform` and `Antialiasing` render hints on the `QGraphicsView` for crisp downscaling.
+- Removed layout-level `setAlignment(Qt.AlignVCenter)` from the top chrome bar (conflicted with per-widget `AlignVCenter` flags), removed vertical content margins, and increased bar height to 38 px so all controls are genuinely centered.
+- Added `tests/test_thumbnail_fitting.py` with 10 pytest cases covering landscape/portrait/square images, edge cases, and the invariant that output never exceeds cell size.
+→ Result: All images now display fully without crop, maximized within their cells; top-bar controls are vertically centered.
+
+## 2026-04-10 (Top-bar vertical centering + no-crop thumbnail fitting – superseded)
+### ✅ Tasks:
+- Vertically center top chrome controls and ensure image thumbnails always fit fully in grid cells
+
+- Updated top chrome layout margins to use equal top/bottom spacing so controls are visually centered in the bar.
+- Updated thumbnail worker scaling to fit each source image within the full target cell box (`target_width` x `target_height`) using `Qt.KeepAspectRatio`.
+- Preserved maximum visible size while guaranteeing full-image display (no crop/clipping caused by width-only scaling).
+→ Result: Initial attempt — did not work because the root causes were architectural (see entry above).
+---
+
 ## 2026-04-10 (Text color consistency pass: white informational labels)
 ### ✅ Tasks:
 - Unify key informational text colors to white for visual consistency

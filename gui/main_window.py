@@ -77,6 +77,7 @@ from core.image_db import ImageMetadata
 from core import user_tags_config
 from gui.image_import_worker import ImageImportWorker
 from gui.image_grid import ImageGrid, ImageThumbnail
+from gui.thumbnail_fitting import FitMode
 from gui.tag_widgets import DraggableTagChip
 from gui.add_tag_dialog import AddTagDialog, IconPickerDialog
 from gui.tag_apply_worker import TagApplyWorker
@@ -419,9 +420,8 @@ class MainWindow(QMainWindow):
         self._top_chrome_bar = QWidget()
         self._top_chrome_bar.setObjectName("TopChromeBar")
         top_row = QHBoxLayout(self._top_chrome_bar)
-        top_row.setContentsMargins(6, 6, 6, 2)
+        top_row.setContentsMargins(6, 0, 6, 0)
         top_row.setSpacing(6)
-        top_row.setAlignment(Qt.AlignVCenter)
 
         # Reason: floating logo overlaps this strip; keep menus to the right of its footprint.
         logo_reserve = QWidget(self._top_chrome_bar)
@@ -522,12 +522,25 @@ class MainWindow(QMainWindow):
         )
         self.columns_count.setStyleSheet("color: #ffffff; font-size: 11px;")
 
+        fit_label = QLabel("Display:", self._top_chrome_bar)
+        fit_label.setStyleSheet("color: #ffffff; font-size: 11px;")
+        self.fit_mode_combo = QComboBox(self._top_chrome_bar)
+        self.fit_mode_combo.addItems(FitMode.labels())
+        default_fit = settings.get("ui.grid.fit_mode", 0)
+        if not 0 <= default_fit < self.fit_mode_combo.count():
+            default_fit = 0
+        self.fit_mode_combo.setCurrentIndex(default_fit)
+        self.fit_mode_combo.setFixedWidth(100)
+        self.fit_mode_combo.currentIndexChanged.connect(self._on_fit_mode_changed)
+
         top_row.addWidget(self.shuffle_button, 0, Qt.AlignVCenter)
         top_row.addWidget(sort_label, 0, Qt.AlignVCenter)
         top_row.addWidget(self.sort_combo, 0, Qt.AlignVCenter)
         top_row.addWidget(columns_label, 0, Qt.AlignVCenter)
         top_row.addWidget(self.columns_slider, 0, Qt.AlignVCenter)
         top_row.addWidget(self.columns_count, 0, Qt.AlignVCenter)
+        top_row.addWidget(fit_label, 0, Qt.AlignVCenter)
+        top_row.addWidget(self.fit_mode_combo, 0, Qt.AlignVCenter)
         top_row.addSpacing(8)
 
         self._window_min_btn = QPushButton("-", self._top_chrome_bar)
@@ -586,7 +599,7 @@ class MainWindow(QMainWindow):
         top_row.addWidget(self._window_max_btn, 0, Qt.AlignVCenter)
         top_row.addWidget(self._window_close_btn, 0, Qt.AlignVCenter)
 
-        self._top_chrome_bar.setFixedHeight(36)
+        self._top_chrome_bar.setFixedHeight(38)
         main_layout.addWidget(self._top_chrome_bar, 0)
 
     def _toggle_maximize_restore(self) -> None:
@@ -950,6 +963,7 @@ class MainWindow(QMainWindow):
         # Create image grid (sort / columns / shuffle live in top chrome bar)
         self.image_grid = ImageGrid(self.image_manager)
         self.image_grid.set_columns(self.columns_slider.value())
+        self.image_grid.set_fit_mode(FitMode(self.fit_mode_combo.currentIndex()))
         self.image_grid.image_double_clicked.connect(self._on_image_clicked)
         self.image_grid.tag_remove_progress.connect(
             self._handle_tag_remove_progress,
@@ -4094,6 +4108,18 @@ class MainWindow(QMainWindow):
         self.columns_count.setText(str(value))
         self.image_grid.set_columns(value)
         settings.set("ui.grid.columns", value)
+        settings.save()
+
+    def _on_fit_mode_changed(self, index: int) -> None:
+        """
+        Handle display-mode combo changes and persist to user settings.
+
+        Args:
+            index: Combo-box index matching FitMode enum value.
+        """
+        mode = FitMode(index)
+        self.image_grid.set_fit_mode(mode)
+        settings.set("ui.grid.fit_mode", index)
         settings.save()
 
     def _on_image_clicked(self, image_id: str):

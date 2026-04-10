@@ -1,5 +1,38 @@
 # Journal des modifications
 
+## 2026-04-10 (Mode d'affichage image sélectionnable : Fit All / Fit Height / Fit Width / Crop All)
+### ✅ Tâches :
+- Ajouter une combo box "Display" dans la barre chrome pour que l'utilisateur choisisse comment les images sont affichées dans la grille
+
+- Extension de `gui/thumbnail_fitting.py` avec un enum `FitMode` (`FIT_ALL`, `FIT_HEIGHT`, `FIT_WIDTH`, `CROP_ALL`) et la logique correspondante dans `fit_pixmap_in_view()` et `compute_fitted_size()`.
+- Ajout de `set_fit_mode()` dans `ImageThumbnail` et `ImageGrid` ; tous les thumbnails existants et nouvellement créés héritent du mode courant.
+- Ajout d'une combo box "Display:" dans la barre chrome (à côté de Columns), connectée à `ImageGrid.set_fit_mode()` avec persistance via le setting `ui.grid.fit_mode`.
+- Mise à jour de `tests/test_thumbnail_fitting.py` de 10 à 21 cas couvrant les quatre modes et l'enum.
+→ Résultat : L'utilisateur peut choisir sa stratégie d'affichage préférée ; le réglage est sauvegardé et restauré au relancement.
+---
+
+## 2026-04-10 (Module unifié thumbnail fitting + correction centrage top bar)
+### ✅ Tâches :
+- Créer un module `gui/thumbnail_fitting.py` comme source unique de vérité pour le fitting image→cellule
+- Corriger le centrage vertical de la barre chrome supérieure
+
+- Création de `gui/thumbnail_fitting.py` avec `fit_pixmap_in_view()` (utilise `QGraphicsView.fitInView` + `KeepAspectRatio`) et `compute_fitted_size()` (calcul géométrique pur).
+- Réécriture de `ImageThumbnail.set_image()` et `resizeEvent()` pour déléguer tout le scaling à `fit_pixmap_in_view()`, remplaçant le pattern `centerOn()`+`resetTransform()` défaillant qui causait crop des pixmaps trop grands et images trop petites pour les petits.
+- Activation des render hints `SmoothPixmapTransform` et `Antialiasing` sur le `QGraphicsView` pour un downscale net.
+- Suppression du `setAlignment(Qt.AlignVCenter)` au niveau du layout de la top bar (conflit avec les flags `AlignVCenter` par widget), suppression des marges verticales de contenu, et hauteur portée à 38 px pour un centrage réel de tous les contrôles.
+- Ajout de `tests/test_thumbnail_fitting.py` avec 10 tests pytest couvrant paysage/portrait/carré, cas limites, et l'invariant que la sortie ne dépasse jamais la cellule.
+→ Résultat : Toutes les images s'affichent entièrement sans crop, maximisées dans leur cellule ; les contrôles de la top bar sont centrés verticalement.
+
+## 2026-04-10 (Centrage vertical top bar + miniatures sans crop – remplacé)
+### ✅ Tâches :
+- Centrer verticalement les contrôles de la barre supérieure et garantir l'affichage complet des images dans la grille
+
+- Mise à jour des marges de la top bar avec un espacement haut/bas identique pour un centrage visuel des contrôles.
+- Mise à jour du scaling des miniatures dans le worker pour fitter l'image dans la cellule cible complète (`target_width` x `target_height`) avec `Qt.KeepAspectRatio`.
+- Conservation d'une taille affichée maximale tout en garantissant l'image entière sans crop.
+→ Résultat : Tentative initiale — n'a pas fonctionné car les causes racines étaient architecturales (voir entrée ci-dessus).
+---
+
 ## 2026-04-10 (Passe cohérence couleur texte : libellés informatifs en blanc)
 ### ✅ Tâches :
 - Uniformiser en blanc les textes informatifs clés de l'interface

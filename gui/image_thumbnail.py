@@ -18,9 +18,10 @@ from qtpy.QtWidgets import (
     QSizePolicy
 )
 from qtpy.QtCore import Qt, Signal, QTimer, QUrl
-from qtpy.QtGui import QPixmap, QIcon, QImage, QCursor, QDragEnterEvent, QDropEvent, QFontMetrics, QFont
+from qtpy.QtGui import QPainter, QPixmap, QIcon, QImage, QCursor, QDragEnterEvent, QDropEvent, QFontMetrics, QFont
 from core.settings import settings
 from gui.icon_utils import find_tag_icon, invert_icon
+from gui.thumbnail_fitting import FitMode, fit_pixmap_in_view
 
 
 class TagChip(QFrame):
@@ -196,6 +197,8 @@ class ImageThumbnail(QFrame):
                 border: none;
             }
         """)
+        self.graphics_view.setRenderHint(QPainter.Antialiasing, True)
+        self.graphics_view.setRenderHint(QPainter.SmoothPixmapTransform, True)
         self.graphics_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         # Make graphics view transparent to mouse events so ImageGrid can handle selection
@@ -236,76 +239,63 @@ class ImageThumbnail(QFrame):
         self.original_pixmap = None
         self.pixmap_item = None
         self.tag_chips = {}  # Store tag chips by tag name
+        self._fit_mode: FitMode = FitMode.FIT_ALL
     
+    def set_fit_mode(self, mode: FitMode) -> None:
+        """
+        Change the image display strategy and re-fit immediately.
+
+        Args:
+            mode: New display mode.
+        """
+        if self._fit_mode == mode:
+            return
+        self._fit_mode = mode
+        fit_pixmap_in_view(self.graphics_view, self.scene, self.pixmap_item, mode)
+
     def _apply_theme(self):
         pass  # Désormais géré par le QSS global
     
     def set_image(self, pixmap: QPixmap):
-        """Set the image pixmap."""
+        """
+        Set the image pixmap and fit it inside the view (no crop).
+
+        The worker loads a high-resolution pixmap; ``fit_pixmap_in_view``
+        computes the correct transform so the full image is visible,
+        maximized within the cell, with aspect ratio preserved.
+
+        Args:
+            pixmap: The QPixmap to display.
+        """
         if not self.scene:
             return
-            
+
         try:
-            # Store original pixmap (the pixmap is already scaled to correct size by worker)
             self.original_pixmap = pixmap
-            
-            # Clear previous pixmap item
+
             if self.pixmap_item:
                 self.scene.removeItem(self.pixmap_item)
-            
-            # Use the pixmap directly - it's already scaled to the correct size by ImageLoaderWorker
-            # No need to resize again, which would cause pixelation
+
             self.pixmap_item = self.scene.addPixmap(pixmap)
-            
-            # Set scene rect to match pixmap size
-            self.scene.setSceneRect(self.pixmap_item.boundingRect())
-            
-            # Center the view
             self.graphics_view.setAlignment(Qt.AlignCenter)
-            
-            # Center the view on the pixmap item (no fitInView to avoid pixelation)
-            self.graphics_view.centerOn(self.pixmap_item)
-            
-            # Reset transform to ensure no scaling artifacts
-            self.graphics_view.resetTransform()
-            
+            fit_pixmap_in_view(
+                self.graphics_view, self.scene, self.pixmap_item, self._fit_mode
+            )
+
         except Exception as e:
             self.set_error(str(e))
     
     def _ensure_proper_centering(self):
-        """Ensure the image is properly centered in the view."""
-        if not self.scene or not self.pixmap_item:
-            return
-        
-        # Just center the view - no need to rescale as pixmap is already correct size
-        self.graphics_view.centerOn(self.pixmap_item)
-        self.graphics_view.resetTransform()
+        """Re-fit the image after any geometry change."""
+        fit_pixmap_in_view(
+            self.graphics_view, self.scene, self.pixmap_item, self._fit_mode
+        )
     
     def _apply_high_quality_resize(self):
-        """Apply high quality resize after the initial fast resize."""
-        if not self.original_pixmap or not self.scene:
-            return
-            
-        available_width = self.graphics_view.width()
-        
-        if available_width <= 0:
-            return
-            
-        # Calculate new height preserving aspect ratio
-        image_ratio = self.original_pixmap.width() / self.original_pixmap.height()
-        new_height = int(available_width / image_ratio)
-        
-        scaled_pixmap = self.original_pixmap.scaled(
-            available_width,
-            new_height,
-            Qt.KeepAspectRatio,
-            Qt.SmoothTransformation
+        """Re-fit image in view (kept for backward compatibility)."""
+        fit_pixmap_in_view(
+            self.graphics_view, self.scene, self.pixmap_item, self._fit_mode
         )
-        
-        if self.pixmap_item:
-            self.pixmap_item.setPixmap(scaled_pixmap)
-            self.scene.setSceneRect(self.pixmap_item.boundingRect())
-            self.graphics_view.setFixedHeight(new_height)
     
     def clear_pixmap(self) -> None:
         """Clear the displayed image (e.g. before reloading after rotate)."""
@@ -360,15 +350,16 @@ class ImageThumbnail(QFrame):
         event.ignore()  # Let the event propagate
     
     def resizeEvent(self, event):
-        """Handle resize events to adjust image scaling and re-layout tags."""
+        """Handle resize events: re-fit image and re-layout tags."""
         super().resizeEvent(event)
-        
-        # Just center the view - the image will be reloaded at new size if needed
-        if self.scene and self.pixmap_item:
-            self.graphics_view.centerOn(self.pixmap_item)
-            self.graphics_view.resetTransform()
-        
-        # Re-layout tags if thumbnail size changed
+
+        # Reason: when the cell size changes (column slider, window resize,
+        # sidebar animation) we must recompute the fitInView transform so the
+        # image stays fully visible and maximized inside the new cell size.
+        fit_pixmap_in_view(
+            self.graphics_view, self.scene, self.pixmap_item, self._fit_mode
+        )
+
         if self.tag_chips:
             self._relayout_tags()
     

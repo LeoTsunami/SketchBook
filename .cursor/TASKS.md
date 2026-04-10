@@ -8,6 +8,9 @@ Update this file via prompt:
 
 ## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
 
+- [x] Add user-selectable display mode combo box (Fit All / Fit Height / Fit Width / Crop All) with persistence (2026-04-10)
+- [x] Create unified thumbnail_fitting module and fix top-bar centering + no-crop image display (2026-04-10)
+- [x] Center top-bar controls vertically and enforce no-crop thumbnail fit within grid cells (2026-04-10)
 - [x] Unify key chrome and tag-library informational text colors to white (2026-04-10)
 - [x] Tune chrome proportions: larger logo, stronger logo shadow, and slightly thinner top bar (2026-04-10)
 - [x] Finalize custom chrome UX: reliable resize cursor, corrected min/max icons, slightly smaller logo, taller top bar, wider compact left rail (2026-04-10)

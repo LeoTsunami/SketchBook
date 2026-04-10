@@ -31,6 +31,7 @@ from gui.image_loader_worker import ImageLoaderWorker
 from gui.image_rotate_worker import RotateImageWorker
 from gui.tag_apply_worker import TagApplyWorker
 from gui.image_thumbnail import ImageThumbnail, TagChip
+from gui.thumbnail_fitting import FitMode
 from gui.scroll_preview_overlay import ScrollPreviewOverlay
 from gui.tag_hover_popover import TagHoverPopover
 from qtpy.QtWidgets import QCompleter
@@ -159,6 +160,7 @@ class ImageGrid(QScrollArea):
         self.needs_relayout = False  # Flag to track if relayout is needed
         self.max_thumbnail_height = 300  # Default maximum height
         self.sort_by = "import_date_desc"  # Default sort: most recent first
+        self._fit_mode: FitMode = FitMode.FIT_ALL
 
         # Set up thread pool for main image loading (thumbnails in the grid)
         self.thread_pool = QThreadPool.globalInstance()
@@ -439,6 +441,7 @@ class ImageGrid(QScrollArea):
                 show_tag_popover_callback=self._show_tag_popover,
                 import_drop_callback=self._import_drop_callback,
             )
+            thumb._fit_mode = self._fit_mode
             thumb.setFixedWidth(thumbnail_width)
             thumb.setFixedHeight(row_height)
             thumb.image_container.setFixedSize(thumbnail_width - 4, row_height - 4)
@@ -586,6 +589,21 @@ class ImageGrid(QScrollArea):
             blocker = QSignalBlocker(vbar)
             vbar.setValue(target_value)
             del blocker
+
+    def set_fit_mode(self, mode: FitMode) -> None:
+        """
+        Change the image display strategy for every thumbnail.
+
+        Args:
+            mode: New display mode (FitMode enum value).
+        """
+        if self._fit_mode == mode:
+            return
+        self._fit_mode = mode
+        for thumb in self.thumbnails.values():
+            thumb.set_fit_mode(mode)
+        for thumb in self.thumbnail_pool:
+            thumb.set_fit_mode(mode)
 
     def set_columns(self, columns: int):
         """Set the number of columns in the grid."""
@@ -821,6 +839,7 @@ class ImageGrid(QScrollArea):
                 show_tag_popover_callback=self._show_tag_popover,
                 import_drop_callback=self._import_drop_callback,
             )
+            thumbnail._fit_mode = self._fit_mode
 
             # Set initial size
             thumbnail.setFixedWidth(thumbnail_width)
@@ -862,6 +881,7 @@ class ImageGrid(QScrollArea):
             show_tag_popover_callback=self._show_tag_popover,
             import_drop_callback=self._import_drop_callback,
         )
+        thumbnail._fit_mode = self._fit_mode
         thumbnail.setFixedWidth(thumbnail_width)
         thumbnail.setFixedHeight(thumbnail_height)
         thumbnail.image_container.setFixedSize(

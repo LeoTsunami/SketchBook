@@ -392,8 +392,17 @@ The `ImageGrid` class manages the display of image thumbnails in a responsive gr
 - Efficient thumbnail resizing with proper scaling
 - Viewport-based loading for visible thumbnails only (queue + ticker instead of loading all visible at once)
 
-### Thumbnail image quality
+### Thumbnail image quality and fitting (`gui/thumbnail_fitting.py`)
 
+- **Single source of truth**: `gui/thumbnail_fitting.py` centralises all image→cell fitting logic.
+  - `FitMode` enum: `FIT_ALL` (no crop), `FIT_HEIGHT` (fill height), `FIT_WIDTH` (fill width), `CROP_ALL` (fill cell, crop excess).
+  - `fit_pixmap_in_view(view, scene, pixmap_item, mode)` — applies the chosen strategy via `fitInView` / transform.
+  - `compute_fitted_size(image_w, image_h, cell_w, cell_h, mode)` — pure-geometry helper that returns the final (display_w, display_h) for a given image in a given cell.
+- `ImageThumbnail.set_image()` and `resizeEvent()` both delegate to `fit_pixmap_in_view()`, so images are *always* re-fitted when the cell size changes (column slider, window resize, sidebar animation).
+- `ImageThumbnail.set_fit_mode(mode)` updates the display mode and immediately re-fits the current image.
+- `ImageGrid.set_fit_mode(mode)` propagates the mode to all existing thumbnails and the pool.
+- The user selects the mode via a "Display:" combo box in the top chrome bar; the choice is persisted in `ui.grid.fit_mode`.
+- `QGraphicsView` render hints `SmoothPixmapTransform` and `Antialiasing` are enabled for crisp downscaling.
 - Thumbnails are loaded by `ImageLoaderWorker` with two passes:
   - A lightweight `fast_pixmap` (currently not displayed in the grid but kept for potential future uses such as placeholders).
   - A **high‑quality pixmap** that is upscaled using a factor of at least 2.0× on standard DPI screens (or the device pixel ratio on HiDPI screens), then downscaled by Qt in the view.
