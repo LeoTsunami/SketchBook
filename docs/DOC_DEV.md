@@ -35,6 +35,8 @@ SketchBook/
    pip install -r requirements.txt
    ```
 
+   Le dépôt utilise en pratique le dossier **`.venv`** (à la racine). Si vous voyez une erreur du type « No Python at …\OtherUser\…\Python312\python.exe » après un clone ou un changement de machine, le venv a été créé sur un autre PC : supprimez le dossier `.venv`, puis recréez-le avec `py -3.12 -m venv .venv` (Windows) et `pip install -r requirements.txt`.
+
 ## Architecture
 
 ### GUI (gui/)

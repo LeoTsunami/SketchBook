@@ -1,5 +1,23 @@
 # Journal des modifications
 
+## 2026-04-10 (Ignorer `.venv` dans Git)
+### ✅ Tâches :
+- Ne plus versionner l’environnement virtuel
+
+- Ajout de `.venv/` dans `.gitignore` (seul `venv/` était listé avant).
+- Exécution de `git rm -r --cached .venv` pour retirer les fichiers déjà suivis de l’index ; le dossier `.venv` local reste sur le disque.
+→ Résultat : les clones n’héritent plus d’un venv spécifique à une machine ; chaque développeur le recrée localement.
+---
+
+## 2026-04-10 (Recréation du `.venv` pour Python 3.12 local)
+### ✅ Tâches :
+- Corriger un environnement virtuel cassé pointant vers le Python d’une autre machine (`C:\Users\Leo\...`)
+
+- Suppression de l’ancien `.venv` dont `pyvenv.cfg` référençait `Leo\AppData\Local\Programs\Python\Python312` (chemin absent sur ce PC).
+- Recréation de `.venv` avec l’installation locale `C:\Users\recoc\AppData\Local\Programs\Python\Python312` (`py -3.12 -m venv .venv`) et réinstallation des dépendances depuis `requirements.txt`.
+→ Résultat : `SketchBook/.venv/Scripts/python.exe` fonctionne à nouveau ; `main.py` démarre avec PySide6 disponible.
+---
+
 ## 2026-04-10 (Crop All par défaut + réduction de la pixelisation des miniatures)
 ### ✅ Tâches :
 - Mettre le mode crop par défaut et améliorer la netteté perçue des miniatures

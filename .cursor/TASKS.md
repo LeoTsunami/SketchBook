@@ -177,6 +177,7 @@ Update this file via prompt:
 
 ## 🧠 DISCOVERIES / QUESTIONS
 
+- [x] **2026-04-10** : Si `No Python at 'C:\Users\OtherUser\...Python312\python.exe'` après copie de projet ou changement de PC, supprimer `.venv` et recréer avec `py -3.12 -m venv .venv` puis `pip install -r requirements.txt`.
 - [x] Research best practices for Qt application architecture
 - [x] Investigate efficient image processing methods with Pillow
 - [x] Plan database schema for extensibility

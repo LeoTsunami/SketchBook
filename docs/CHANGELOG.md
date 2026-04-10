@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-04-10 (Ignore `.venv` in Git)
+### ✅ Tasks:
+- Stop tracking the virtual environment in version control
+
+- Added `.venv/` to `.gitignore` (only `venv/` was listed before).
+- Ran `git rm -r --cached .venv` so existing tracked venv files are removed from the index; local `.venv` remains on disk.
+→ Result: Clones no longer inherit a machine-specific venv; each developer recreates it locally.
+---
+
+## 2026-04-10 (Recreate `.venv` for local Python 3.12)
+### ✅ Tasks:
+- Fix broken virtualenv pointing at another machine’s Python path (`C:\Users\Leo\...`)
+
+- Removed the stale `.venv` whose `pyvenv.cfg` referenced `Leo\AppData\Local\Programs\Python\Python312` (path missing on this PC).
+- Recreated `.venv` with the local install at `C:\Users\recoc\AppData\Local\Programs\Python\Python312` (`py -3.12 -m venv .venv`) and reinstalled dependencies from `requirements.txt`.
+→ Result: `SketchBook/.venv/Scripts/python.exe` runs again; `main.py` starts with PySide6 available.
+---
+
 ## 2026-04-10 (Default Crop All + reduced thumbnail pixelation)
 ### ✅ Tasks:
 - Make crop mode the default display strategy and improve perceived thumbnail sharpness
