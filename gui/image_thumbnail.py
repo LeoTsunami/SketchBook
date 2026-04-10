@@ -18,7 +18,7 @@ from qtpy.QtWidgets import (
     QSizePolicy
 )
 from qtpy.QtCore import Qt, Signal, QTimer, QUrl
-from qtpy.QtGui import QPixmap, QIcon, QImage, QCursor, QDragEnterEvent, QDropEvent, QFontMetrics
+from qtpy.QtGui import QPixmap, QIcon, QImage, QCursor, QDragEnterEvent, QDropEvent, QFontMetrics, QFont
 from core.settings import settings
 from gui.icon_utils import find_tag_icon, invert_icon
 
@@ -51,9 +51,12 @@ class TagChip(QFrame):
         layout.setSpacing(6)
 
         app_font = QApplication.instance().font() if QApplication.instance() else self.font()
-        # Use larger font for tags
-        larger_font = app_font
-        larger_font.setPointSize(max(9, app_font.pointSize() + 1))
+        # Reason: QApplication font may have pointSize() == -1 on some systems; copy and clamp.
+        larger_font = QFont(app_font)
+        base_point_size = app_font.pointSize()
+        if base_point_size <= 0:
+            base_point_size = 10
+        larger_font.setPointSize(max(9, base_point_size + 1))
         self.setFont(larger_font)
 
         # Add icon (if available) - preserve visibility with minimum size

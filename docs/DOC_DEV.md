@@ -38,7 +38,7 @@ SketchBook/
 ## Architecture
 
 ### GUI (gui/)
-- `main_window.py` : Fenêtre principale. Crée et cache la fenêtre au lancement d’une session ; réaffiche à la fermeture de la session. Bibliothèque de tags : sélection multi-tags (Ctrl+clic), menu « Parent to tag... » avec mode parent (barre OK/Cancel), `_on_parent_select_ok` applique placements (category/parent_tag). Session : `_on_session_settings_clicked(start_from_image_id=...)` permet de démarrer depuis une image de la grille, en réutilisant le même dialogue.
+- `main_window.py` : Fenêtre principale. Crée et cache la fenêtre au lancement d’une session ; réaffiche à la fermeture de la session. Bibliothèque de tags : sélection multi-tags (Ctrl+clic), menu « Parent to tag... » avec mode parent (barre OK/Cancel), `_on_parent_select_ok` applique placements (category/parent_tag). Session : `_on_session_settings_clicked(start_from_image_id=...)` permet de démarrer depuis une image de la grille, en réutilisant le même dialogue. Sidebar tags non flottante : rail compact intégré au panneau gauche (largeur bouton) par défaut, ouverture animée au survol (button -> bibliothèque complète), repli au `Leave` du panneau ; bouton rail masqué quand la bibliothèque est ouverte.
 - `slideshow_window.py` : Fenêtre de session (plein écran ou toujours au premier plan). Décompte en haut à droite, barre de contrôles (Play/Pause, Précédent, Suivant). Appelle `SessionManager.start_session` avec les image_ids filtrés et les paramètres du dialogue.
 - `session_settings_dialog.py` : Type de session (Course / Constant), durée course (10–60 min) ou intervalle, mode fenêtre.
 - `image_viewer_window.py` : Fenêtre de visualisation d’une image (zoom molette, Précédent/Suivant, rotation, crop). Mode crop : clic sur Crop affiche une grille règle des tiers et 4 poignées (`CropHandleItem`) déplaçables ; Valider applique le crop (Pillow) et met à jour les métadonnées, Annuler quitte le mode. Overlay (rect, lignes, poignées) créés dans la scène et retirés à la sortie du mode pour éviter des références invalides après `scene.clear()`.
@@ -378,9 +378,12 @@ The `ImageGrid` class manages the display of image thumbnails in a responsive gr
 
 ### Main window layout (central widget)
 
-- **`_setup_top_chrome_bar()`**: Full-width top row (`TopChromeBar`) with logo (`_logo_label`), **Tags filters** (`tag_filters_floating_btn`), `addStretch()`, then **Shuffle**, **Sort** (`sort_combo`), **Columns** (`columns_slider`, `columns_count`).
-- **`_setup_image_browser()`**: Adds the horizontal splitter (tag sidebar + gallery column) below the chrome bar with stretch factor 1.
-- **`_position_floating_session_button()`**: Positions **Start session** on `image_grid.viewport()` bottom-center. A `QEvent.Resize` filter on the viewport keeps it updated.
+- **`_setup_menu()`**: Builds `self._file_menu`, `_view_menu`, `_tools_menu`, `_help_menu` as `QMenu` instances (no `QMenuBar` — `menuBar().hide()`). Shortcuts on actions still work.
+- **`_setup_floating_logo()`** / **`_position_floating_logo()`**: Logo `QLabel` is a child of the central widget (not in the top layout), mouse-transparent, raised above the chrome strip. **`resizeEvent`** re-anchors it.
+- **`_setup_top_chrome_bar()`**: Thin row (`TopChromeBar`): reserved width for logo overlap, `QToolButton` menus, `addStretch()`, **Shuffle**, **Sort**, **Columns**.
+- **Tag sidebar hover**: `eventFilter` on `tag_filters_floating_btn` — `QEvent.Enter` calls `_toggle_left_sidebar()` when `_left_panel_expanded` is false so hover reveals the library.
+- **`_setup_image_browser()`**: Adds the horizontal splitter (tag sidebar + gallery column) below the chrome bar with stretch factor 1. Creates **Tags filters** (`tag_filters_floating_btn`) and **Start session** as children of `image_grid.viewport()`.
+- **`_position_floating_grid_overlays()`**: Positions **Tags filters** top-left and **Start session** bottom-center on the viewport. A `QEvent.Resize` filter on the viewport keeps both updated.
 
 ### Performance Optimizations
 - Asynchronous image loading using `QThreadPool`

@@ -557,7 +557,14 @@ class ImageGrid(QScrollArea):
             None
         """
         self.layout_timer.stop()
+        vbar = self.verticalScrollBar()
+        old_value = vbar.value()
+        old_max = max(1, vbar.maximum())
+        old_ratio = old_value / old_max
         self._update_layout()
+        # Reason: preserve user's relative position so same image area stays in view while resizing.
+        new_max = max(1, vbar.maximum())
+        vbar.setValue(int(old_ratio * new_max))
 
     def set_columns(self, columns: int):
         """Set the number of columns in the grid."""

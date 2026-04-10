@@ -6,7 +6,6 @@ from pathlib import Path
 from typing import Any, Dict, List, Set, Optional, Tuple
 from qtpy.QtWidgets import (
     QMainWindow,
-    QMenuBar,
     QMenu,
     QFileDialog,
     QMessageBox,
@@ -33,11 +32,11 @@ from qtpy.QtWidgets import (
     QSizePolicy,
     QCompleter,
     QInputDialog,
-    QMenu,
     QRubberBand,
     QApplication,
     QLayout,
     QGraphicsDropShadowEffect,
+    QToolButton,
 )
 from qtpy.QtCore import (
     Qt,
@@ -322,10 +321,10 @@ class MainWindow(QMainWindow):
         self.setWindowTitle("SketchBook")
         self.resize(1280, 800)
 
-        # Initialize UI (status bar first: grid stats labels used by image browser setup)
+        # Menus must exist before top chrome (menu buttons next to logo)
         self._setup_statusbar()
-        self._setup_ui()
         self._setup_menu()
+        self._setup_ui()
         self._setup_dev_tools()
 
         # Apply theme
@@ -349,77 +348,110 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Full-width top row (logo, tag panel toggle); splitter fills the rest below
+        # Thin top row (menus + grid controls); logo floats above (see `_setup_floating_logo`); Tags filters on grid
         self._setup_top_chrome_bar(layout)
         self._setup_image_browser(layout)
+        self._setup_floating_logo()
 
         self._apply_category_filters()
 
-    def _setup_top_chrome_bar(self, main_layout: QVBoxLayout) -> None:
-        """
-        Build the full-width top row: logo, tag toggle, then grid controls (shuffle, sort, columns).
-
-        Args:
-            main_layout: Central widget vertical layout (receives this row as first item).
-        """
-        self._logo_display_height_px = 88
-        self._top_chrome_bar = QWidget()
-        self._top_chrome_bar.setObjectName("TopChromeBar")
-        top_row = QHBoxLayout(self._top_chrome_bar)
-        top_row.setContentsMargins(12, 8, 12, 8)
-        top_row.setSpacing(12)
-
+    def _setup_floating_logo(self) -> None:
+        """Place the logo above the top chrome (does not affect chrome height)."""
+        cw = self.centralWidget()
+        if not cw:
+            return
+        self._logo_float_height_px = 80
         logo_path = (
             Path(__file__).resolve().parent
             / "ressources"
             / "icones"
             / "SketchBook_logo_B.png"
         )
-        self._logo_label = QLabel(self._top_chrome_bar)
+        self._logo_label = QLabel(cw)
         self._logo_label.setAttribute(Qt.WA_TranslucentBackground)
+        self._logo_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         logo_pix = QPixmap(str(logo_path))
         if not logo_pix.isNull():
             self._logo_label.setPixmap(
                 logo_pix.scaledToHeight(
-                    self._logo_display_height_px, Qt.SmoothTransformation
+                    self._logo_float_height_px, Qt.SmoothTransformation
                 )
             )
             self._logo_label.adjustSize()
         else:
             self._logo_label.hide()
+        self._logo_label.raise_()
+        QTimer.singleShot(0, self._position_floating_logo)
 
-        self.tag_filters_floating_btn = QPushButton(
-            "Tags filters ❮", self._top_chrome_bar
-        )
-        self.tag_filters_floating_btn.setObjectName("TagFiltersFloatingButton")
-        self.tag_filters_floating_btn.setToolTip("Collapse tags sidebar")
-        self.tag_filters_floating_btn.setStyleSheet("""
-            QPushButton#TagFiltersFloatingButton {
-                background-color: rgba(45, 48, 52, 0.92);
-                color: #e8e8e8;
-                font-size: 12px;
-                font-weight: bold;
-                padding: 8px 14px;
-                border: 1px solid #555;
-                border-radius: 8px;
-            }
-            QPushButton#TagFiltersFloatingButton:hover {
-                background-color: rgba(60, 64, 70, 0.95);
-                border-color: #6b9bd1;
-            }
-            QPushButton#TagFiltersFloatingButton:pressed {
-                background-color: rgba(35, 38, 42, 0.95);
-            }
-        """)
-        tf_shadow = QGraphicsDropShadowEffect(self.tag_filters_floating_btn)
-        tf_shadow.setBlurRadius(14)
-        tf_shadow.setOffset(0, 3)
-        tf_shadow.setColor(QColor(0, 0, 0, 140))
-        self.tag_filters_floating_btn.setGraphicsEffect(tf_shadow)
-        self.tag_filters_floating_btn.clicked.connect(self._toggle_left_sidebar)
+    def _position_floating_logo(self) -> None:
+        """Keep the branding logo pinned to the top-left above other central content."""
+        if not hasattr(self, "_logo_label") or not self._logo_label.isVisible():
+            return
+        m = 8
+        self._logo_label.move(m, m)
+        self._logo_label.raise_()
 
-        top_row.addWidget(self._logo_label, 0, Qt.AlignVCenter)
-        top_row.addWidget(self.tag_filters_floating_btn, 0, Qt.AlignVCenter)
+    def resizeEvent(self, event) -> None:
+        """Re-anchor floating logo when the main window geometry changes."""
+        super().resizeEvent(event)
+        self._position_floating_logo()
+        self._position_floating_grid_overlays()
+
+    def _setup_top_chrome_bar(self, main_layout: QVBoxLayout) -> None:
+        """
+        Build a thin full-width row: **File / View / Tools / Help** menus, then grid controls.
+
+        Logo is not in this row (see `_setup_floating_logo`). The tag panel toggle is on the grid viewport.
+
+        Args:
+            main_layout: Central widget vertical layout (receives this row as first item).
+        """
+        self._top_chrome_bar = QWidget()
+        self._top_chrome_bar.setObjectName("TopChromeBar")
+        top_row = QHBoxLayout(self._top_chrome_bar)
+        top_row.setContentsMargins(6, 6, 6, 2)
+        top_row.setSpacing(6)
+        top_row.setAlignment(Qt.AlignVCenter)
+
+        # Reason: floating logo overlaps this strip; keep menus to the right of its footprint.
+        logo_reserve = QWidget(self._top_chrome_bar)
+        logo_reserve.setFixedWidth(100)
+        logo_reserve.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        top_row.addWidget(logo_reserve, 0, Qt.AlignVCenter)
+
+        for label, menu_attr in (
+            ("File", "_file_menu"),
+            ("View", "_view_menu"),
+            ("Tools", "_tools_menu"),
+            ("Help", "_help_menu"),
+        ):
+            m = getattr(self, menu_attr, None)
+            if m is None:
+                continue
+            mb = QToolButton(self._top_chrome_bar)
+            mb.setText(label)
+            mb.setMenu(m)
+            mb.setPopupMode(QToolButton.ToolButtonPopupMode.InstantPopup)
+            mb.setToolButtonStyle(Qt.ToolButtonTextOnly)
+            mb.setAutoRaise(True)
+            mb.setStyleSheet("""
+                QToolButton {
+                    color: #e0e0e0;
+                    font-size: 11px;
+                    font-weight: bold;
+                    padding: 4px 10px;
+                    border: 1px solid #555;
+                    border-radius: 4px;
+                    background-color: rgba(45, 48, 52, 0.9);
+                }
+                QToolButton:hover {
+                    background-color: rgba(60, 64, 70, 0.95);
+                    border-color: #6b9bd1;
+                }
+                QToolButton::menu-indicator { width: 0px; }
+            """)
+            top_row.addWidget(mb, 0, Qt.AlignVCenter)
+
         top_row.addStretch(1)
 
         # Shuffle, sort order, column count (same top row as logo)
@@ -487,7 +519,7 @@ class MainWindow(QMainWindow):
         top_row.addWidget(self.columns_slider, 0, Qt.AlignVCenter)
         top_row.addWidget(self.columns_count, 0, Qt.AlignVCenter)
 
-        self._top_chrome_bar.setMinimumHeight(self._logo_display_height_px + 16)
+        self._top_chrome_bar.setFixedHeight(30)
         main_layout.addWidget(self._top_chrome_bar, 0)
 
     def _setup_image_browser(self, main_layout: QVBoxLayout) -> None:
@@ -500,27 +532,71 @@ class MainWindow(QMainWindow):
         self.left_panel_container = QWidget()
         self.left_panel_container.setObjectName("TagSidebar")
         left_panel_layout = QVBoxLayout(self.left_panel_container)
-        left_panel_layout.setContentsMargins(10, 10, 10, 10)
-        left_panel_layout.setSpacing(10)
+        # Reason: compact mode uses full-height tag rail; expanded mode keeps comfortable library padding.
+        self._left_panel_layout = left_panel_layout
+        self._left_panel_expanded_margins = (10, 26, 10, 10)
+        self._left_panel_collapsed_margins = (0, 0, 0, 0)
+        self._left_panel_expanded_spacing = 10
+        self._left_panel_collapsed_spacing = 0
+        left_panel_layout.setContentsMargins(*self._left_panel_collapsed_margins)
+        left_panel_layout.setSpacing(self._left_panel_collapsed_spacing)
 
         # Reason: tag sub-grid uses 3 columns; slightly narrower than before per UX feedback.
         self._left_panel_open_width = 360
-        # Reason: collapse fully; floating "Tags filters" control lives on the image grid.
-        self._left_panel_collapsed_width = 0
-        self._left_panel_expanded = True
-        self.left_panel_container.setMinimumWidth(self._left_panel_open_width)
-        self.left_panel_container.setMaximumWidth(self._left_panel_open_width)
+        # Reason: compact-by-default left rail with only the tags hover control visible.
+        self._left_panel_collapsed_width = 48
+        self._left_panel_expanded = False
+        self.left_panel_container.setMinimumWidth(self._left_panel_collapsed_width)
+        self.left_panel_container.setMaximumWidth(self._left_panel_collapsed_width)
         self.left_panel_container.setSizePolicy(
             QSizePolicy.Fixed, QSizePolicy.Expanding
         )
+        self.left_panel_container.installEventFilter(self)
+
+        # Compact rail control (non-floating): lives inside left panel and fills its height when collapsed.
+        self.tag_filters_floating_btn = QPushButton("Tags\nfilters\n>", self.left_panel_container)
+        self.tag_filters_floating_btn.setObjectName("TagFiltersFloatingButton")
+        self.tag_filters_floating_btn.setToolTip("Hover to expand tags sidebar")
+        self.tag_filters_floating_btn.setStyleSheet("""
+            QPushButton#TagFiltersFloatingButton {
+                background-color: rgba(45, 48, 52, 0.92);
+                color: #e8e8e8;
+                font-size: 11px;
+                font-weight: bold;
+                padding: 8px 4px;
+                border: 1px solid #555;
+                border-top-right-radius: 6px;
+                border-bottom-right-radius: 6px;
+                border-top-left-radius: 0px;
+                border-bottom-left-radius: 0px;
+                text-align: center;
+            }
+            QPushButton#TagFiltersFloatingButton:hover {
+                background-color: rgba(60, 64, 70, 0.95);
+                border-color: #6b9bd1;
+            }
+            QPushButton#TagFiltersFloatingButton:pressed {
+                background-color: rgba(35, 38, 42, 0.95);
+            }
+        """)
+        tf_shadow = QGraphicsDropShadowEffect(self.tag_filters_floating_btn)
+        tf_shadow.setBlurRadius(12)
+        tf_shadow.setOffset(0, 2)
+        tf_shadow.setColor(QColor(0, 0, 0, 130))
+        self.tag_filters_floating_btn.setGraphicsEffect(tf_shadow)
+        self.tag_filters_floating_btn.setFixedWidth(self._left_panel_collapsed_width)
+        self.tag_filters_floating_btn.setSizePolicy(
+            QSizePolicy.Fixed, QSizePolicy.Expanding
+        )
+        self.tag_filters_floating_btn.installEventFilter(self)
 
         # Middle part: Tags grid
-        tags_tree_panel = QWidget()
-        tags_tree_layout = QVBoxLayout(tags_tree_panel)
+        self._tags_tree_panel = QWidget()
+        tags_tree_layout = QVBoxLayout(self._tags_tree_panel)
         tags_tree_layout.setContentsMargins(0, 0, 0, 0)
         tags_tree_layout.setSpacing(5)
 
-        # Title row: "Tags Library" + small blue "+" (tag panel toggle is in top chrome bar)
+        # Title row: "Tags Library" + small blue "+" (tag panel toggle floats on grid viewport)
         tags_header_layout = QHBoxLayout()
         tags_header_layout.setContentsMargins(0, 0, 0, 0)
         self._tags_library_title_label = QLabel("Tags Library")
@@ -618,8 +694,24 @@ class MainWindow(QMainWindow):
         # Load tags into grid
         self._load_tags_into_grid()
 
-        left_panel_layout.addWidget(tags_tree_panel, 0)
+        self._left_panel_top_spacer = QWidget(self.left_panel_container)
+        self._left_panel_top_spacer_collapsed_height = 65
+        self._left_panel_top_spacer_expanded_height = 50
+        self._left_panel_top_spacer.setFixedHeight(
+            self._left_panel_top_spacer_collapsed_height
+        )
+        self._left_panel_top_spacer.setSizePolicy(
+            QSizePolicy.Preferred, QSizePolicy.Fixed
+        )
+        left_panel_layout.addWidget(self._left_panel_top_spacer, 0)
+        left_panel_layout.addWidget(self._tags_tree_panel, 0)
         left_panel_layout.addWidget(self._left_sidebar_content, 1)
+        left_panel_layout.addWidget(self.tag_filters_floating_btn, 1)
+        # Start in compact mode: only the hover rail is visible.
+        self._tags_tree_panel.setVisible(False)
+        self._left_sidebar_content.setVisible(False)
+        self._add_tag_btn.setVisible(False)
+        self._tags_library_title_label.setVisible(False)
 
         # Create AND/OR zones even when Search panel is removed, as filtering logic still uses them.
         from gui.tag_widgets import TagDropZone
@@ -666,8 +758,9 @@ class MainWindow(QMainWindow):
         self.image_grid.set_import_drop_callback(self._import_from_urls)
         middle_layout.addWidget(self.image_grid)
 
-        # Floating Session Settings button over the image grid (bottom center)
+        # Floating control: session button on image viewport.
         vp = self.image_grid.viewport()
+
         self.session_settings_btn = QPushButton("Start session", vp)
         self.session_settings_btn.setStyleSheet("""
             QPushButton {
@@ -694,7 +787,7 @@ class MainWindow(QMainWindow):
         self.session_settings_btn.clicked.connect(self._on_session_settings_clicked)
         self.session_settings_btn.raise_()
         self.image_grid.viewport().installEventFilter(self)
-        QTimer.singleShot(0, self._position_floating_session_button)
+        QTimer.singleShot(0, self._position_floating_grid_overlays)
 
         # Lazy-created image viewer window (one window, reused)
         self._image_viewer_window = None
@@ -711,23 +804,41 @@ class MainWindow(QMainWindow):
         """Animate open/close of fixed-width left sidebar."""
         if not hasattr(self, "left_panel_container"):
             return
+        if getattr(self, "_left_panel_animating", False):
+            return
         start_width = self.left_panel_container.maximumWidth()
         if self._left_panel_expanded:
             target_width = self._left_panel_collapsed_width
-            self._left_sidebar_content.setVisible(False)
-            self._add_tag_btn.setVisible(False)
-            self._tags_library_title_label.setVisible(False)
+            if hasattr(self, "_left_panel_layout"):
+                self._left_panel_layout.setContentsMargins(
+                    *self._left_panel_collapsed_margins
+                )
+                self._left_panel_layout.setSpacing(self._left_panel_collapsed_spacing)
+            # Reason: keep content visible during shrink so collapse feels animated too.
             if hasattr(self, "tag_filters_floating_btn"):
-                self.tag_filters_floating_btn.setText("Tags filters >")
-                self.tag_filters_floating_btn.setToolTip("Expand tags sidebar")
+                self.tag_filters_floating_btn.setText("Tags\nfilters\n>")
+                self.tag_filters_floating_btn.setToolTip("Hover to expand tags sidebar")
+                self.tag_filters_floating_btn.setVisible(False)
         else:
             target_width = self._left_panel_open_width
+            if hasattr(self, "_left_panel_layout"):
+                self._left_panel_layout.setContentsMargins(
+                    *self._left_panel_expanded_margins
+                )
+                self._left_panel_layout.setSpacing(self._left_panel_expanded_spacing)
+            if hasattr(self, "_left_panel_top_spacer"):
+                self._left_panel_top_spacer.setFixedHeight(
+                    self._left_panel_top_spacer_expanded_height
+                )
+            if hasattr(self, "_tags_tree_panel"):
+                self._tags_tree_panel.setVisible(True)
             self._left_sidebar_content.setVisible(True)
             self._add_tag_btn.setVisible(True)
             self._tags_library_title_label.setVisible(True)
             if hasattr(self, "tag_filters_floating_btn"):
-                self.tag_filters_floating_btn.setText("Tags filters ❮")
-                self.tag_filters_floating_btn.setToolTip("Collapse tags sidebar")
+                self.tag_filters_floating_btn.setText("Tags\nfilters\n❮")
+                self.tag_filters_floating_btn.setToolTip("Tags sidebar expanded")
+                self.tag_filters_floating_btn.setVisible(False)
 
         self.left_panel_container.setMinimumWidth(0)
         self._left_panel_anim = QPropertyAnimation(
@@ -737,30 +848,80 @@ class MainWindow(QMainWindow):
         self._left_panel_anim.setStartValue(start_width)
         self._left_panel_anim.setEndValue(target_width)
         self._left_panel_anim.setEasingCurve(QEasingCurve.InOutCubic)
+        self._left_panel_anim.valueChanged.connect(self._on_sidebar_anim_value_changed)
 
         def _on_sidebar_anim_finished() -> None:
+            self._left_panel_animating = False
             self.left_panel_container.setMinimumWidth(target_width)
+            if target_width == self._left_panel_collapsed_width:
+                if hasattr(self, "_left_panel_top_spacer"):
+                    self._left_panel_top_spacer.setFixedHeight(
+                        self._left_panel_top_spacer_collapsed_height
+                    )
+                if hasattr(self, "_tags_tree_panel"):
+                    self._tags_tree_panel.setVisible(False)
+                self._left_sidebar_content.setVisible(False)
+                self._add_tag_btn.setVisible(False)
+                self._tags_library_title_label.setVisible(False)
+                if hasattr(self, "tag_filters_floating_btn"):
+                    self.tag_filters_floating_btn.setVisible(True)
+            else:
+                if hasattr(self, "_tags_tree_panel"):
+                    self._tags_tree_panel.setVisible(True)
+                self._left_sidebar_content.setVisible(True)
+                self._add_tag_btn.setVisible(True)
+                self._tags_library_title_label.setVisible(True)
+                if hasattr(self, "tag_filters_floating_btn"):
+                    self.tag_filters_floating_btn.setVisible(False)
             if hasattr(self, "image_grid"):
                 self.image_grid.relayout_after_sidebar_step()
-            QTimer.singleShot(0, self._position_floating_session_button)
+            QTimer.singleShot(0, self._position_floating_grid_overlays)
 
         self._left_panel_anim.finished.connect(_on_sidebar_anim_finished)
+        self._left_panel_animating = True
         self._left_panel_anim.start()
         self._left_panel_expanded = not self._left_panel_expanded
+        QTimer.singleShot(0, self._position_floating_grid_overlays)
 
-    def _position_floating_session_button(self) -> None:
-        """Anchor Start session to the bottom center of the image grid viewport."""
-        if not hasattr(self, "session_settings_btn") or not hasattr(self, "image_grid"):
+    def _on_sidebar_anim_value_changed(self, _value: int) -> None:
+        """
+        Smoothly refresh grid layout during sidebar width animation (throttled).
+
+        Args:
+            _value: Current animated sidebar width (unused, Qt signal payload).
+        """
+        if not hasattr(self, "image_grid"):
+            return
+        # Reason: keep smooth visual resize without relayout storming every animation tick.
+        if not hasattr(self, "_sidebar_live_relayout_timer"):
+            self._sidebar_live_relayout_timer = QTimer(self)
+            self._sidebar_live_relayout_timer.setSingleShot(True)
+            self._sidebar_live_relayout_timer.setInterval(8)  # ~120 FPS budget
+            self._sidebar_live_relayout_timer.timeout.connect(
+                self._flush_sidebar_live_relayout
+            )
+        if not self._sidebar_live_relayout_timer.isActive():
+            self._sidebar_live_relayout_timer.start()
+
+    def _flush_sidebar_live_relayout(self) -> None:
+        """Run one coalesced relayout step while sidebar animation is active."""
+        if hasattr(self, "image_grid"):
+            self.image_grid.relayout_after_sidebar_step()
+
+    def _position_floating_grid_overlays(self) -> None:
+        """Place Start session overlay on image viewport."""
+        if not hasattr(self, "image_grid"):
             return
         viewport = self.image_grid.viewport()
         if not viewport:
             return
-        margin = 14
-        hint = self.session_settings_btn.sizeHint()
-        x = max(margin, (viewport.width() - hint.width()) // 2)
-        y = max(margin, viewport.height() - hint.height() - margin)
-        self.session_settings_btn.setGeometry(x, y, hint.width(), hint.height())
-        self.session_settings_btn.raise_()
+        margin = 10
+        if hasattr(self, "session_settings_btn"):
+            hint = self.session_settings_btn.sizeHint()
+            x = max(margin, (viewport.width() - hint.width()) // 2)
+            y = max(margin, viewport.height() - hint.height() - margin)
+            self.session_settings_btn.setGeometry(x, y, hint.width(), hint.height())
+            self.session_settings_btn.raise_()
 
     def _get_default_tags_from_path(self, default_tags_path: Path) -> Set[str]:
         """
@@ -1998,13 +2159,44 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         """Tag library selection: modifier+drag rectangle only."""
-        # Keep floating Session Settings button anchored to image grid viewport.
+        try:
+            _enter = QEvent.Type.Enter
+            _leave = QEvent.Type.Leave
+            _mouse_move = QEvent.Type.MouseMove
+        except AttributeError:
+            _enter = QEvent.Enter
+            _leave = QEvent.Leave
+            _mouse_move = QEvent.MouseMove
+
+        # Hover over Tags filters opens the tag library when it is collapsed.
+        if (
+            hasattr(self, "tag_filters_floating_btn")
+            and obj == self.tag_filters_floating_btn
+            and event.type() in (_enter, _mouse_move)
+            and hasattr(self, "left_panel_container")
+            and not self._left_panel_expanded
+        ):
+            self._toggle_left_sidebar()
+            return False
+
+        # Leaving the expanded tag sidebar auto-collapses it.
+        if (
+            hasattr(self, "left_panel_container")
+            and obj == self.left_panel_container
+            and event.type() == _leave
+            and self._left_panel_expanded
+            and not getattr(self, "_left_panel_animating", False)
+        ):
+            self._toggle_left_sidebar()
+            return False
+
+        # Keep floating grid overlays (Tags filters, Start session) anchored on viewport resize.
         if (
             hasattr(self, "image_grid")
             and obj == self.image_grid.viewport()
             and event.type() in (QEvent.Type.Resize, QEvent.Resize)
         ):
-            self._position_floating_session_button()
+            self._position_floating_grid_overlays()
             return False
         try:
             _mouse_press = QEvent.Type.MouseButtonPress
@@ -3460,44 +3652,43 @@ class MainWindow(QMainWindow):
         if folder:
             self._import_images([Path(folder)])
 
-    def _setup_menu(self):
-        """Set up the menu bar."""
-        # File menu
-        file_menu = self.menuBar().addMenu("&File")
-        # Set minimum width to prevent text overlap with keyboard shortcuts
-        file_menu.setMinimumWidth(220)
+    def _setup_menu(self) -> None:
+        """
+        Build popup menus (no classic menu bar): actions are opened from tool buttons
+        next to the logo in the top chrome bar.
+        """
+        self.menuBar().hide()
 
-        # - Import images
+        # File menu
+        self._file_menu = QMenu(self)
+        self._file_menu.setMinimumWidth(220)
+
         import_action = QAction("Import Images", self)
         import_action.setShortcut("Ctrl+I")
         import_action.triggered.connect(self._on_import_images)
-        file_menu.addAction(import_action)
+        self._file_menu.addAction(import_action)
 
-        # - Import folder
         import_folder_action = QAction("Import Folder", self)
         import_folder_action.setShortcut("Ctrl+F")
         import_folder_action.triggered.connect(self._on_import_folder)
-        file_menu.addAction(import_folder_action)
+        self._file_menu.addAction(import_folder_action)
 
-        file_menu.addSeparator()
+        self._file_menu.addSeparator()
 
-        # - Settings
         settings_action = QAction("Settings", self)
         settings_action.triggered.connect(self._show_settings)
-        file_menu.addAction(settings_action)
+        self._file_menu.addAction(settings_action)
 
-        file_menu.addSeparator()
+        self._file_menu.addSeparator()
 
-        # - Exit
         exit_action = QAction("Exit", self)
         exit_action.setShortcut("Alt+F4")
         exit_action.triggered.connect(self.close)
-        file_menu.addAction(exit_action)
+        self._file_menu.addAction(exit_action)
 
         # View menu
-        view_menu = self.menuBar().addMenu("&View")
+        self._view_menu = QMenu(self)
 
-        # - Theme submenu
         theme_menu = QMenu("&Theme", self)
         theme_group = QActionGroup(self)
         theme_group.setExclusive(True)
@@ -3512,36 +3703,32 @@ class MainWindow(QMainWindow):
                 action.setChecked(True)
             theme_group.addAction(action)
             theme_menu.addAction(action)
-        view_menu.addMenu(theme_menu)
+        self._view_menu.addMenu(theme_menu)
 
         # Tools menu
-        tools_menu = self.menuBar().addMenu("&Tools")
+        self._tools_menu = QMenu(self)
 
-        # - Dev mode toggle
         dev_mode_action = QAction("Enable &Developer Mode", self)
         dev_mode_action.setCheckable(True)
         dev_mode_action.setChecked(self.dev_mode)
         dev_mode_action.triggered.connect(self._toggle_dev_mode)
-        tools_menu.addAction(dev_mode_action)
+        self._tools_menu.addAction(dev_mode_action)
 
-        # - Purge library (only visible in dev mode)
         self.purge_action = QAction("&Purge Image Library...", self)
         self.purge_action.triggered.connect(self._purge_library)
         self.purge_action.setVisible(self.dev_mode)
-        tools_menu.addAction(self.purge_action)
+        self._tools_menu.addAction(self.purge_action)
 
-        # - Reload default tags
         reload_tags_action = QAction("&Reload Default Tags", self)
         reload_tags_action.triggered.connect(self.reload_default_tags)
-        tools_menu.addAction(reload_tags_action)
+        self._tools_menu.addAction(reload_tags_action)
 
         # Help menu
-        help_menu = self.menuBar().addMenu("&Help")
+        self._help_menu = QMenu(self)
 
-        # - About
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._show_about)
-        help_menu.addAction(about_action)
+        self._help_menu.addAction(about_action)
 
     def _setup_statusbar(self):
         """Set up the status bar."""

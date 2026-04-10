@@ -4,7 +4,11 @@
 ### ✅ Tasks:
 - Independent floating tag toggle + branding logo on the image grid; fully collapse the tag rail; open panel width for 3 tag columns; full-height tag scroll; center **Start session** at bottom; relayout grid only when sidebar animation ends
 
-- **Top chrome bar**: Full-width row above the splitter: logo left, **Tags filters**, then **Shuffle** / **Sort** / **Columns** on the right of the same row. Splitter (tag library + gallery) only below.
+- **Top chrome bar**: Thin row; **floating logo** (child of central widget, not in layout); **File / View / Tools / Help** + **Shuffle** / **Sort** / **Columns**. **Tags filters**: lower on grid, **hover opens** tag library when closed.
+- **Refinement pass**: Vertically centered top menu buttons, increased top inset inside the tag library so content does not pass under the floating logo, auto-collapse tag sidebar on mouse leave, and lowered the floating **Tags filters** button again.
+- **Interaction tweak**: Floating **Tags filters** is now vertical on the far-left under the logo footprint; opening is driven by hover only (enter/mouse-move on the control while closed), and top-row buttons get a little extra top breathing space.
+- **Stability + layout tweak**: Fixed intermittent Qt warning `QFont::setPointSize <= 0` by cloning and clamping tag-chip font size when app font point size is invalid; converted **Tags filters** into a full-height left rail (glued to x=0) below logo area.
+- **Interaction model update**: Removed floating behavior for the tag toggle. Left sidebar now has two hover-driven animated states: compact rail (button-only, collapsed width) by default, and expanded tag library (button hidden) while hovered.
 - **Tag rail**: Collapses to width **0** when closed; open width **~360** px; top inset so the library does not sit under the logo band; larger logo.
 - **Tag library layout**: Scroll area uses stretch so it fills the vertical space inside the folding panel; removed the old bottom stretch that stole height from the scroll view.
 - **Start session**: Anchored to the **bottom center** of the image grid viewport (was bottom-right).

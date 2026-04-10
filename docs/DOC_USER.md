@@ -38,15 +38,16 @@ Available themes:
 
 ## Tag Sidebar
 
-The left area is a tag library panel that slides in from the left (animated width). When it is closed, its width goes to zero so the gallery uses the full width.
+The left area is a tag library panel that slides in from the left (animated width). By default it stays in a compact rail state (button-only width), and expands on hover.
 
-**Top bar** (full width, above the main splitter):
+**Top bar** (full width, thin strip, above the main splitter):
 
-- The **SketchBook** logo is on the **left** of this row.
-- Next to it, the **Tags filters** button opens or closes the tag library: **Tags filters >** when the panel is closed, **Tags filters ❮** when it is open.
+- The **SketchBook** logo is **floating** on top of the window (top-left); it does not set the height of the bar. **File**, **View**, **Tools**, and **Help** start to the right of the logo area (import, settings, themes, dev tools, about).
 - On the **right** of the same row: **Shuffle** (when using Session Course Random sort), **Sort** order, and **Columns** (slider + count).
 
-**Below** the top bar, the horizontal **splitter** shows the tag library (left, collapsible) and the image gallery (right). The **Start session** button stays **centered at the bottom** of the gallery viewport.
+The compact **Tags filters** vertical control now lives inside the left sidebar rail (not floating over the gallery). **Hover alone** opens the tag library (no click required), and leaving the sidebar area auto-collapses it.
+
+**Below** the top bar, the horizontal **splitter** shows the tag library rail (left, collapsible) and the image gallery (right). The left side has two states: compact rail with only **Tags filters**, or expanded full tag library. The library content starts with extra top margin so it stays clear of the floating logo area. **Start session** stays **centered at the bottom** of the gallery viewport.
 
 **Image count and selection size** (number of filtered images and total size of the current selection) appear on the **right side of the status bar**, next to the usual status messages (same band as quick / dev log feedback).
 

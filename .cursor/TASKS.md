@@ -38,6 +38,13 @@ Update this file via prompt:
 - [x] Tag sidebar UX: grid relayout only when animation ends; larger logo; tag panel top inset; narrower library width; image/selection stats in status bar (2026-04-10)
 - [x] Main layout: dedicated full-width top row (logo + Tags filters); splitter gallery/tags only below (2026-04-10)
 - [x] Top chrome: move Shuffle, Sort, Columns to same top row as logo (2026-04-10)
+- [x] Tags filters floating on grid top-left again; shorter top chrome bar (2026-04-10)
+- [x] Replace classic menu bar with File/View/Tools/Help next to logo; larger logo (2026-04-10)
+- [x] Floating logo (thin top bar); Tags filters lower; hover opens tag library when closed (2026-04-10)
+- [x] Top menu buttons vertically centered; tag panel top margin under floating logo; auto-collapse tag panel on leave; lower Tags filters button (2026-04-10)
+- [x] Vertical left Tags filters under logo; hover-only open behavior; extra top margin on top layout buttons (2026-04-10)
+- [x] Fix Qt font warning (invalid point size) in tag chips; convert Tags filters into full-height left rail under logo (2026-04-10)
+- [x] Tag sidebar interaction model: non-floating compact left rail by default; hover-only open/close with animated width; hide rail while library is open (2026-04-10)
 
 ### Phase 1: Basic Structure ✅ (Completed: 2024-03-06)
 - [x] Set up base Python project with multi-file structure
