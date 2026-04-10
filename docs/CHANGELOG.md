@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-04-10 (Tag sidebar: floating controls, wider panel, grid relayout on animation end)
+### ✅ Tasks:
+- Independent floating tag toggle + branding logo on the image grid; fully collapse the tag rail; open panel width for 3 tag columns; full-height tag scroll; center **Start session** at bottom; relayout grid only when sidebar animation ends
+
+- **Top chrome bar**: Full-width row above the splitter: logo left, **Tags filters**, then **Shuffle** / **Sort** / **Columns** on the right of the same row. Splitter (tag library + gallery) only below.
+- **Tag rail**: Collapses to width **0** when closed; open width **~360** px; top inset so the library does not sit under the logo band; larger logo.
+- **Tag library layout**: Scroll area uses stretch so it fills the vertical space inside the folding panel; removed the old bottom stretch that stole height from the scroll view.
+- **Start session**: Anchored to the **bottom center** of the image grid viewport (was bottom-right).
+- **Gallery animation**: `ImageGrid.relayout_after_sidebar_step()` runs **only when the sidebar width animation finishes** (not during the animation).
+- **Status bar**: Image count and selection weight moved to the **right side of the status bar** (with messages / dev-style feedback). Tag panel slightly narrower; top inset under logo band; larger logo.
+- **Tests**: `tests/test_image_grid.py` covers `relayout_after_sidebar_step` (expected use, empty grid, failure path).
+ → Result: Tag filters are always reachable from the same floating control; the logo sits top-left; the tag library uses the panel height better; the session button is centered at the bottom.
+---
+
 ## 2026-04-08 (Tag hierarchy: recursive descendant filtering)
 ### ✅ Tasks:
 - Fix tag filtering so selecting a parent sub-category includes all nested descendants in the image grid
@@ -9,6 +23,9 @@
 - **Hierarchy visual cues**: categories and tags now display expand/collapse arrows when they have children (`▶` collapsed, `▼` expanded). Added depth-based hierarchy coloring for tags and categories so nested levels are easier to identify in the grid.
 - **Consistent tag interactions**: simple click now stays dedicated to filter/expand-collapse behavior. Tag-library multi-selection is now only done via modifier+drag (`Ctrl` or `Shift` + drag), avoiding accidental click selection.
 - **Hierarchy layout UX**: child tags are now rendered directly on a new line under their selected parent, with stable parent position in the category order (no parent jump). Child rows also get a subtle visual frame.
+- **New modern themes**: added three gradient-based themes (`Neon Night`, `Sunset Glass`, `Midnight Ocean`) and made them selectable both in Settings and in the View > Theme menu.
+- **Modernized default dark style**: updated the base dark theme with a soft purple/indigo gradient background and cleaner translucent controls. Switched default app typography to `Segoe UI` for a simpler white modern look.
+- **Tag sidebar behavior**: removed the unused top section from the left vertical splitter and switched to a fixed-width collapsible sidebar with open/close animation for the tag panel.
 - **Cycle safety**: Added cycle protection in descendant traversal to avoid infinite recursion if an invalid parent loop exists in user placements.
 - **Tests**: Added unit tests in `tests/test_main_window.py` for expected recursive expansion, leaf-tag edge case, and cycle failure case.
  → Result: Tag hierarchy supports unlimited nested sub-categories/sub-tags for filtering, and clicking a parent sub-category now includes images tagged with deeper child tags.

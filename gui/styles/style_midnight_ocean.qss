@@ -1,0 +1,72 @@
+QMainWindow {
+    background-color: #071822;
+    color: #e7fbff;
+    font-family: "Kalam";
+}
+QWidget#content {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #042231, stop:0.6 #0a3447, stop:1 #15536b);
+}
+QMenuBar, QStatusBar {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:0, stop:0 #073044, stop:1 #0f5a78);
+    color: #e7fbff;
+}
+QMenuBar::item:selected, QMenu::item:selected {
+    background-color: #19a0c9;
+    color: #ffffff;
+}
+QMenu {
+    background-color: #0a2a3a;
+    color: #e7fbff;
+}
+QLineEdit {
+    background-color: #0f3245;
+    color: #e7fbff;
+    border: 1px solid #2f7996;
+    border-radius: 6px;
+    padding: 4px;
+}
+QPushButton {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #0f4b66, stop:1 #166987);
+    color: #e7fbff;
+    border: 1px solid #2f7996;
+    border-radius: 6px;
+    padding: 4px 8px;
+}
+QPushButton:hover {
+    background: qlineargradient(x1:0, y1:0, x2:1, y2:1, stop:0 #17688a, stop:1 #1d87af);
+}
+QScrollArea {
+    background-color: #082532;
+    border: none;
+}
+QFrame#ImageThumbnail {
+    background-color: #103244;
+    border-radius: 6px;
+    border: 1px solid #2a6c86;
+}
+QFrame#ImageThumbnail[selected="true"] {
+    background-color: #19a0c9;
+    border: 2px solid #a7ebff;
+}
+QFrame#TagDropZone {
+    background-color: #0a2b3b;
+    border: 2px dashed #2f7996;
+    border-radius: 8px;
+    color: #e7fbff;
+}
+QTabWidget::pane {
+    border: none;
+    background-color: #082532;
+}
+QTabBar::tab {
+    background-color: #103244;
+    color: #e7fbff;
+    border: 1px solid #2a6c86;
+    border-bottom: none;
+    padding: 8px 20px;
+}
+QTabBar::tab:selected {
+    background-color: #19a0c9;
+    border: 1px solid #a7ebff;
+    border-bottom: none;
+}

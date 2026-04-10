@@ -1,6 +1,7 @@
 """
 Main window of the SketchBook application.
 """
+
 from pathlib import Path
 from typing import Any, Dict, List, Set, Optional, Tuple
 from qtpy.QtWidgets import (
@@ -36,6 +37,7 @@ from qtpy.QtWidgets import (
     QRubberBand,
     QApplication,
     QLayout,
+    QGraphicsDropShadowEffect,
 )
 from qtpy.QtCore import (
     Qt,
@@ -54,6 +56,8 @@ from qtpy.QtCore import (
     QObject,
     QRect,
     QPoint,
+    QPropertyAnimation,
+    QEasingCurve,
 )
 from qtpy.QtGui import (
     QAction,
@@ -88,21 +92,21 @@ import json
 
 class DraggableTreeWidget(QTreeWidget):
     """Tree widget that supports dragging tags to drop zones."""
-    
+
     def startDrag(self, supportedActions):
         """Start drag operation from tree widget."""
         item = self.currentItem()
         if not item or not (item.flags() & Qt.ItemIsDragEnabled):
             return
-        
+
         tag_text = item.text(0)
-        
+
         # Create drag
         drag = QDrag(self)
         mime_data = QMimeData()
         mime_data.setText(tag_text)
         drag.setMimeData(mime_data)
-        
+
         # Create drag pixmap
         pixmap = QPixmap(100, 20)
         pixmap.fill(Qt.transparent)
@@ -111,7 +115,7 @@ class DraggableTreeWidget(QTreeWidget):
         painter.drawText(pixmap.rect(), Qt.AlignCenter, tag_text)
         painter.end()
         drag.setPixmap(pixmap)
-        
+
         # Execute drag
         drag.exec_(Qt.MoveAction)
 
@@ -149,7 +153,12 @@ class TagGridDropFilter(QObject):
         if event.type() == _drag_move:
             if event.mimeData().hasFormat(TAG_LIBRARY_MIME):
                 event.acceptProposedAction()
-                pos = event.position().toPoint() if hasattr(event, "position") and hasattr(event.position(), "toPoint") else event.pos()
+                pos = (
+                    event.position().toPoint()
+                    if hasattr(event, "position")
+                    and hasattr(event.position(), "toPoint")
+                    else event.pos()
+                )
                 target = self._main._get_tag_grid_drop_target_at(pos)
                 self._main._set_tag_grid_drop_highlight(target)
                 self._main._on_tag_grid_drag_hover(target)
@@ -215,6 +224,7 @@ class DraggableTagButton(QPushButton):
 
         super().mouseMoveEvent(event)
 
+
 def apply_global_stylesheet():
     app = QApplication.instance()
     theme = settings.get("ui.theme", "dark")
@@ -225,13 +235,23 @@ def apply_global_stylesheet():
     else:
         app.setStyleSheet("")
 
+
+THEME_OPTIONS = [
+    ("Light", "light"),
+    ("Dark", "dark"),
+    ("Neon Night", "neon_night"),
+    ("Sunset Glass", "sunset_glass"),
+    ("Midnight Ocean", "midnight_ocean"),
+]
+
+
 class MainWindow(QMainWindow):
     """Main window of the application."""
-    
+
     def __init__(self):
         """Initialize the main window."""
         super().__init__()
-        
+
         # Initialize managers
         self.image_manager = ImageManager()
         self.session_manager = SessionManager()
@@ -239,10 +259,10 @@ class MainWindow(QMainWindow):
 
         # Session slideshow window (created when needed, parent=self for hide/show)
         self._slideshow_window: Optional[SlideshowWindow] = None
-        
+
         # Dev mode flag
         self.dev_mode = settings.get("ui.dev_mode", False)
-        
+
         # Progress bar reference
         self.status_progress_bar = None
         self._category_buttons: Dict[str, QPushButton] = {}
@@ -254,9 +274,15 @@ class MainWindow(QMainWindow):
         self._user_tags_config: Dict[str, Any] = {}  # Loaded in _load_tags_into_grid
         # Temporary icon override for live preview in "Change icon" dialog; key = tag, value = icon filename or None
         self._icon_preview_override: Dict[str, Optional[str]] = {}
-        self._shuffle_counter: int = 0  # Counter for shuffle iterations (increments on each shuffle)
-        self._course_random_images_list: List[ImageMetadata] = []  # Global list of ALL images in random order (only changed by shuffle button)
-        self._filtered_course_random_list: List[ImageMetadata] = []  # Filtered list from grid (same as what's displayed)
+        self._shuffle_counter: int = (
+            0  # Counter for shuffle iterations (increments on each shuffle)
+        )
+        self._course_random_images_list: List[ImageMetadata] = (
+            []
+        )  # Global list of ALL images in random order (only changed by shuffle button)
+        self._filtered_course_random_list: List[ImageMetadata] = (
+            []
+        )  # Filtered list from grid (same as what's displayed)
         # Tag library: Ctrl+click selection for "Parent to tag..." (user tags only)
         self._tag_library_selection: Set[str] = set()
         # Parent-to-tag mode: tags to move, chosen parent key/role, and bar widgets
@@ -265,121 +291,243 @@ class MainWindow(QMainWindow):
         self._parent_select_key: Optional[str] = None  # category or tag name
         self._parent_select_role: Optional[str] = None  # "category" or "tag"
         # Tag library selection (drag, shift-range, ctrl-toggle): display order and drag state
-        self._user_tag_display_order: List[str] = []  # user tag names in grid order (for shift range)
+        self._user_tag_display_order: List[str] = (
+            []
+        )  # user tag names in grid order (for shift range)
         self._last_selected_tag: Optional[str] = None
         self._tag_library_selection_start: Optional[QPoint] = None  # viewport coords
         self._tag_library_is_selecting: bool = False
-        self._tag_library_drag_start_tag: Optional[str] = None  # when press on user tag, for drag-from-tag
+        self._tag_library_drag_start_tag: Optional[str] = (
+            None  # when press on user tag, for drag-from-tag
+        )
         self._tag_library_drag_start_button: Optional[QWidget] = None
-        self._tag_grid_drop_highlight_widget: Optional[QWidget] = None  # widget highlighted as drop target during drag
-        self._tag_drop_was_on_grid: bool = False  # True when last drop was on tag grid (reparent), so button was destroyed
+        self._tag_grid_drop_highlight_widget: Optional[QWidget] = (
+            None  # widget highlighted as drop target during drag
+        )
+        self._tag_drop_was_on_grid: bool = (
+            False  # True when last drop was on tag grid (reparent), so button was destroyed
+        )
         self._tag_drag_in_progress: bool = False
-        self._tag_drag_scroll_timer: Optional[QTimer] = None  # auto-scroll tag library during drag
-        self._tag_grid_hover_expand_timer: Optional[QTimer] = None  # expand category/tag after 0.5s hover during drag
-        self._tag_grid_hover_target: Optional[Tuple[str, str]] = None  # (role, key) under cursor
+        self._tag_drag_scroll_timer: Optional[QTimer] = (
+            None  # auto-scroll tag library during drag
+        )
+        self._tag_grid_hover_expand_timer: Optional[QTimer] = (
+            None  # expand category/tag after 0.5s hover during drag
+        )
+        self._tag_grid_hover_target: Optional[Tuple[str, str]] = (
+            None  # (role, key) under cursor
+        )
 
         # Window setup
         self.setWindowTitle("SketchBook")
         self.resize(1280, 800)
-        
-        # Initialize UI
+
+        # Initialize UI (status bar first: grid stats labels used by image browser setup)
+        self._setup_statusbar()
         self._setup_ui()
         self._setup_menu()
-        self._setup_statusbar()
         self._setup_dev_tools()
-        
+
         # Apply theme
         self._apply_theme()
-        
+
         # Enable drag and drop
         self.setAcceptDrops(True)
-        
+
         # Maximize window on startup
         self.showMaximized()
-        
+
         # Load initial images (will be sorted by _apply_category_filters which is called in _setup_ui)
         # Don't call load_images here as _apply_category_filters will handle it
-    
+
     def _setup_ui(self):
         """Set up the main UI components."""
-        # Create central widget
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
-        
-        # Create main layout
+
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-        
-        # Set up the main image browser layout
-        self._setup_image_browser()
-        
-        # Update session images count with initial filters
+
+        # Full-width top row (logo, tag panel toggle); splitter fills the rest below
+        self._setup_top_chrome_bar(layout)
+        self._setup_image_browser(layout)
+
         self._apply_category_filters()
 
-    def _setup_image_browser(self):
+    def _setup_top_chrome_bar(self, main_layout: QVBoxLayout) -> None:
+        """
+        Build the full-width top row: logo, tag toggle, then grid controls (shuffle, sort, columns).
+
+        Args:
+            main_layout: Central widget vertical layout (receives this row as first item).
+        """
+        self._logo_display_height_px = 88
+        self._top_chrome_bar = QWidget()
+        self._top_chrome_bar.setObjectName("TopChromeBar")
+        top_row = QHBoxLayout(self._top_chrome_bar)
+        top_row.setContentsMargins(12, 8, 12, 8)
+        top_row.setSpacing(12)
+
+        logo_path = (
+            Path(__file__).resolve().parent
+            / "ressources"
+            / "icones"
+            / "SketchBook_logo_B.png"
+        )
+        self._logo_label = QLabel(self._top_chrome_bar)
+        self._logo_label.setAttribute(Qt.WA_TranslucentBackground)
+        logo_pix = QPixmap(str(logo_path))
+        if not logo_pix.isNull():
+            self._logo_label.setPixmap(
+                logo_pix.scaledToHeight(
+                    self._logo_display_height_px, Qt.SmoothTransformation
+                )
+            )
+            self._logo_label.adjustSize()
+        else:
+            self._logo_label.hide()
+
+        self.tag_filters_floating_btn = QPushButton(
+            "Tags filters ❮", self._top_chrome_bar
+        )
+        self.tag_filters_floating_btn.setObjectName("TagFiltersFloatingButton")
+        self.tag_filters_floating_btn.setToolTip("Collapse tags sidebar")
+        self.tag_filters_floating_btn.setStyleSheet("""
+            QPushButton#TagFiltersFloatingButton {
+                background-color: rgba(45, 48, 52, 0.92);
+                color: #e8e8e8;
+                font-size: 12px;
+                font-weight: bold;
+                padding: 8px 14px;
+                border: 1px solid #555;
+                border-radius: 8px;
+            }
+            QPushButton#TagFiltersFloatingButton:hover {
+                background-color: rgba(60, 64, 70, 0.95);
+                border-color: #6b9bd1;
+            }
+            QPushButton#TagFiltersFloatingButton:pressed {
+                background-color: rgba(35, 38, 42, 0.95);
+            }
+        """)
+        tf_shadow = QGraphicsDropShadowEffect(self.tag_filters_floating_btn)
+        tf_shadow.setBlurRadius(14)
+        tf_shadow.setOffset(0, 3)
+        tf_shadow.setColor(QColor(0, 0, 0, 140))
+        self.tag_filters_floating_btn.setGraphicsEffect(tf_shadow)
+        self.tag_filters_floating_btn.clicked.connect(self._toggle_left_sidebar)
+
+        top_row.addWidget(self._logo_label, 0, Qt.AlignVCenter)
+        top_row.addWidget(self.tag_filters_floating_btn, 0, Qt.AlignVCenter)
+        top_row.addStretch(1)
+
+        # Shuffle, sort order, column count (same top row as logo)
+        self.shuffle_button = QPushButton("Shuffle", self._top_chrome_bar)
+        self.shuffle_button.setFixedWidth(70)
+        self.shuffle_button.setStyleSheet("""
+            QPushButton {
+                background-color: #3c3f41;
+                color: #ffffff;
+                border: 1px solid #4d4d4d;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #4b6eaf;
+            }
+            QPushButton:pressed {
+                background-color: #3d5a8c;
+            }
+        """)
+        self.shuffle_button.clicked.connect(self._on_shuffle_clicked)
+        self.shuffle_button.hide()
+
+        sort_label = QLabel("Sort:", self._top_chrome_bar)
+        sort_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
+        self.sort_combo = QComboBox(self._top_chrome_bar)
+        self.sort_combo.addItems(
+            [
+                "Most Recent First",
+                "Oldest First",
+                "Filename A→Z",
+                "Filename Z→A",
+                "Lightest First",
+                "Heaviest First",
+                "Session Course Random",
+            ]
+        )
+        default_sort_index = settings.get("ui.grid.sort_index", 6)
+        if not 0 <= default_sort_index < self.sort_combo.count():
+            default_sort_index = 6
+        self.sort_combo.setCurrentIndex(default_sort_index)
+        self.sort_combo.setFixedWidth(150)
+        self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        self.shuffle_button.setVisible(self.sort_combo.currentIndex() == 6)
+
+        columns_label = QLabel("Columns:", self._top_chrome_bar)
+        columns_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
+        self.columns_slider = QSlider(Qt.Horizontal, self._top_chrome_bar)
+        self.columns_slider.setMinimum(3)
+        self.columns_slider.setMaximum(10)
+        self.columns_slider.setValue(settings.get("ui.grid.columns", 4))
+        self.columns_slider.setTickPosition(QSlider.NoTicks)
+        self.columns_slider.setFixedWidth(100)
+        self.columns_slider.valueChanged.connect(self._on_columns_changed)
+        self.columns_count = QLabel(
+            str(self.columns_slider.value()), self._top_chrome_bar
+        )
+        self.columns_count.setStyleSheet("color: #aaaaaa; font-size: 11px;")
+
+        top_row.addWidget(self.shuffle_button, 0, Qt.AlignVCenter)
+        top_row.addWidget(sort_label, 0, Qt.AlignVCenter)
+        top_row.addWidget(self.sort_combo, 0, Qt.AlignVCenter)
+        top_row.addWidget(columns_label, 0, Qt.AlignVCenter)
+        top_row.addWidget(self.columns_slider, 0, Qt.AlignVCenter)
+        top_row.addWidget(self.columns_count, 0, Qt.AlignVCenter)
+
+        self._top_chrome_bar.setMinimumHeight(self._logo_display_height_px + 16)
+        main_layout.addWidget(self._top_chrome_bar, 0)
+
+    def _setup_image_browser(self, main_layout: QVBoxLayout) -> None:
         """Set up the Image Browser with 2-panel splitter layout."""
         # Create main splitter (horizontal)
         main_splitter = QSplitter(Qt.Horizontal)
         main_splitter.setChildrenCollapsible(False)
-        
-        # === LEFT PANEL: Vertical Splitter with Tag Manager ===
-        left_splitter = QSplitter(Qt.Vertical)
-        left_splitter.setChildrenCollapsible(False)
-        
-        # Top part: Tag Manager (search bar + drop zones)
-        tag_manager_panel = QWidget()
-        tag_manager_layout = QVBoxLayout(tag_manager_panel)
-        tag_manager_layout.setContentsMargins(10, 10, 10, 10)
-        tag_manager_layout.setSpacing(10)
-        tag_manager_layout.setAlignment(Qt.AlignTop)
-        
-        # Logo and text at the top
-        logo_path = Path(__file__).parent / "ressources" / "icones" / "SketchBook_logo.png"
-        if logo_path.exists():
-            logo_container = QWidget()
-            logo_container_layout = QHBoxLayout(logo_container)
-            logo_container_layout.setContentsMargins(0, 0, 0, 0)
-            logo_container_layout.setSpacing(10)
-            
-            # Logo
-            logo_label = QLabel()
-            pixmap = QPixmap(str(logo_path))
-            # Scale logo to fit width (max 100px) while maintaining aspect ratio
-            if pixmap.width() > 100:
-                scaled_pixmap = pixmap.scaled(100, 100, Qt.KeepAspectRatio, Qt.SmoothTransformation)
-                logo_label.setPixmap(scaled_pixmap)
-            else:
-                logo_label.setPixmap(pixmap)
-            logo_label.setAlignment(Qt.AlignCenter)
-            logo_label.setStyleSheet("background-color: transparent;")
-            logo_container_layout.addWidget(logo_label)
-            
-            # Text next to logo (on two lines with Caveat font)
-            welcome_text = QLabel("What do you want\nto draw today?")
-            welcome_text.setObjectName("welcome_text")
-            welcome_text.setStyleSheet("font-family: 'Caveat'; font-size: 24px; font-weight: bold; background-color: transparent;")
-            welcome_text.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-            logo_container_layout.addWidget(welcome_text)
-            
-            tag_manager_layout.addWidget(logo_container)
-        
-        tag_manager_layout.addStretch()
-        
-        left_splitter.addWidget(tag_manager_panel)
-        
+
+        # === LEFT PANEL: Fixed-width collapsible tag sidebar ===
+        self.left_panel_container = QWidget()
+        self.left_panel_container.setObjectName("TagSidebar")
+        left_panel_layout = QVBoxLayout(self.left_panel_container)
+        left_panel_layout.setContentsMargins(10, 10, 10, 10)
+        left_panel_layout.setSpacing(10)
+
+        # Reason: tag sub-grid uses 3 columns; slightly narrower than before per UX feedback.
+        self._left_panel_open_width = 360
+        # Reason: collapse fully; floating "Tags filters" control lives on the image grid.
+        self._left_panel_collapsed_width = 0
+        self._left_panel_expanded = True
+        self.left_panel_container.setMinimumWidth(self._left_panel_open_width)
+        self.left_panel_container.setMaximumWidth(self._left_panel_open_width)
+        self.left_panel_container.setSizePolicy(
+            QSizePolicy.Fixed, QSizePolicy.Expanding
+        )
+
         # Middle part: Tags grid
         tags_tree_panel = QWidget()
         tags_tree_layout = QVBoxLayout(tags_tree_panel)
-        tags_tree_layout.setContentsMargins(10, 10, 10, 10)
+        tags_tree_layout.setContentsMargins(0, 0, 0, 0)
         tags_tree_layout.setSpacing(5)
-        
-        # Title row: "Tags Library" + small blue "+" button
+
+        # Title row: "Tags Library" + small blue "+" (tag panel toggle is in top chrome bar)
         tags_header_layout = QHBoxLayout()
         tags_header_layout.setContentsMargins(0, 0, 0, 0)
-        tags_tree_title = QLabel("Tags Library")
-        tags_tree_title.setStyleSheet("font-size: 12px; font-weight: bold;")
-        tags_header_layout.addWidget(tags_tree_title)
+        self._tags_library_title_label = QLabel("Tags Library")
+        self._tags_library_title_label.setStyleSheet(
+            "font-size: 12px; font-weight: bold;"
+        )
+        tags_header_layout.addWidget(self._tags_library_title_label)
         tags_header_layout.addStretch()
         add_tag_btn = QPushButton("+ Create tag")
         add_tag_btn.setStyleSheet("""
@@ -398,10 +546,16 @@ class MainWindow(QMainWindow):
         """)
         add_tag_btn.setToolTip("Add a new tag to the library")
         add_tag_btn.clicked.connect(self._on_add_user_tag_clicked)
+        self._add_tag_btn = add_tag_btn
         tags_header_layout.addWidget(add_tag_btn)
         tags_tree_layout.addLayout(tags_header_layout)
 
         # Bar shown in "Parent to tag..." mode: label + OK / Cancel
+        self._left_sidebar_content = QWidget()
+        sidebar_content_layout = QVBoxLayout(self._left_sidebar_content)
+        sidebar_content_layout.setContentsMargins(0, 0, 0, 0)
+        sidebar_content_layout.setSpacing(5)
+
         self._parent_select_bar = QWidget()
         parent_select_layout = QHBoxLayout(self._parent_select_bar)
         parent_select_layout.setContentsMargins(0, 4, 0, 4)
@@ -419,7 +573,7 @@ class MainWindow(QMainWindow):
         parent_select_layout.addWidget(self._parent_ok_btn)
         parent_select_layout.addWidget(self._parent_cancel_btn)
         self._parent_select_bar.setVisible(False)
-        tags_tree_layout.addWidget(self._parent_select_bar)
+        sidebar_content_layout.addWidget(self._parent_select_bar)
 
         # Scrollable grid widget for tags
         self.tags_grid_container = QWidget()
@@ -437,7 +591,10 @@ class MainWindow(QMainWindow):
         self.tags_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.tags_scroll_area.setFrameShape(QFrame.NoFrame)
         self.tags_scroll_area.setWidget(self.tags_grid_container)
-        tags_tree_layout.addWidget(self.tags_scroll_area)
+        self.tags_scroll_area.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Expanding
+        )
+        sidebar_content_layout.addWidget(self.tags_scroll_area, 1)
         self.tags_grid_container.setAcceptDrops(True)
         self._tag_grid_drop_filter = TagGridDropFilter(self)
         self.tags_grid_container.installEventFilter(self._tag_grid_drop_filter)
@@ -460,198 +617,32 @@ class MainWindow(QMainWindow):
 
         # Load tags into grid
         self._load_tags_into_grid()
-        
-        left_splitter.addWidget(tags_tree_panel)
-        
-        # Search and filter panel: Search bar and AND/OR zones
-        search_filter_panel = QWidget()
-        search_filter_layout = QVBoxLayout(search_filter_panel)
-        search_filter_layout.setContentsMargins(10, 10, 10, 10)
-        search_filter_layout.setSpacing(10)
-        
-        # Title
-        search_filter_title = QLabel("Search & Filters")
-        search_filter_title.setStyleSheet("font-size: 12px; font-weight: bold;")
-        search_filter_layout.addWidget(search_filter_title)
-        
-        # Search bar
-        search_layout = QHBoxLayout()
-        
-        self.tag_search_input = QLineEdit()
-        self.tag_search_input.setPlaceholderText("Search tags")
-        self.tag_search_input.returnPressed.connect(self._on_tag_search_return)
-        search_layout.addWidget(self.tag_search_input)
-        
-        # Set up tag search completer (only user tags)
-        self._update_tag_search_completer()
-        
-        clear_btn = QPushButton("Clear All")
-        clear_btn.clicked.connect(self._clear_all_tag_filters)
-        search_layout.addWidget(clear_btn)
-        
-        search_filter_layout.addLayout(search_layout)
-        
-        # Filter zones (AND/OR)
-        zones_layout = QHBoxLayout()
-        zones_layout.setSpacing(8)
-        
+
+        left_panel_layout.addWidget(tags_tree_panel, 0)
+        left_panel_layout.addWidget(self._left_sidebar_content, 1)
+
+        # Create AND/OR zones even when Search panel is removed, as filtering logic still uses them.
         from gui.tag_widgets import TagDropZone
+
         self.and_zone = TagDropZone("AND (all required)")
         self.and_zone.tag_dropped.connect(self._on_tag_filter_changed)
         self.and_zone.tags_modified.connect(self._on_tag_filter_changed)
-        zones_layout.addWidget(self.and_zone, 1)
-        
         self.or_zone = TagDropZone("OR (at least one)")
         self.or_zone.tag_dropped.connect(self._on_tag_filter_changed)
         self.or_zone.tags_modified.connect(self._on_tag_filter_changed)
-        zones_layout.addWidget(self.or_zone, 1)
-        
-        search_filter_layout.addLayout(zones_layout)
-        
-        # Hide Search & Filters panel for now (full Tags Library mode)
-        search_filter_panel.setVisible(False)
-        left_splitter.addWidget(search_filter_panel)
-        
-        # Bottom part: Session settings button
-        bottom_panel = QWidget()
-        bottom_layout = QVBoxLayout(bottom_panel)
-        bottom_layout.setContentsMargins(10, 10, 10, 10)
-        bottom_layout.setSpacing(10)
-        
-        # Add stretch to push button to bottom
-        bottom_layout.addStretch()
-        
-        # Session Settings button
-        self.session_settings_btn = QPushButton("Session Settings")
-        self.session_settings_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                font-size: 14px;
-                font-weight: bold;
-                padding: 10px;
-                border: none;
-                border-radius: 4px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:pressed {
-                background-color: #3d8b40;
-            }
-        """)
-        self.session_settings_btn.clicked.connect(self._on_session_settings_clicked)
-        bottom_layout.addWidget(self.session_settings_btn)
-        
-        left_splitter.addWidget(bottom_panel)
-        
-        # Set splitter sizes (top: minimal, Tags Library: maximum, bottom: minimal)
-        # Tags Library (index 1) gets maximum space, others get minimum
-        # Note: search_filter_panel (index 2) is hidden but still in splitter
-        left_splitter.setSizes([100, 1000, 0, 100])
-        # Set stretch factors: Tags Library gets priority
-        left_splitter.setStretchFactor(0, 1)   # Top (logo/welcome)
-        left_splitter.setStretchFactor(1, 10)  # Tags Library (maximum)
-        left_splitter.setStretchFactor(2, 0)   # Search & Filters (hidden)
-        left_splitter.setStretchFactor(3, 1)   # Bottom (Session Settings)
-        
-        # Add left splitter to main splitter
-        main_splitter.addWidget(left_splitter)
-        
+        self.tag_search_input = QLineEdit()
+        self._update_tag_search_completer()
+
+        # Add fixed sidebar to main splitter
+        main_splitter.addWidget(self.left_panel_container)
+
         # === MIDDLE PANEL: Image Grid ===
         middle_panel = QWidget()
         middle_layout = QVBoxLayout(middle_panel)
         middle_layout.setContentsMargins(10, 10, 10, 10)
         middle_layout.setSpacing(10)
-        
-        # Create grid controls
-        grid_controls = QHBoxLayout()
-        grid_controls.setContentsMargins(0, 0, 10, 0)
-        
-        # Label for number of images and selection info (left side)
-        self.session_images_count_label = QLabel("Images: 0")
-        self.session_images_count_label.setStyleSheet("font-size: 12px; font-weight: bold;")
-        grid_controls.addWidget(self.session_images_count_label)
-        self.selection_info_label = QLabel("")
-        self.selection_info_label.setStyleSheet("font-size: 12px; font-weight: bold; color: #7eb8da;")
-        grid_controls.addWidget(self.selection_info_label)
-        
-        # Add sort combo box with shuffle button
-        grid_controls.addStretch()
-        
-        # Shuffle button (only visible for "Session Course Random")
-        self.shuffle_button = QPushButton("Shuffle")
-        self.shuffle_button.setFixedWidth(70)
-        self.shuffle_button.setStyleSheet("""
-            QPushButton {
-                background-color: #3c3f41;
-                color: #ffffff;
-                border: 1px solid #4d4d4d;
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #4b6eaf;
-            }
-            QPushButton:pressed {
-                background-color: #3d5a8c;
-            }
-        """)
-        self.shuffle_button.clicked.connect(self._on_shuffle_clicked)
-        self.shuffle_button.hide()  # Hidden by default
-        grid_controls.addWidget(self.shuffle_button)
-        
-        sort_label = QLabel("Sort:")
-        sort_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
-        self.sort_combo = QComboBox()
-        self.sort_combo.addItems(
-            [
-                "Most Recent First",
-                "Oldest First",
-                "Filename A→Z",
-                "Filename Z→A",
-                "Lightest First",
-                "Heaviest First",
-                "Session Course Random",
-            ]
-        )
-        # Restore last chosen sort mode, defaulting to "Session Course Random"
-        default_sort_index = settings.get("ui.grid.sort_index", 6)
-        if not 0 <= default_sort_index < self.sort_combo.count():
-            default_sort_index = 6
-        self.sort_combo.setCurrentIndex(default_sort_index)
-        self.sort_combo.setFixedWidth(150)
-        self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
-        
-        # Ensure shuffle button visibility matches initial sort selection
-        self.shuffle_button.setVisible(self.sort_combo.currentIndex() == 6)
 
-        grid_controls.addWidget(sort_label)
-        grid_controls.addWidget(self.sort_combo)
-        
-        # Add column control slider (right side)
-        columns_label = QLabel("Columns:")
-        columns_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
-        self.columns_slider = QSlider(Qt.Horizontal)
-        self.columns_slider.setMinimum(3)
-        self.columns_slider.setMaximum(10)
-        self.columns_slider.setValue(settings.get("ui.grid.columns", 4))
-        self.columns_slider.setTickPosition(QSlider.NoTicks)
-        self.columns_slider.setFixedWidth(100)
-        self.columns_slider.valueChanged.connect(self._on_columns_changed)
-        
-        # Add column count label
-        self.columns_count = QLabel(str(self.columns_slider.value()))
-        self.columns_count.setStyleSheet("color: #aaaaaa; font-size: 11px;")
-        
-        grid_controls.addWidget(columns_label)
-        grid_controls.addWidget(self.columns_slider)
-        grid_controls.addWidget(self.columns_count)
-        
-        middle_layout.addLayout(grid_controls)
-        
-        # Create image grid
+        # Create image grid (sort / columns / shuffle live in top chrome bar)
         self.image_grid = ImageGrid(self.image_manager)
         self.image_grid.set_columns(self.columns_slider.value())
         self.image_grid.image_double_clicked.connect(self._on_image_clicked)
@@ -675,19 +666,102 @@ class MainWindow(QMainWindow):
         self.image_grid.set_import_drop_callback(self._import_from_urls)
         middle_layout.addWidget(self.image_grid)
 
+        # Floating Session Settings button over the image grid (bottom center)
+        vp = self.image_grid.viewport()
+        self.session_settings_btn = QPushButton("Start session", vp)
+        self.session_settings_btn.setStyleSheet("""
+            QPushButton {
+                background-color: #4CAF50;
+                color: white;
+                font-size: 18px;
+                font-weight: bold;
+                padding: 14px 22px;
+                border: none;
+                border-radius: 12px;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:pressed {
+                background-color: #3d8b40;
+            }
+        """)
+        shadow = QGraphicsDropShadowEffect(self.session_settings_btn)
+        shadow.setBlurRadius(22)
+        shadow.setOffset(0, 6)
+        shadow.setColor(QColor(0, 0, 0, 170))
+        self.session_settings_btn.setGraphicsEffect(shadow)
+        self.session_settings_btn.clicked.connect(self._on_session_settings_clicked)
+        self.session_settings_btn.raise_()
+        self.image_grid.viewport().installEventFilter(self)
+        QTimer.singleShot(0, self._position_floating_session_button)
+
         # Lazy-created image viewer window (one window, reused)
         self._image_viewer_window = None
-        
+
         # Add middle panel to splitter
         main_splitter.addWidget(middle_panel)
-        
+
         # Set splitter sizes (left: 150px minimum, middle: flexible)
-        main_splitter.setSizes([150, 800])
-        
-        # Add main splitter to layout
-        layout = self.centralWidget().layout()
-        layout.addWidget(main_splitter)
-    
+        main_splitter.setSizes([self._left_panel_open_width, 800])
+
+        main_layout.addWidget(main_splitter, 1)
+
+    def _toggle_left_sidebar(self) -> None:
+        """Animate open/close of fixed-width left sidebar."""
+        if not hasattr(self, "left_panel_container"):
+            return
+        start_width = self.left_panel_container.maximumWidth()
+        if self._left_panel_expanded:
+            target_width = self._left_panel_collapsed_width
+            self._left_sidebar_content.setVisible(False)
+            self._add_tag_btn.setVisible(False)
+            self._tags_library_title_label.setVisible(False)
+            if hasattr(self, "tag_filters_floating_btn"):
+                self.tag_filters_floating_btn.setText("Tags filters >")
+                self.tag_filters_floating_btn.setToolTip("Expand tags sidebar")
+        else:
+            target_width = self._left_panel_open_width
+            self._left_sidebar_content.setVisible(True)
+            self._add_tag_btn.setVisible(True)
+            self._tags_library_title_label.setVisible(True)
+            if hasattr(self, "tag_filters_floating_btn"):
+                self.tag_filters_floating_btn.setText("Tags filters ❮")
+                self.tag_filters_floating_btn.setToolTip("Collapse tags sidebar")
+
+        self.left_panel_container.setMinimumWidth(0)
+        self._left_panel_anim = QPropertyAnimation(
+            self.left_panel_container, b"maximumWidth", self
+        )
+        self._left_panel_anim.setDuration(220)
+        self._left_panel_anim.setStartValue(start_width)
+        self._left_panel_anim.setEndValue(target_width)
+        self._left_panel_anim.setEasingCurve(QEasingCurve.InOutCubic)
+
+        def _on_sidebar_anim_finished() -> None:
+            self.left_panel_container.setMinimumWidth(target_width)
+            if hasattr(self, "image_grid"):
+                self.image_grid.relayout_after_sidebar_step()
+            QTimer.singleShot(0, self._position_floating_session_button)
+
+        self._left_panel_anim.finished.connect(_on_sidebar_anim_finished)
+        self._left_panel_anim.start()
+        self._left_panel_expanded = not self._left_panel_expanded
+
+    def _position_floating_session_button(self) -> None:
+        """Anchor Start session to the bottom center of the image grid viewport."""
+        if not hasattr(self, "session_settings_btn") or not hasattr(self, "image_grid"):
+            return
+        viewport = self.image_grid.viewport()
+        if not viewport:
+            return
+        margin = 14
+        hint = self.session_settings_btn.sizeHint()
+        x = max(margin, (viewport.width() - hint.width()) // 2)
+        y = max(margin, viewport.height() - hint.height() - margin)
+        self.session_settings_btn.setGeometry(x, y, hint.width(), hint.height())
+        self.session_settings_btn.raise_()
+
     def _get_default_tags_from_path(self, default_tags_path: Path) -> Set[str]:
         """
         Load default tags from a JSON file and include category names.
@@ -734,7 +808,7 @@ class MainWindow(QMainWindow):
         """
         default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
         return self._get_default_tags_from_path(default_tags_path)
-    
+
     def _get_user_tags(self) -> Set[str]:
         """
         Get all user-defined tags: from DB (excluding default) plus registered-only (added via UI).
@@ -747,7 +821,9 @@ class MainWindow(QMainWindow):
         for metadata in self.image_manager.db.list_images():
             all_tags.update(metadata.tags)
         from_db = all_tags - default_tags
-        registered = set(getattr(self, "_user_tags_config", {}).get("registered_only", []))
+        registered = set(
+            getattr(self, "_user_tags_config", {}).get("registered_only", [])
+        )
         return from_db | registered
 
     def _get_all_tag_names(self) -> Set[str]:
@@ -777,28 +853,32 @@ class MainWindow(QMainWindow):
         """Apply category/subtag filters to the image grid."""
         # Get current sort order
         sort_by = self._get_current_sort_order()
-        
+
         if sort_by == "course_random":
             # Use the global course_random list and filter it (keeping order)
             if not self._course_random_images_list:
                 self._initialize_course_random_list()
-            
+
             # Start with the global random list
             images_to_display = self._course_random_images_list
-            
+
             # Apply category filters (keep order, just filter which images are shown)
-            images_to_display = self._filter_images_by_category_from_list(images_to_display)
+            images_to_display = self._filter_images_by_category_from_list(
+                images_to_display
+            )
             # Apply AND/OR filters
             images_to_display = self._apply_and_or_filters(images_to_display)
-            
+
             shuffle_iteration = self._shuffle_counter
         else:
             # Normal filtering and sorting for other sort modes
             filtered_images = self._filter_images_by_category()
             filtered_images = self._apply_and_or_filters(filtered_images)
             shuffle_iteration = 0
-            images_to_display = self.image_manager.db._sort_images(filtered_images, sort_by)
-        
+            images_to_display = self.image_manager.db._sort_images(
+                filtered_images, sort_by
+            )
+
         filter_key = (
             frozenset(self._active_categories),
             frozenset(
@@ -806,17 +886,19 @@ class MainWindow(QMainWindow):
                 for category, tags in self._active_subtags.items()
             ),
             sort_by,
-            shuffle_iteration  # Include shuffle iteration in filter key
+            shuffle_iteration,  # Include shuffle iteration in filter key
         )
         self.image_grid.load_images_from_list(images_to_display, filter_key)
         self._update_session_images_count(images_to_display)
         self._sync_tag_grid_state()
-        
+
         # Store filtered list for session (for course_random mode only)
         if sort_by == "course_random":
             self._filtered_course_random_list = images_to_display.copy()
 
-    def _filter_images_by_category_from_list(self, images: List[ImageMetadata]) -> List[ImageMetadata]:
+    def _filter_images_by_category_from_list(
+        self, images: List[ImageMetadata]
+    ) -> List[ImageMetadata]:
         """
         Filter images from a given list by category/subtag filters (keeps original order).
         Miscellaneous = AND (all selected); Camera-Angle = OR (any selected).
@@ -842,9 +924,15 @@ class MainWindow(QMainWindow):
             return images
 
         filtered = []
-        constraining_and_norm = {self._normalize_tag_for_match(t) for t in constraining_tags_and}
-        constraining_or_norm = {self._normalize_tag_for_match(t) for t in constraining_tags_or}
-        category_filter_data = self._get_active_category_filter_data() if self._active_categories else []
+        constraining_and_norm = {
+            self._normalize_tag_for_match(t) for t in constraining_tags_and
+        }
+        constraining_or_norm = {
+            self._normalize_tag_for_match(t) for t in constraining_tags_or
+        }
+        category_filter_data = (
+            self._get_active_category_filter_data() if self._active_categories else []
+        )
 
         for metadata in images:
             image_tags_norm = {self._normalize_tag_for_match(t) for t in metadata.tags}
@@ -857,129 +945,134 @@ class MainWindow(QMainWindow):
                 for allowed_norm, required_groups_norm in category_filter_data:
                     if not (image_tags_norm & allowed_norm):
                         continue
-                    group_match = all(bool(image_tags_norm & group) for group in required_groups_norm)
+                    group_match = all(
+                        bool(image_tags_norm & group) for group in required_groups_norm
+                    )
                     if group_match:
                         category_match = True
                         break
             if not category_match:
                 continue
-            if constraining_and_norm and not constraining_and_norm.issubset(image_tags_norm):
+            if constraining_and_norm and not constraining_and_norm.issubset(
+                image_tags_norm
+            ):
                 continue
             if constraining_or_norm and not (constraining_or_norm & image_tags_norm):
                 continue
             filtered.append(metadata)
 
         return filtered
-    
+
     def _get_current_sort_order(self) -> str:
         """
         Get the current sort order from the combo box.
-        
+
         Returns:
             Sort order string
         """
         sort_map = {
             0: "import_date_desc",  # Most Recent First
-            1: "import_date_asc",   # Oldest First
-            2: "filename_asc",      # Filename A→Z
-            3: "filename_desc",     # Filename Z→A
-            4: "file_size_asc",     # Lightest First
-            5: "file_size_desc",    # Heaviest First
-            6: "course_random",     # Session Course Random
+            1: "import_date_asc",  # Oldest First
+            2: "filename_asc",  # Filename A→Z
+            3: "filename_desc",  # Filename Z→A
+            4: "file_size_asc",  # Lightest First
+            5: "file_size_desc",  # Heaviest First
+            6: "course_random",  # Session Course Random
         }
         return sort_map.get(self.sort_combo.currentIndex(), "import_date_desc")
-    
+
     def _on_sort_changed(self, index: int):
         """Handle sort order change."""
         # Show/hide shuffle button based on selected sort
         is_random_sort = index == 6  # "Session Course Random" is index 6
         self.shuffle_button.setVisible(is_random_sort)
-        
+
         # Reset shuffle counter when switching away from random sort
         if not is_random_sort:
             self._shuffle_counter = 0
             self._course_random_images_list = []  # Clear stored course random list
             self._filtered_course_random_list = []  # Clear filtered list
-        
+
         # If switching to random sort, initialize the global random list if empty
         if is_random_sort and not self._course_random_images_list:
             self._initialize_course_random_list()
-        
+
         # Persist chosen sort mode for next launch
         settings.set("ui.grid.sort_index", index)
         settings.save()
 
         # Reapply filters with new sort order
         self._apply_category_filters()
-    
+
     def _on_shuffle_clicked(self):
         """Handle shuffle button click - regenerate random order for ALL images."""
         # Update global shuffle timestamp for more random variation
         import time
         from core.image_db import _shuffle_timestamp
         import core.image_db as image_db_module
-        image_db_module._shuffle_timestamp = int(time.time() * 1000000)  # Use microseconds
-        
+
+        image_db_module._shuffle_timestamp = int(
+            time.time() * 1000000
+        )  # Use microseconds
+
         # Increment shuffle counter to generate new order
         self._shuffle_counter += 1
         # Regenerate the global random list with new seed
         self._initialize_course_random_list()
         # Reapply filters (order stays the same, just filter which images are shown)
         self._apply_category_filters()
-    
+
     def _initialize_course_random_list(self):
         """Initialize the global course_random list with ALL images in random order."""
         # Get ALL images from database
         all_images = self.image_manager.db.list_images()
-        
+
         # Apply random shuffle with current shuffle counter
         self._course_random_images_list = self.image_manager.db._sort_images(
-            all_images, 
-            "course_random", 
-            shuffle_iteration=self._shuffle_counter
+            all_images, "course_random", shuffle_iteration=self._shuffle_counter
         )
 
     def _apply_and_or_filters(self, images: List) -> List:
         """
         Apply AND/OR filters to the image list (only on user tags).
         This is a filtering layer on top of category filters.
-        
+
         Args:
             images: List of image metadata to filter.
-            
+
         Returns:
             List: Filtered image metadata list.
         """
         and_tags = self.and_zone.get_tags()
         or_tags = self.or_zone.get_tags()
-        
+
         if not and_tags and not or_tags:
             return images
-        
+
         # Get default tags to filter them out
         default_tags = self._get_default_tags()
-        
+
         filtered_images = []
         for metadata in images:
             # Extract only user tags from image (exclude default tags)
             image_user_tags = set(metadata.tags) - default_tags
-            
+
             # AND: all tags must be present in user tags
             if and_tags and not and_tags.issubset(image_user_tags):
                 continue
-            
+
             # OR: at least one tag must be present in user tags
             if or_tags and not or_tags.intersection(image_user_tags):
                 continue
-            
+
             filtered_images.append(metadata)
-        
+
         return filtered_images
 
     def _update_session_images_count(self, filtered_images: List) -> None:
         """
         Update the label showing the number of images available for session.
-        
+
         Args:
             filtered_images: Filtered images list.
         """
@@ -996,7 +1089,7 @@ class MainWindow(QMainWindow):
         """
         Update the label showing selected count and total size in MB.
         Uses actual file size on disk (not DB cache) so the displayed weight is real.
-        
+
         Args:
             image_ids: List of selected image IDs.
         """
@@ -1019,8 +1112,10 @@ class MainWindow(QMainWindow):
             else:
                 total_bytes += meta.file_size
         total_mb = total_bytes / (1024 * 1024)
-        self.selection_info_label.setText(f"  |  Selected: {len(image_ids)} | {total_mb:.2f} MB")
-    
+        self.selection_info_label.setText(
+            f"Selected: {len(image_ids)} · {total_mb:.2f} MB"
+        )
+
     @staticmethod
     def _slice_images_from_start(
         images: List[Any], start_image_id: Optional[str]
@@ -1052,18 +1147,24 @@ class MainWindow(QMainWindow):
         """Handle Session Settings button click and optionally start from one image."""
         # Get current sort order
         sort_by = self._get_current_sort_order()
-        
+
         if sort_by == "course_random":
             # Use the EXACT same filtered list as the grid (stored in _filtered_course_random_list)
             if not self._filtered_course_random_list:
                 # If not set, get it from grid's current display
-                filtered_images = list(self.image_grid.all_images) if hasattr(self.image_grid, 'all_images') else []
+                filtered_images = (
+                    list(self.image_grid.all_images)
+                    if hasattr(self.image_grid, "all_images")
+                    else []
+                )
                 if not filtered_images:
                     # Fallback: regenerate filters
                     if not self._course_random_images_list:
                         self._initialize_course_random_list()
                     filtered_images = self._course_random_images_list
-                    filtered_images = self._filter_images_by_category_from_list(filtered_images)
+                    filtered_images = self._filter_images_by_category_from_list(
+                        filtered_images
+                    )
                     filtered_images = self._apply_and_or_filters(filtered_images)
             else:
                 # Use the stored filtered list (same as grid)
@@ -1074,9 +1175,11 @@ class MainWindow(QMainWindow):
             # For other sort modes, get current filtered images
             filtered_images = self._filter_images_by_category()
             filtered_images = self._apply_and_or_filters(filtered_images)
-            filtered_images = self.image_manager.db._sort_images(filtered_images, sort_by)
+            filtered_images = self.image_manager.db._sort_images(
+                filtered_images, sort_by
+            )
             shuffle_iteration = 0
-        
+
         filtered_images = self._slice_images_from_start(
             filtered_images, start_from_image_id
         )
@@ -1116,9 +1219,11 @@ class MainWindow(QMainWindow):
             )
             self._slideshow_window.session_ended.connect(self._on_session_ended)
 
-        course_config_path = Path(__file__).resolve().parent / "ressources" / "session_configs.json"
+        course_config_path = (
+            Path(__file__).resolve().parent / "ressources" / "session_configs.json"
+        )
         # For course_random mode, use exact order (no reshuffle in session)
-        use_exact_order = (sort_by == "course_random")
+        use_exact_order = sort_by == "course_random"
         started = self._slideshow_window.start_session(
             image_ids=image_ids,
             session_type=session_type,
@@ -1143,7 +1248,7 @@ class MainWindow(QMainWindow):
         self.show()
         self.raise_()
         self.activateWindow()
-    
+
     def _build_subtags_for_category(
         self,
         category: str,
@@ -1195,7 +1300,9 @@ class MainWindow(QMainWindow):
         self._subcategory_tag_order = {}
         self._user_tag_buttons = {}
         self._subtag_to_category = {}
-        self._user_tag_display_order = []  # user tags in grid order for shift-range selection
+        self._user_tag_display_order = (
+            []
+        )  # user tags in grid order for shift-range selection
 
         self._user_tags_config = user_tags_config.load_config()
         placements = self._user_tags_config.get("placements", {})
@@ -1207,6 +1314,7 @@ class MainWindow(QMainWindow):
         if default_tags_path.exists():
             try:
                 import json as _json
+
                 with open(default_tags_path, "r", encoding="utf-8") as f:
                     default_tags = _json.load(f)
 
@@ -1238,22 +1346,34 @@ class MainWindow(QMainWindow):
                     row = current_row
                     if is_label_category:
                         category_label = QLabel(category)
-                        category_label.setStyleSheet("font-weight: bold; font-size: 12px; padding: 4px; background-color: transparent;")
+                        category_label.setStyleSheet(
+                            "font-weight: bold; font-size: 12px; padding: 4px; background-color: transparent;"
+                        )
                         category_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-                        self.tags_grid_layout.addWidget(category_label, row, 0, 1, max_cols)
+                        self.tags_grid_layout.addWidget(
+                            category_label, row, 0, 1, max_cols
+                        )
                     else:
-                        category_button = self._build_tag_button(category, is_user_tag=False)
-                        category_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+                        category_button = self._build_tag_button(
+                            category, is_user_tag=False
+                        )
+                        category_button.setSizePolicy(
+                            QSizePolicy.Preferred, QSizePolicy.Maximum
+                        )
                         category_button.clicked.connect(
                             lambda _, name=category: self._on_tag_button_clicked(name)
                         )
                         category_button.setProperty("tagGridRole", "category")
                         category_button.setProperty("tagGridKey", category)
-                        self.tags_grid_layout.addWidget(category_button, row, 0, 1, max_cols)
+                        self.tags_grid_layout.addWidget(
+                            category_button, row, 0, 1, max_cols
+                        )
                         self._category_buttons[category] = category_button
 
                     tag_container = QWidget()
-                    tag_container.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+                    tag_container.setSizePolicy(
+                        QSizePolicy.Preferred, QSizePolicy.Minimum
+                    )
                     tag_container.setMinimumHeight(0)
                     tag_container_layout = QGridLayout(tag_container)
                     tag_container_layout.setContentsMargins(0, 0, 0, 0)
@@ -1262,14 +1382,20 @@ class MainWindow(QMainWindow):
                     subtag_buttons: Dict[str, QPushButton] = {}
                     for idx, tag in enumerate(unique_subtags):
                         is_user_tag = tag in user_tags_set
-                        tag_button = self._build_tag_button(tag, is_user_tag=is_user_tag)
+                        tag_button = self._build_tag_button(
+                            tag, is_user_tag=is_user_tag
+                        )
                         tag_name, category_name = tag, category
                         tag_button.clicked.connect(
-                            lambda _=False, t=tag_name, c=category_name: self._on_tag_button_clicked(t, c)
+                            lambda _=False, t=tag_name, c=category_name: self._on_tag_button_clicked(
+                                t, c
+                            )
                         )
                         tag_button.setProperty("tagGridRole", "tag")
                         tag_button.setProperty("tagGridKey", tag)
-                        tag_button.contextMenuRequested.connect(self._on_tag_context_menu_requested)
+                        tag_button.contextMenuRequested.connect(
+                            self._on_tag_context_menu_requested
+                        )
                         if is_user_tag:
                             self._user_tag_display_order.append(tag)
                         tr, tc = idx // max_tags_per_row, idx % max_tags_per_row
@@ -1278,7 +1404,9 @@ class MainWindow(QMainWindow):
                         self._subtag_to_category[tag] = category
                         tag_button.setVisible(is_label_category)
 
-                    self.tags_grid_layout.addWidget(tag_container, row + 1, 0, 1, max_cols)
+                    self.tags_grid_layout.addWidget(
+                        tag_container, row + 1, 0, 1, max_cols
+                    )
                     self._subcategory_containers[category] = tag_container
                     self._subcategory_buttons[category] = subtag_buttons
 
@@ -1288,7 +1416,9 @@ class MainWindow(QMainWindow):
                         separator.setFrameShape(QFrame.Shape.HLine)
                         separator.setFrameShadow(QFrame.Shadow.Sunken)
                         separator.setStyleSheet("QFrame { color: #666; }")
-                        self.tags_grid_layout.addWidget(separator, current_row, 0, 1, max_cols)
+                        self.tags_grid_layout.addWidget(
+                            separator, current_row, 0, 1, max_cols
+                        )
                         current_row += 1
 
             except Exception as e:
@@ -1304,7 +1434,6 @@ class MainWindow(QMainWindow):
             self.tags_grid_layout.setRowStretch(max_row + 1, 1)
         if not skip_sync:
             self._sync_tag_grid_state()
-
 
     def _build_tag_button(self, tag: str, is_user_tag: bool = False) -> QPushButton:
         """
@@ -1323,14 +1452,14 @@ class MainWindow(QMainWindow):
         button.setProperty("baseLabel", tag)
         overrides = getattr(self, "_icon_preview_override", {})
         user_config = getattr(self, "_user_tags_config", {})
-        icon = find_tag_icon(tag, user_config=user_config, icon_preview_override=overrides)
+        icon = find_tag_icon(
+            tag, user_config=user_config, icon_preview_override=overrides
+        )
         if not icon.isNull():
             button.setIcon(invert_icon(icon, 28))
             button.setIconSize(QSize(28, 28))
         button.setCheckable(False)
-        button.setStyleSheet(
-            "QPushButton { text-align: left; padding: 2px 4px; }"
-        )
+        button.setStyleSheet("QPushButton { text-align: left; padding: 2px 4px; }")
         return button
 
     @staticmethod
@@ -1374,7 +1503,7 @@ class MainWindow(QMainWindow):
         else:
             hue = sum(ord(c) for c in branch_key) % 360
         sat_pct = min(38 + depth * 4, 68)
-        dark_theme = settings.get("ui.theme", "dark") == "dark"
+        dark_theme = settings.get("ui.theme", "dark") != "light"
         if dark_theme:
             light_pct = min(24 + depth * 10, 70)
         else:
@@ -1395,7 +1524,7 @@ class MainWindow(QMainWindow):
     ) -> None:
         """Apply hierarchy depth color and state borders (active/selected)."""
         bg = self._get_hierarchy_background_color(branch_key, depth)
-        dark_theme = settings.get("ui.theme", "dark") == "dark"
+        dark_theme = settings.get("ui.theme", "dark") != "light"
         text = "#f0f0f0" if dark_theme else "#1a1a1a"
         if selected_for_drag:
             # Blue border for drag/drop selection
@@ -1433,7 +1562,9 @@ class MainWindow(QMainWindow):
             return
         overrides = getattr(self, "_icon_preview_override", {})
         user_config = getattr(self, "_user_tags_config", {})
-        icon = find_tag_icon(tag, user_config=user_config, icon_preview_override=overrides)
+        icon = find_tag_icon(
+            tag, user_config=user_config, icon_preview_override=overrides
+        )
         if not icon.isNull():
             btn.setIcon(invert_icon(icon, 28))
             btn.setIconSize(QSize(28, 28))
@@ -1441,7 +1572,9 @@ class MainWindow(QMainWindow):
             btn.setIcon(QIcon())
             btn.setIconSize(QSize(28, 28))  # Keep size so layout does not jump
 
-    def _on_tag_button_clicked(self, tag: str, category_override: Optional[str] = None) -> None:
+    def _on_tag_button_clicked(
+        self, tag: str, category_override: Optional[str] = None
+    ) -> None:
         """
         Toggle tag in filters from tag buttons.
         When in "Parent to tag..." mode, clicking a tag or category sets it as parent instead.
@@ -1470,10 +1603,14 @@ class MainWindow(QMainWindow):
                 self._active_categories.add(tag)
                 self._active_subtags.setdefault(tag, set())
         else:
-            category = category_override if category_override is not None else self._subtag_to_category.get(tag)
+            category = (
+                category_override
+                if category_override is not None
+                else self._subtag_to_category.get(tag)
+            )
             if not category:
                 return
-            
+
             # For label categories, don't add them to active_categories
             # Just manage their sub-tags directly
             if category in label_categories:
@@ -1572,7 +1709,7 @@ class MainWindow(QMainWindow):
         text = self.tag_search_input.text().strip()
         if not text:
             return
-        
+
         # Resolve tag (case-insensitive) - only in user tags
         user_tags = self._get_user_tags()
         resolved_tag = None
@@ -1581,27 +1718,27 @@ class MainWindow(QMainWindow):
             if tag.lower() == text_lower:
                 resolved_tag = tag
                 break
-        
+
         if not resolved_tag:
             # Invalid tag - could add feedback animation here
             self.tag_search_input.clear()
             return
-        
+
         # Add to AND zone by default
         self.and_zone.add_tag(resolved_tag)
         self.tag_search_input.clear()
         self._apply_category_filters()
-    
+
     def _on_tag_filter_changed(self, tag: str = None) -> None:
         """
         Handle tag filter change from AND/OR zones.
-        
+
         Args:
             tag: Tag that was added/removed (optional, for tag_dropped signal).
         """
         self._apply_category_filters()
         self._sync_tag_grid_state()
-    
+
     def _clear_all_tag_filters(self) -> None:
         """Clear all tag filters (category, AND, and OR)."""
         self._active_categories.clear()
@@ -1623,13 +1760,21 @@ class MainWindow(QMainWindow):
             w = w.parent() if hasattr(w, "parent") else None
         return False
 
-    def _get_tag_library_viewport_pos(self, obj: QObject, pos: QPoint) -> Optional[QPoint]:
+    def _get_tag_library_viewport_pos(
+        self, obj: QObject, pos: QPoint
+    ) -> Optional[QPoint]:
         """Map a position from obj's coordinates to tag library viewport coordinates."""
-        viewport = getattr(self, "tags_scroll_area", None) and self.tags_scroll_area.viewport()
+        viewport = (
+            getattr(self, "tags_scroll_area", None) and self.tags_scroll_area.viewport()
+        )
         if not viewport or not obj:
             return None
         if hasattr(obj, "mapToGlobal") and hasattr(viewport, "mapFromGlobal"):
-            global_pos = obj.mapToGlobal(pos) if hasattr(pos, "x") else obj.mapToGlobal(QPoint(pos.x(), pos.y()))
+            global_pos = (
+                obj.mapToGlobal(pos)
+                if hasattr(pos, "x")
+                else obj.mapToGlobal(QPoint(pos.x(), pos.y()))
+            )
             return viewport.mapFromGlobal(global_pos)
         return None
 
@@ -1673,7 +1818,9 @@ class MainWindow(QMainWindow):
         if layout and hasattr(layout, "indexOf"):
             idx = layout.indexOf(button)
             if idx >= 0 and hasattr(layout, "getItemPosition"):
-                layout_row, layout_col, layout_row_span, layout_col_span = layout.getItemPosition(idx)
+                layout_row, layout_col, layout_row_span, layout_col_span = (
+                    layout.getItemPosition(idx)
+                )
         # Build list of tags we're dragging (for multi pixmap and MIME)
         tags_to_drop = (
             set(self._tag_library_selection)
@@ -1760,7 +1907,12 @@ class MainWindow(QMainWindow):
         if not self._tag_drop_was_on_grid and restore_list:
             try:
                 for btn, cont, lay, r, c, rspan, cspan in restore_list:
-                    if cont is not None and lay is not None and r >= 0 and btn.parent() is cont:
+                    if (
+                        cont is not None
+                        and lay is not None
+                        and r >= 0
+                        and btn.parent() is cont
+                    ):
                         lay.addWidget(btn, r, c, rspan, cspan)
                         btn.show()
                 self._sync_tag_grid_state()
@@ -1772,7 +1924,10 @@ class MainWindow(QMainWindow):
                         first_cont.update()
                 if hasattr(self, "tags_grid_container") and self.tags_grid_container:
                     self.tags_grid_container.update()
-                if hasattr(self, "tags_scroll_area") and self.tags_scroll_area.viewport():
+                if (
+                    hasattr(self, "tags_scroll_area")
+                    and self.tags_scroll_area.viewport()
+                ):
                     self.tags_scroll_area.viewport().update()
                 QApplication.processEvents()
             except Exception:
@@ -1796,7 +1951,9 @@ class MainWindow(QMainWindow):
 
     def _get_user_tag_buttons_viewport_rects(self) -> List[Tuple[str, QRect]]:
         """Return list of (tag_name, viewport_QRect) for each visible user tag button."""
-        viewport = getattr(self, "tags_scroll_area", None) and self.tags_scroll_area.viewport()
+        viewport = (
+            getattr(self, "tags_scroll_area", None) and self.tags_scroll_area.viewport()
+        )
         if not viewport:
             return []
         result: List[Tuple[str, QRect]] = []
@@ -1841,6 +1998,14 @@ class MainWindow(QMainWindow):
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
         """Tag library selection: modifier+drag rectangle only."""
+        # Keep floating Session Settings button anchored to image grid viewport.
+        if (
+            hasattr(self, "image_grid")
+            and obj == self.image_grid.viewport()
+            and event.type() in (QEvent.Type.Resize, QEvent.Resize)
+        ):
+            self._position_floating_session_button()
+            return False
         try:
             _mouse_press = QEvent.Type.MouseButtonPress
             _mouse_move = QEvent.Type.MouseMove
@@ -1851,14 +2016,18 @@ class MainWindow(QMainWindow):
             _mouse_release = QEvent.MouseButtonRelease
 
         if event.type() == _mouse_move and self._tag_library_is_selecting:
-            viewport = getattr(self, "tags_scroll_area", None) and self.tags_scroll_area.viewport()
+            viewport = (
+                getattr(self, "tags_scroll_area", None)
+                and self.tags_scroll_area.viewport()
+            )
             if viewport and hasattr(event, "globalPos"):
                 vp_pos = viewport.mapFromGlobal(event.globalPos())
                 # If drag started on a user tag and moved past threshold, start tag drag (reparent / apply to images)
                 if (
                     self._tag_library_drag_start_button is not None
                     and self._tag_library_selection_start is not None
-                    and (vp_pos - self._tag_library_selection_start).manhattanLength() >= 10
+                    and (vp_pos - self._tag_library_selection_start).manhattanLength()
+                    >= 10
                 ):
                     self._tag_library_rubber_band.hide()
                     self._tag_library_is_selecting = False
@@ -1876,8 +2045,15 @@ class MainWindow(QMainWindow):
                     )
             return False
 
-        if event.type() == _mouse_release and event.button() == Qt.LeftButton and self._tag_library_is_selecting:
-            viewport = getattr(self, "tags_scroll_area", None) and self.tags_scroll_area.viewport()
+        if (
+            event.type() == _mouse_release
+            and event.button() == Qt.LeftButton
+            and self._tag_library_is_selecting
+        ):
+            viewport = (
+                getattr(self, "tags_scroll_area", None)
+                and self.tags_scroll_area.viewport()
+            )
             if viewport and hasattr(event, "globalPos"):
                 vp_pos = viewport.mapFromGlobal(event.globalPos())
                 self._tag_library_rubber_band.hide()
@@ -1889,26 +2065,36 @@ class MainWindow(QMainWindow):
             self._tag_library_drag_start_button = None
             return True
 
-        if event.type() == _mouse_press and event.button() == Qt.LeftButton and self._is_in_tag_library(obj):
+        if (
+            event.type() == _mouse_press
+            and event.button() == Qt.LeftButton
+            and self._is_in_tag_library(obj)
+        ):
             viewport = self.tags_scroll_area.viewport()
             vp_pos = self._get_tag_library_viewport_pos(obj, event.pos())
             if vp_pos is None:
                 return False
             modifiers = event.modifiers()
-            has_selection_modifier = bool(modifiers & (Qt.ControlModifier | Qt.ShiftModifier))
+            has_selection_modifier = bool(
+                modifiers & (Qt.ControlModifier | Qt.ShiftModifier)
+            )
             if not has_selection_modifier:
                 # Simple click is handled by normal button click logic (filter/expand-collapse),
                 # not by tag-library selection mode.
                 return False
             # Only consume on user tag buttons or empty area (viewport/container); let category buttons through
-            is_user_tag_btn = isinstance(obj, DraggableTagButton) and obj.property("userTag")
+            is_user_tag_btn = isinstance(obj, DraggableTagButton) and obj.property(
+                "userTag"
+            )
             is_empty_area = obj == viewport or obj == self.tags_grid_container
             if not (is_user_tag_btn or is_empty_area):
                 return False
             self._tag_library_selection_start = vp_pos
             self._tag_library_is_selecting = True
             if is_user_tag_btn:
-                self._tag_library_drag_start_tag = obj.property("baseLabel") or obj.text()
+                self._tag_library_drag_start_tag = (
+                    obj.property("baseLabel") or obj.text()
+                )
                 self._tag_library_drag_start_button = obj
             else:
                 self._tag_library_drag_start_tag = None
@@ -1931,7 +2117,9 @@ class MainWindow(QMainWindow):
         action = menu.exec_(QCursor.pos())
         if action == parent_to_tag_action:
             tags_to_parent = (
-                set(self._tag_library_selection) if tag_text in self._tag_library_selection else {tag_text}
+                set(self._tag_library_selection)
+                if tag_text in self._tag_library_selection
+                else {tag_text}
             )
             tags_to_parent = {t for t in tags_to_parent if t in user_tags}
             if tags_to_parent:
@@ -1943,7 +2131,9 @@ class MainWindow(QMainWindow):
             dialog = IconPickerDialog(
                 self,
                 current_icon=current,
-                on_icon_changed=lambda filename: self._on_icon_preview(tag_text, filename),
+                on_icon_changed=lambda filename: self._on_icon_preview(
+                    tag_text, filename
+                ),
             )
             result = dialog.exec_()
             # Clear preview override so _update_tag_button_icon uses config again
@@ -2018,7 +2208,9 @@ class MainWindow(QMainWindow):
         self._tag_library_selection = set()
         self._sync_tag_grid_state()
 
-    def _on_tag_clicked_in_parent_mode(self, tag: str, category_override: Optional[str] = None) -> None:
+    def _on_tag_clicked_in_parent_mode(
+        self, tag: str, category_override: Optional[str] = None
+    ) -> None:
         """
         When in parent-select mode: clicking a category sets it as selected parent AND expands it
         so sub-tags are visible; clicking a (sub-)tag sets it as parent AND expands it so its
@@ -2030,7 +2222,9 @@ class MainWindow(QMainWindow):
             # Set category as selected parent and expand it so its sub-tags are visible
             self._parent_select_key = tag
             self._parent_select_role = "category"
-            self._parent_select_label.setText(f"Select parent tag: {self._parent_select_key}")
+            self._parent_select_label.setText(
+                f"Select parent tag: {self._parent_select_key}"
+            )
             self._parent_ok_btn.setEnabled(True)
             self._active_categories.add(tag)
             self._active_subtags.setdefault(tag, set())
@@ -2040,9 +2234,15 @@ class MainWindow(QMainWindow):
         # Sub-tag clicked: set as parent and expand so its children (if any) are visible
         self._parent_select_key = tag
         self._parent_select_role = "tag"
-        self._parent_select_label.setText(f"Select parent tag: {self._parent_select_key}")
+        self._parent_select_label.setText(
+            f"Select parent tag: {self._parent_select_key}"
+        )
         self._parent_ok_btn.setEnabled(True)
-        category = category_override if category_override is not None else self._subtag_to_category.get(tag)
+        category = (
+            category_override
+            if category_override is not None
+            else self._subtag_to_category.get(tag)
+        )
         if category:
             self._active_categories.add(category)
             self._active_subtags.setdefault(category, set()).add(tag)
@@ -2053,7 +2253,11 @@ class MainWindow(QMainWindow):
         """Apply reparenting: move _tags_to_parent under _parent_select_key, then exit mode.
         Does not clear _active_categories / _active_subtags so expanded categories stay expanded.
         """
-        if not self._parent_select_key or not self._parent_select_role or not self._tags_to_parent:
+        if (
+            not self._parent_select_key
+            or not self._parent_select_role
+            or not self._tags_to_parent
+        ):
             return
         cfg = self._user_tags_config
         placements = dict(cfg.get("placements", {}))
@@ -2122,7 +2326,9 @@ class MainWindow(QMainWindow):
         if self._tag_grid_hover_expand_timer is None:
             self._tag_grid_hover_expand_timer = QTimer(self)
             self._tag_grid_hover_expand_timer.setSingleShot(True)
-            self._tag_grid_hover_expand_timer.timeout.connect(self._tag_grid_hover_expand_fire)
+            self._tag_grid_hover_expand_timer.timeout.connect(
+                self._tag_grid_hover_expand_fire
+            )
         self._tag_grid_hover_expand_timer.start(500)
 
     def _tag_grid_hover_expand_cancel(self) -> None:
@@ -2158,7 +2364,11 @@ class MainWindow(QMainWindow):
         dropped_tag = bytes(raw).decode("utf-8") if raw else ""
         if dropped_tag not in self._get_user_tags():
             return
-        pos = event.position().toPoint() if hasattr(event.position(), "toPoint") else event.pos()
+        pos = (
+            event.position().toPoint()
+            if hasattr(event.position(), "toPoint")
+            else event.pos()
+        )
         child = self._get_tag_grid_drop_target_at(pos)
         if not child or not child.property("tagGridRole"):
             return
@@ -2177,7 +2387,8 @@ class MainWindow(QMainWindow):
         # Reparent all selected tags (or just the dragged one if not in selection)
         user_tags = self._get_user_tags()
         tags_to_reparent = (
-            set(self._tag_library_selection) if dropped_tag in self._tag_library_selection
+            set(self._tag_library_selection)
+            if dropped_tag in self._tag_library_selection
             else {dropped_tag}
         )
         tags_to_reparent = {t for t in tags_to_reparent if t in user_tags and t != key}
@@ -2193,6 +2404,7 @@ class MainWindow(QMainWindow):
         # Preserve expand/filter state so source category stays expanded and active
         saved_categories = set(self._active_categories)
         saved_subtags = {k: set(v) for k, v in self._active_subtags.items()}
+
         # Defer heavy rebuild to next event loop to avoid lag on drop
         def _do_tag_grid_rebuild() -> None:
             self._user_tags_config = user_tags_config.load_config()
@@ -2208,6 +2420,7 @@ class MainWindow(QMainWindow):
                     self._active_categories.add(category)
                     self._active_subtags.setdefault(category, set()).add(key)
             self._sync_tag_grid_state()
+
             # Defer layout/repaint to next event loop; hide/show forces scroll area to relayout
             def _force_layout_update() -> None:
                 for container in self._subcategory_containers.values():
@@ -2223,8 +2436,12 @@ class MainWindow(QMainWindow):
                 self.tags_grid_container.setVisible(False)
                 self.tags_grid_container.setVisible(True)
                 self.tags_grid_container.update()
-                if hasattr(self, "tags_scroll_area") and self.tags_scroll_area.viewport():
+                if (
+                    hasattr(self, "tags_scroll_area")
+                    and self.tags_scroll_area.viewport()
+                ):
                     self.tags_scroll_area.viewport().update()
+
             QTimer.singleShot(0, _force_layout_update)
 
         QTimer.singleShot(0, _do_tag_grid_rebuild)
@@ -2271,7 +2488,7 @@ class MainWindow(QMainWindow):
         completer.setFilterMode(Qt.MatchContains)
         self.tag_search_input.setCompleter(completer)
         self.tag_search_completer = completer
-    
+
     def reload_default_tags(self) -> None:
         """
         Reload default tags from JSON file and refresh the tag grid.
@@ -2280,13 +2497,13 @@ class MainWindow(QMainWindow):
         # Clear current filters to avoid inconsistencies
         self._active_categories.clear()
         self._active_subtags.clear()
-        
+
         # Reload tags into grid
         self._load_tags_into_grid()
-        
+
         # Update completer with new user tags
         self._update_tag_search_completer()
-        
+
         # Reapply filters (will be empty, so shows all images)
         self._apply_category_filters()
 
@@ -2294,11 +2511,14 @@ class MainWindow(QMainWindow):
         """Return list of tags whose placement has parent_tag = tag (tags that belong to this sub-category)."""
         placements = self._user_tags_config.get("placements", {})
         return [
-            t for t, pl in placements.items()
+            t
+            for t, pl in placements.items()
             if isinstance(pl, dict) and pl.get("parent_tag") == tag
         ]
 
-    def _get_all_descendants(self, tag: str, visited: Optional[Set[str]] = None) -> Set[str]:
+    def _get_all_descendants(
+        self, tag: str, visited: Optional[Set[str]] = None
+    ) -> Set[str]:
         """
         Return tag plus all tags that are direct or indirect children (parent_tag chain).
         Used so filtering by a category shows images that have the category or any subtag.
@@ -2374,7 +2594,9 @@ class MainWindow(QMainWindow):
             self._set_button_active(button, is_active)
             has_category_children = bool(self._subcategory_buttons.get(category))
             base_label = button.property("baseLabel") or category
-            button.setText(self._with_expand_icon(base_label, has_category_children, is_active))
+            button.setText(
+                self._with_expand_icon(base_label, has_category_children, is_active)
+            )
             self._set_hierarchy_button_style(
                 button=button,
                 branch_key=category,
@@ -2394,10 +2616,14 @@ class MainWindow(QMainWindow):
                 self._set_button_active(tag_button, is_tag_active)
                 has_children = bool(self._get_children_of_tag(tag))
                 base_label = tag_button.property("baseLabel") or tag
-                tag_button.setText(self._with_expand_icon(base_label, has_children, is_tag_active))
+                tag_button.setText(
+                    self._with_expand_icon(base_label, has_children, is_tag_active)
+                )
                 depth = self._get_tag_depth_in_category(tag, category)
                 # In "Parent to tag..." mode, gray out tags being moved
-                if getattr(self, "_parent_select_mode", False) and tag in getattr(self, "_tags_to_parent", set()):
+                if getattr(self, "_parent_select_mode", False) and tag in getattr(
+                    self, "_tags_to_parent", set()
+                ):
                     tag_button.setEnabled(False)
                     tag_button.setStyleSheet(
                         "QPushButton { text-align: left; padding: 2px 4px; opacity: 0.6; background-color: #444; color: #888; }"
@@ -2409,7 +2635,9 @@ class MainWindow(QMainWindow):
                         branch_key=category,
                         depth=depth + 1,
                         active=is_tag_active,
-                        selected_for_drag=(tag in getattr(self, "_tag_library_selection", set())),
+                        selected_for_drag=(
+                            tag in getattr(self, "_tag_library_selection", set())
+                        ),
                     )
 
         # Label categories: set visibility
@@ -2417,7 +2645,9 @@ class MainWindow(QMainWindow):
         for label_category in label_categories:
             if label_category in self._subcategory_buttons:
                 label_subtags = self._active_subtags.get(label_category, set())
-                for tag, tag_button in self._subcategory_buttons[label_category].items():
+                for tag, tag_button in self._subcategory_buttons[
+                    label_category
+                ].items():
                     pl = placements.get(tag)
                     parent_tag = pl.get("parent_tag") if isinstance(pl, dict) else None
                     if parent_tag is not None:
@@ -2428,9 +2658,13 @@ class MainWindow(QMainWindow):
                     self._set_button_active(tag_button, is_tag_active)
                     has_children = bool(self._get_children_of_tag(tag))
                     base_label = tag_button.property("baseLabel") or tag
-                    tag_button.setText(self._with_expand_icon(base_label, has_children, is_tag_active))
+                    tag_button.setText(
+                        self._with_expand_icon(base_label, has_children, is_tag_active)
+                    )
                     depth = self._get_tag_depth_in_category(tag, label_category)
-                    if getattr(self, "_parent_select_mode", False) and tag in getattr(self, "_tags_to_parent", set()):
+                    if getattr(self, "_parent_select_mode", False) and tag in getattr(
+                        self, "_tags_to_parent", set()
+                    ):
                         tag_button.setEnabled(False)
                         tag_button.setStyleSheet(
                             "QPushButton { text-align: left; padding: 2px 4px; opacity: 0.6; background-color: #444; color: #888; }"
@@ -2442,7 +2676,9 @@ class MainWindow(QMainWindow):
                             branch_key=label_category,
                             depth=depth + 1,
                             active=is_tag_active,
-                            selected_for_drag=(tag in getattr(self, "_tag_library_selection", set())),
+                            selected_for_drag=(
+                                tag in getattr(self, "_tag_library_selection", set())
+                            ),
                         )
 
         # Rebuild each category container with grouped hierarchy blocks.
@@ -2460,7 +2696,11 @@ class MainWindow(QMainWindow):
             while layout.count():
                 item = layout.takeAt(0)
                 widget = item.widget() if item else None
-                if widget and isinstance(widget, QFrame) and widget.objectName() == "TagHierarchyFrame":
+                if (
+                    widget
+                    and isinstance(widget, QFrame)
+                    and widget.objectName() == "TagHierarchyFrame"
+                ):
                     # Keep tag buttons alive for reuse before deleting dynamic hierarchy frame.
                     for child_btn in widget.findChildren(DraggableTagButton):
                         child_btn.setParent(container)
@@ -2493,10 +2733,15 @@ class MainWindow(QMainWindow):
             root_tags = [
                 t
                 for t in ordered_visible_tags
-                if not (isinstance(placements.get(t), dict) and placements.get(t).get("parent_tag"))
+                if not (
+                    isinstance(placements.get(t), dict)
+                    and placements.get(t).get("parent_tag")
+                )
             ]
 
-            def _build_descendants_block(parent_tag: str, depth: int) -> Optional[QWidget]:
+            def _build_descendants_block(
+                parent_tag: str, depth: int
+            ) -> Optional[QWidget]:
                 children = children_map.get(parent_tag, [])
                 if not children:
                     return None
@@ -2537,7 +2782,10 @@ class MainWindow(QMainWindow):
                 for child in children:
                     child_btn = subtag_buttons.get(child)
                     if child_btn:
-                        row_child, col_child = idx_child // max_cols, idx_child % max_cols
+                        row_child, col_child = (
+                            idx_child // max_cols,
+                            idx_child % max_cols,
+                        )
                         children_grid.addWidget(child_btn, row_child, col_child)
                         child_btn.setVisible(True)
                         idx_child += 1
@@ -2634,9 +2882,15 @@ class MainWindow(QMainWindow):
         if not has_active_filters:
             return all_images
 
-        constraining_and_norm = {self._normalize_tag_for_match(t) for t in constraining_tags_and}
-        constraining_or_norm = {self._normalize_tag_for_match(t) for t in constraining_tags_or}
-        category_filter_data = self._get_active_category_filter_data() if self._active_categories else []
+        constraining_and_norm = {
+            self._normalize_tag_for_match(t) for t in constraining_tags_and
+        }
+        constraining_or_norm = {
+            self._normalize_tag_for_match(t) for t in constraining_tags_or
+        }
+        category_filter_data = (
+            self._get_active_category_filter_data() if self._active_categories else []
+        )
 
         if self._active_categories:
             category_matched = []
@@ -2645,7 +2899,9 @@ class MainWindow(QMainWindow):
                 for allowed_norm, required_groups_norm in category_filter_data:
                     if not (image_tags_norm & allowed_norm):
                         continue
-                    group_match = all(bool(image_tags_norm & group) for group in required_groups_norm)
+                    group_match = all(
+                        bool(image_tags_norm & group) for group in required_groups_norm
+                    )
                     if group_match:
                         category_matched.append(m)
                         break
@@ -2655,14 +2911,19 @@ class MainWindow(QMainWindow):
         # Apply AND label (Miscellaneous): image must have all selected tags
         if constraining_and_norm:
             category_matched = [
-                m for m in category_matched
-                if constraining_and_norm.issubset({self._normalize_tag_for_match(t) for t in m.tags})
+                m
+                for m in category_matched
+                if constraining_and_norm.issubset(
+                    {self._normalize_tag_for_match(t) for t in m.tags}
+                )
             ]
         # Apply OR label (Camera-Angle): image must have at least one selected tag
         if constraining_or_norm:
             category_matched = [
-                m for m in category_matched
-                if constraining_or_norm & {self._normalize_tag_for_match(t) for t in m.tags}
+                m
+                for m in category_matched
+                if constraining_or_norm
+                & {self._normalize_tag_for_match(t) for t in m.tags}
             ]
         return category_matched
 
@@ -2674,20 +2935,22 @@ class MainWindow(QMainWindow):
         button.style().unpolish(button)
         button.style().polish(button)
         button.update()
-    
+
     # Tree-based tag handling removed in favor of button grid.
-    
+
     def _setup_dev_tools(self):
         """Set up development tools dock widget."""
         # Create dock widget for dev tools
         self.dev_dock = QDockWidget("Development Log", self)
         self.dev_dock.setAllowedAreas(Qt.BottomDockWidgetArea)
-        self.dev_dock.setFeatures(QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetFloatable)
-        
+        self.dev_dock.setFeatures(
+            QDockWidget.DockWidgetClosable | QDockWidget.DockWidgetFloatable
+        )
+
         # Create widget for dock content
         dev_widget = QWidget()
         dev_layout = QVBoxLayout(dev_widget)
-        
+
         # Add progress section
         progress_layout = QVBoxLayout()
         self.dev_progress_label = QLabel("No import in progress")
@@ -2696,7 +2959,7 @@ class MainWindow(QMainWindow):
         progress_layout.addWidget(self.dev_progress_label)
         progress_layout.addWidget(self.dev_progress_bar)
         dev_layout.addLayout(progress_layout)
-        
+
         # Add log text area
         self.dev_log = QTextEdit()
         self.dev_log.setReadOnly(True)
@@ -2709,70 +2972,69 @@ class MainWindow(QMainWindow):
             }
         """)
         dev_layout.addWidget(self.dev_log)
-        
+
         # Set dock widget content
         self.dev_dock.setWidget(dev_widget)
         self.addDockWidget(Qt.BottomDockWidgetArea, self.dev_dock)
-        
+
         # Initially hide dock
         self.dev_dock.setVisible(self.dev_mode)
-    
+
     @Slot(str)
     def update_status_message(self, message: str):
         """Update status bar message from any thread."""
         self.statusBar().showMessage(message)
-    
+
     @Slot(int)
     def update_progress_bar(self, progress: int):
         """Update progress bar value from any thread."""
-        if hasattr(self, 'current_progress_bar'):
+        if hasattr(self, "current_progress_bar"):
             self.current_progress_bar.setValue(progress)
-    
+
     @Slot(str)
     def update_dev_progress_label(self, text: str):
         """Update dev progress label from any thread."""
-        if self.dev_mode and hasattr(self, 'dev_progress_label'):
+        if self.dev_mode and hasattr(self, "dev_progress_label"):
             self.dev_progress_label.setText(text)
-    
+
     @Slot(int)
     def update_dev_progress_bar(self, progress: int):
         """Update dev progress bar from any thread."""
-        if self.dev_mode and hasattr(self, 'dev_progress_bar'):
+        if self.dev_mode and hasattr(self, "dev_progress_bar"):
             self.dev_progress_bar.setVisible(True)
             self.dev_progress_bar.setValue(progress)
-    
+
     @Slot(str, str)
     def add_log_message(self, message: str, level: str = "INFO"):
         """Add a log message from any thread."""
         if self.dev_mode:
             self._log_message(message, level)
-    
+
     def _log_message(self, message: str, level: str = "INFO"):
         """
         Log a message to the dev log.
-        
+
         Args:
             message: Message to log
             level: Log level (INFO, WARNING, ERROR)
         """
-        if not hasattr(self, 'dev_log'):
+        if not hasattr(self, "dev_log"):
             return
-            
+
         # Format message with timestamp
         from datetime import datetime
+
         timestamp = datetime.now().strftime("%H:%M:%S")
         formatted = f"[{timestamp}] {level}: {message}"
-        
+
         # Add color based on level
-        color = {
-            "INFO": "#d4d4d4",
-            "WARNING": "#dcdcaa",
-            "ERROR": "#f14c4c"
-        }.get(level, "#d4d4d4")
-        
+        color = {"INFO": "#d4d4d4", "WARNING": "#dcdcaa", "ERROR": "#f14c4c"}.get(
+            level, "#d4d4d4"
+        )
+
         # Add to log
         self.dev_log.append(f'<span style="color: {color}">{formatted}</span>')
-        
+
         # Scroll to bottom
         self.dev_log.verticalScrollBar().setValue(
             self.dev_log.verticalScrollBar().maximum()
@@ -2785,10 +3047,13 @@ class MainWindow(QMainWindow):
             urls = event.mimeData().urls()
             for url in urls:
                 path = Path(url.toLocalFile())
-                if path.is_dir() or path.suffix.lower() in ImageManager.SUPPORTED_FORMATS:
+                if (
+                    path.is_dir()
+                    or path.suffix.lower() in ImageManager.SUPPORTED_FORMATS
+                ):
                     event.acceptProposedAction()
                     return
-    
+
     def dropEvent(self, event: QDropEvent):
         """Handle file drop events."""
         self._import_from_urls(event.mimeData().urls())
@@ -2814,7 +3079,7 @@ class MainWindow(QMainWindow):
         """Create and set up the status bar progress bar."""
         # Remove any existing progress bar
         self._cleanup_progress_bars()
-        
+
         # Create new progress bar
         progress_bar = QProgressBar()
         progress_bar.setMinimumWidth(400)
@@ -2822,7 +3087,7 @@ class MainWindow(QMainWindow):
         progress_bar.setMaximumHeight(20)
         progress_bar.setTextVisible(True)
         progress_bar.setFormat("Preparing import...")
-        
+
         # Add to status bar with permanent widget (stays on the right)
         self.statusBar().addPermanentWidget(progress_bar)
         self.status_progress_bar = progress_bar
@@ -2836,28 +3101,30 @@ class MainWindow(QMainWindow):
                 self.statusBar().removeWidget(self.status_progress_bar)
                 self.status_progress_bar.deleteLater()
                 self.status_progress_bar = None
-            
+
             # Clean up dev progress bar
-            if self.dev_mode and hasattr(self, 'dev_progress_bar'):
+            if self.dev_mode and hasattr(self, "dev_progress_bar"):
                 self.dev_progress_bar.setVisible(False)
                 self.dev_progress_bar.setValue(0)
                 self.dev_progress_label.setText("No import in progress")
         except Exception as e:
             print(f"Error during cleanup: {e}")
 
-    def _count_images_to_import(self, paths: List[Path]) -> Tuple[List[Path], Optional[Path]]:
+    def _count_images_to_import(
+        self, paths: List[Path]
+    ) -> Tuple[List[Path], Optional[Path]]:
         """
         Count images to import and get the first image path for preview.
-        
+
         Args:
             paths: List of paths to check
-            
+
         Returns:
             Tuple of (list of image paths, first image path for preview)
         """
         all_images = []
         first_image = None
-        
+
         for path in paths:
             try:
                 if path.is_dir():
@@ -2872,36 +3139,35 @@ class MainWindow(QMainWindow):
                             first_image = path
             except Exception as e:
                 print(f"Error scanning path {path}: {str(e)}")
-        
+
         return all_images, first_image
-    
+
     def _import_images(self, paths: List[Path]):
         """
         Import images from paths.
-        
+
         Args:
             paths: List of paths to import
         """
         # Count images and get first image for preview
         image_paths, first_image_path = self._count_images_to_import(paths)
-        
+
         if not image_paths:
             QMessageBox.warning(
-                self,
-                "No Images Found",
-                "No valid images found to import."
+                self, "No Images Found", "No valid images found to import."
             )
             return
-        
+
         # Show import dialog
         from gui.import_dialog import ImportDialog
+
         dialog = ImportDialog(
             self,
             image_manager=self.image_manager,
             image_paths=image_paths,
-            first_image_path=first_image_path
+            first_image_path=first_image_path,
         )
-        
+
         if dialog.exec_() != QDialog.Accepted:
             return
 
@@ -2916,43 +3182,35 @@ class MainWindow(QMainWindow):
 
         # Create progress bar in status bar
         progress_bar = self._create_status_progress_bar()
-        
+
         # Create and configure worker with tags
         worker = ImageImportWorker(self.image_manager, image_paths, selected_tags)
-        
+
         # Connect signals with queued connections to ensure thread safety
         worker.signals.progress.connect(
             lambda current, total: self._handle_progress_update(current, total),
-            Qt.QueuedConnection
+            Qt.QueuedConnection,
         )
-        
-        worker.signals.log.connect(
-            self.add_log_message,
-            Qt.QueuedConnection
-        )
-        
+
+        worker.signals.log.connect(self.add_log_message, Qt.QueuedConnection)
+
         # Connect finished signal with explicit slot
         worker.signals.finished.connect(
-            self._handle_import_finished,
-            Qt.QueuedConnection
+            self._handle_import_finished, Qt.QueuedConnection
         )
-        
-        worker.signals.error.connect(
-            self._handle_import_error,
-            Qt.QueuedConnection
-        )
+
+        worker.signals.error.connect(self._handle_import_error, Qt.QueuedConnection)
         worker.signals.image_imported.connect(
-            self._on_image_imported,
-            Qt.QueuedConnection
+            self._on_image_imported, Qt.QueuedConnection
         )
-        
+
         # Start worker
         if self.dev_mode:
             self.update_dev_progress_label("Starting import...")
             self.update_dev_progress_bar(0)
         else:
             self.statusBar().showMessage("Starting image import...")
-        
+
         # Start worker and keep a reference to prevent garbage collection
         self.current_worker = worker
         self.thread_pool.start(worker)
@@ -3024,9 +3282,7 @@ class MainWindow(QMainWindow):
         try:
             if self.status_progress_bar is not None:
                 self.status_progress_bar.setValue(100)
-                self.status_progress_bar.setFormat(
-                    f"Applying tag '{tag}': completed"
-                )
+                self.status_progress_bar.setFormat(f"Applying tag '{tag}': completed")
                 self.status_progress_bar.repaint()
 
             # Clean up progress bar
@@ -3090,9 +3346,7 @@ class MainWindow(QMainWindow):
         try:
             if self.status_progress_bar is not None:
                 self.status_progress_bar.setValue(100)
-                self.status_progress_bar.setFormat(
-                    f"Removing tag '{tag}': completed"
-                )
+                self.status_progress_bar.setFormat(f"Removing tag '{tag}': completed")
                 self.status_progress_bar.repaint()
             self._cleanup_progress_bars()
         except Exception:
@@ -3106,17 +3360,21 @@ class MainWindow(QMainWindow):
     def _handle_progress_update(self, current: int, total: int):
         """Handle progress update from worker thread."""
         progress = int(current * 100 / total)
-        
+
         # Update main progress bar
         if self.status_progress_bar is not None:
             self.status_progress_bar.setValue(progress)
-            self.status_progress_bar.setFormat(f"Importing: {current}/{total} ({progress}%)")
-        
+            self.status_progress_bar.setFormat(
+                f"Importing: {current}/{total} ({progress}%)"
+            )
+
         # Update dev mode progress
         if self.dev_mode:
             self.update_dev_progress_bar(progress)
-            self.update_dev_progress_label(f"Importing: {current}/{total} images processed")
-    
+            self.update_dev_progress_label(
+                f"Importing: {current}/{total} images processed"
+            )
+
     def _on_image_imported(self, image_id: str) -> None:
         """Add the newly imported image at the top of the grid (no full refresh)."""
         meta = self.image_manager.get_image_metadata(image_id)
@@ -3132,7 +3390,7 @@ class MainWindow(QMainWindow):
                 self.status_progress_bar.setFormat("Import completed")
                 # Force the progress bar to update
                 self.status_progress_bar.repaint()
-            
+
             # Show result message first
             if successful == 0:
                 if duplicates == total:
@@ -3148,176 +3406,179 @@ class MainWindow(QMainWindow):
                 if duplicates > 0:
                     message += f" ({duplicates} duplicates skipped)"
                 self.update_status_message(message)
-            
+
             # Update dev UI
             if self.dev_mode:
                 self.update_dev_progress_label("Import completed")
-            
+
             # Force UI update
             QThread.msleep(100)  # Give time for UI to update
-            
+
             # Clean up all progress bars
             self._cleanup_progress_bars()
             # Refresh grid once at end of import
             self._apply_category_filters()
             self._update_available_tags()
-            
+
         except Exception as e:
             print(f"Error in import finished handler: {e}")
             self._cleanup_progress_bars()
-    
+
     def _handle_import_error(self, error_msg: str):
         """Handle import error from worker thread."""
         try:
             # Clean up all progress bars
             self._cleanup_progress_bars()
-            
+
             # Update dev UI
             if self.dev_mode:
                 self.update_dev_progress_label("Import failed")
-            
+
             # Show error message
             msg = f"Error importing images: {error_msg}"
             self.add_log_message(msg, "ERROR")
             self.update_status_message(msg)
-            
+
         except Exception as e:
             print(f"Error in error handler: {e}")
             self._cleanup_progress_bars()
-    
+
     def _on_import_images(self):
         """Handle image import action."""
         formats = " ".join(f"*{fmt}" for fmt in ImageManager.SUPPORTED_FORMATS)
         paths, _ = QFileDialog.getOpenFileNames(
-            self,
-            "Import Images",
-            "",
-            f"Images ({formats})"
+            self, "Import Images", "", f"Images ({formats})"
         )
-        
+
         if paths:
             self._import_images([Path(p) for p in paths])
-    
+
     def _on_import_folder(self):
         """Handle folder import action."""
-        folder = QFileDialog.getExistingDirectory(
-            self,
-            "Import Folder",
-            ""
-        )
-        
+        folder = QFileDialog.getExistingDirectory(self, "Import Folder", "")
+
         if folder:
             self._import_images([Path(folder)])
-    
+
     def _setup_menu(self):
         """Set up the menu bar."""
         # File menu
         file_menu = self.menuBar().addMenu("&File")
         # Set minimum width to prevent text overlap with keyboard shortcuts
         file_menu.setMinimumWidth(220)
-        
+
         # - Import images
         import_action = QAction("Import Images", self)
         import_action.setShortcut("Ctrl+I")
         import_action.triggered.connect(self._on_import_images)
         file_menu.addAction(import_action)
-        
+
         # - Import folder
         import_folder_action = QAction("Import Folder", self)
         import_folder_action.setShortcut("Ctrl+F")
         import_folder_action.triggered.connect(self._on_import_folder)
         file_menu.addAction(import_folder_action)
-        
+
         file_menu.addSeparator()
-        
+
         # - Settings
         settings_action = QAction("Settings", self)
         settings_action.triggered.connect(self._show_settings)
         file_menu.addAction(settings_action)
-        
+
         file_menu.addSeparator()
-        
+
         # - Exit
         exit_action = QAction("Exit", self)
         exit_action.setShortcut("Alt+F4")
         exit_action.triggered.connect(self.close)
         file_menu.addAction(exit_action)
-        
+
         # View menu
         view_menu = self.menuBar().addMenu("&View")
-        
+
         # - Theme submenu
         theme_menu = QMenu("&Theme", self)
         theme_group = QActionGroup(self)
         theme_group.setExclusive(True)
-        
-        light_theme_action = QAction("&Light", self)
-        light_theme_action.setCheckable(True)
-        light_theme_action.triggered.connect(lambda: self._set_theme("light"))
-        theme_group.addAction(light_theme_action)
-        
-        dark_theme_action = QAction("&Dark", self)
-        dark_theme_action.setCheckable(True)
-        dark_theme_action.triggered.connect(lambda: self._set_theme("dark"))
-        theme_group.addAction(dark_theme_action)
-        
-        # Set initial check state
-        if settings.get("ui.theme") == "dark":
-            dark_theme_action.setChecked(True)
-        else:
-            light_theme_action.setChecked(True)
-        
-        theme_menu.addAction(light_theme_action)
-        theme_menu.addAction(dark_theme_action)
+        current_theme = settings.get("ui.theme", "dark")
+        for label, key in THEME_OPTIONS:
+            action = QAction(label, self)
+            action.setCheckable(True)
+            action.triggered.connect(
+                lambda _=False, theme_key=key: self._set_theme(theme_key)
+            )
+            if key == current_theme:
+                action.setChecked(True)
+            theme_group.addAction(action)
+            theme_menu.addAction(action)
         view_menu.addMenu(theme_menu)
-        
+
         # Tools menu
         tools_menu = self.menuBar().addMenu("&Tools")
-        
+
         # - Dev mode toggle
         dev_mode_action = QAction("Enable &Developer Mode", self)
         dev_mode_action.setCheckable(True)
         dev_mode_action.setChecked(self.dev_mode)
         dev_mode_action.triggered.connect(self._toggle_dev_mode)
         tools_menu.addAction(dev_mode_action)
-        
+
         # - Purge library (only visible in dev mode)
         self.purge_action = QAction("&Purge Image Library...", self)
         self.purge_action.triggered.connect(self._purge_library)
         self.purge_action.setVisible(self.dev_mode)
         tools_menu.addAction(self.purge_action)
-        
+
         # - Reload default tags
         reload_tags_action = QAction("&Reload Default Tags", self)
         reload_tags_action.triggered.connect(self.reload_default_tags)
         tools_menu.addAction(reload_tags_action)
-        
+
         # Help menu
         help_menu = self.menuBar().addMenu("&Help")
-        
+
         # - About
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._show_about)
         help_menu.addAction(about_action)
-    
+
     def _setup_statusbar(self):
         """Set up the status bar."""
         status_bar = self.statusBar()
         status_bar.setMinimumHeight(24)  # Ensure status bar is tall enough
         status_bar.showMessage("Ready")
-    
+
+        # Grid stats on the right (same band as transient status messages / dev log area)
+        stats_widget = QWidget()
+        stats_layout = QHBoxLayout(stats_widget)
+        stats_layout.setContentsMargins(0, 0, 12, 0)
+        stats_layout.setSpacing(12)
+        self.session_images_count_label = QLabel("Images: 0")
+        self.session_images_count_label.setStyleSheet(
+            "font-size: 12px; font-weight: bold;"
+        )
+        self.selection_info_label = QLabel("")
+        self.selection_info_label.setStyleSheet(
+            "font-size: 12px; font-weight: bold; color: #7eb8da;"
+        )
+        stats_layout.addWidget(self.session_images_count_label)
+        stats_layout.addWidget(self.selection_info_label)
+        status_bar.addPermanentWidget(stats_widget)
+
     def _show_about(self):
         """Show about dialog."""
         QMessageBox.about(
             self,
             "About SketchBook",
             "SketchBook - A desktop application for timed life drawing sessions.\n\n"
-            "Version: 0.1.0"
+            "Version: 0.1.0",
         )
-    
+
     def _show_settings(self):
         """Show settings dialog."""
         from gui.settings_dialog import SettingsDialog
+
         dialog = SettingsDialog(self)
         # Store current theme before dialog opens
         old_theme = settings.get("ui.theme", "dark")
@@ -3327,11 +3588,11 @@ class MainWindow(QMainWindow):
             if new_theme != old_theme:
                 # Apply the theme immediately
                 apply_global_stylesheet()
-    
+
     def _set_theme(self, theme: str):
         """
         Set application theme.
-        
+
         Args:
             theme: Theme name ('light' or 'dark')
         """
@@ -3339,40 +3600,40 @@ class MainWindow(QMainWindow):
         settings.save()
         apply_global_stylesheet()
         # Styles are now handled by global QSS, no need to call individual _apply_theme methods
-    
+
     def _apply_theme(self):
         """Apply the current theme from settings."""
         apply_global_stylesheet()
-    
+
     def _toggle_dev_mode(self, enabled: bool):
         """
         Toggle developer mode.
-        
+
         Args:
             enabled: Whether dev mode should be enabled
         """
         self.dev_mode = enabled
         settings.set("ui.dev_mode", enabled)
         settings.save()
-        
+
         # Update UI
         self.purge_action.setVisible(enabled)
         self.dev_dock.setVisible(enabled)
-        
+
         # Show status message
         self.statusBar().showMessage(
             "Developer mode enabled" if enabled else "Developer mode disabled",
-            3000  # Show for 3 seconds
+            3000,  # Show for 3 seconds
         )
-        
+
         if enabled:
             self.add_log_message("Developer mode enabled")
-    
+
     def _purge_library(self):
         """Purge the entire image library."""
         if not self.dev_mode:
             return
-            
+
         result = QMessageBox.warning(
             self,
             "Purge Library",
@@ -3380,36 +3641,38 @@ class MainWindow(QMainWindow):
             "This action cannot be undone!\n\n"
             "Are you sure you want to continue?",
             QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.No
+            QMessageBox.No,
         )
-        
+
         if result == QMessageBox.Yes:
             try:
                 # Delete all image files
                 from core.user_data import user_data
+
                 image_dir = user_data.get_images_dir()
                 if image_dir.exists():
                     for file in image_dir.glob("*"):
-                        if file.is_file() and file.suffix.lower() in ImageManager.SUPPORTED_FORMATS:
+                        if (
+                            file.is_file()
+                            and file.suffix.lower() in ImageManager.SUPPORTED_FORMATS
+                        ):
                             file.unlink()
-                
+
                 # Clear metadata database
                 self.image_manager.db._images = {}
                 self.image_manager.db._save_db()
-                
+
                 QMessageBox.information(
                     self,
                     "Library Purged",
-                    "The image library has been successfully purged."
+                    "The image library has been successfully purged.",
                 )
-                
+
                 self.statusBar().showMessage("Library purged successfully")
                 self._apply_category_filters()
             except Exception as e:
                 QMessageBox.critical(
-                    self,
-                    "Purge Error",
-                    f"Error purging library: {str(e)}"
+                    self, "Purge Error", f"Error purging library: {str(e)}"
                 )
 
     def _on_columns_changed(self, value: int):
@@ -3427,4 +3690,3 @@ class MainWindow(QMainWindow):
             self._image_viewer_window.show()
             self._image_viewer_window.raise_()
             self._image_viewer_window.activateWindow()
-    

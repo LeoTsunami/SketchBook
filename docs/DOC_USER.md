@@ -25,6 +25,31 @@ When you import images, SketchBook automatically:
 - Dragging a folder containing images is not supported, but you can select multiple images from the folder and drag them
 - If some images fail to import, check that they are in a supported format
 
+## Themes
+
+You can switch theme in **File > Settings** (Theme) or **View > Theme**.
+
+Available themes:
+- Dark
+- Light
+- Neon Night
+- Sunset Glass
+- Midnight Ocean
+
+## Tag Sidebar
+
+The left area is a tag library panel that slides in from the left (animated width). When it is closed, its width goes to zero so the gallery uses the full width.
+
+**Top bar** (full width, above the main splitter):
+
+- The **SketchBook** logo is on the **left** of this row.
+- Next to it, the **Tags filters** button opens or closes the tag library: **Tags filters >** when the panel is closed, **Tags filters ❮** when it is open.
+- On the **right** of the same row: **Shuffle** (when using Session Course Random sort), **Sort** order, and **Columns** (slider + count).
+
+**Below** the top bar, the horizontal **splitter** shows the tag library (left, collapsible) and the image gallery (right). The **Start session** button stays **centered at the bottom** of the gallery viewport.
+
+**Image count and selection size** (number of filtered images and total size of the current selection) appear on the **right side of the status bar**, next to the usual status messages (same band as quick / dev log feedback).
+
 ## Image Metadata
 SketchBook automatically tracks metadata for your imported images, including:
 

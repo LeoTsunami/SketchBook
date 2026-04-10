@@ -374,6 +374,13 @@ The `ImageGrid` class manages the display of image thumbnails in a responsive gr
 - Maintains consistent aspect ratio (1.2:1, height:width) for all thumbnails
 - Minimum thumbnail height of 150px to ensure visibility
 - Dynamic column adjustment via slider with smooth transitions
+- **`relayout_after_sidebar_step()`**: Stops the debounced `layout_timer` and calls `_update_layout()` immediately. `MainWindow` calls it **once when the tag sidebar width animation finishes** (not during the animation). Ordinary `resizeEvent` paths still use the debounced timer.
+
+### Main window layout (central widget)
+
+- **`_setup_top_chrome_bar()`**: Full-width top row (`TopChromeBar`) with logo (`_logo_label`), **Tags filters** (`tag_filters_floating_btn`), `addStretch()`, then **Shuffle**, **Sort** (`sort_combo`), **Columns** (`columns_slider`, `columns_count`).
+- **`_setup_image_browser()`**: Adds the horizontal splitter (tag sidebar + gallery column) below the chrome bar with stretch factor 1.
+- **`_position_floating_session_button()`**: Positions **Start session** on `image_grid.viewport()` bottom-center. A `QEvent.Resize` filter on the viewport keeps it updated.
 
 ### Performance Optimizations
 - Asynchronous image loading using `QThreadPool`

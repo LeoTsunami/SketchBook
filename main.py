@@ -65,14 +65,13 @@ def main():
     # Load custom fonts
     fonts_loaded = load_fonts()
     
-    # Set default font to Kalam if loaded
-    if "Kalam" in fonts_loaded:
-        default_font = QFont(fonts_loaded["Kalam"], 10)
-        app.setFont(default_font)
+    # Use a clean modern UI font for the whole application.
+    # Reason: The new visual direction requires simpler typography.
+    app.setFont(QFont("Segoe UI", 10))
     
     # Charger le QSS global depuis gui/styles/ selon le thème
     theme = settings.get("ui.theme", "dark")
-    if theme not in ("dark", "light"):
+    if theme not in ("dark", "light", "neon_night", "sunset_glass", "midnight_ocean"):
         theme = "dark"
     qss = load_stylesheet(f"gui/styles/style_{theme}.qss")
     app.setStyleSheet(qss)

@@ -1,5 +1,19 @@
 # Journal des modifications
 
+## 2026-04-10 (Sidebar tags : contrôles flottants, panneau plus large, grille fluide)
+### ✅ Tâches :
+- Bouton filtres tags et logo flottants sur la grille ; rail tags replié à largeur 0 ; panneau ouvert plus large ; zone scroll en pleine hauteur ; **Start session** centré en bas ; resize fluide de la galerie conservé
+
+- **Barre supérieure** : logo à gauche, **Tags filters**, puis sur la même ligne à droite **Shuffle** / **tri** / **colonnes** ; le splitter est uniquement en dessous.
+- **Rail tags** : largeur **0** quand fermé ; **~360** px à l’ouverture ; marge haute pour ne pas passer sous le bandeau logo ; logo plus grand.
+- **Bibliothèque de tags** : la zone défilante prend l’espace vertical restant dans le panneau (stretch sur le `QScrollArea`, suppression de l’ancien stretch en bas).
+- **Start session** : ancré au **centre bas** du viewport de la grille (au lieu du coin bas-droit).
+- **Galerie** : `relayout_after_sidebar_step()` est appelé **uniquement à la fin** de l’animation de largeur du panneau tags (plus pendant l’animation).
+- **Barre d’état** : nombre d’images et poids de la sélection à **droite** de la barre d’état (même bande que les messages). Panneau tags un peu moins large ; marge haute sous le bandeau logo ; logo plus grand.
+- **Tests** : `tests/test_image_grid.py` pour `relayout_after_sidebar_step`.
+ → Résultat : les filtres tags restent accessibles au même endroit ; le logo est en haut à gauche ; la bibliothèque de tags utilise mieux la hauteur ; le bouton de session est centré en bas.
+---
+
 ## 2026-04-08 (Hiérarchie de tags : filtrage récursif des descendants)
 ### ✅ Tâches :
 - Corriger le filtrage pour qu'une sous-catégorie parente inclue tous ses descendants imbriqués dans la grille d'images
@@ -9,6 +23,9 @@
 - **Repères visuels de hiérarchie** : catégories et tags affichent désormais une flèche d'expand/collapse lorsqu'ils ont des enfants (`▶` replié, `▼` déplié). Ajout d'une coloration par profondeur pour mieux distinguer les niveaux imbriqués dans la grille.
 - **Interactions tags cohérentes** : le clic simple est maintenant réservé au filtre et à l'expand/collapse. La sélection multiple dans la bibliothèque de tags se fait uniquement via modificateur+drag (`Ctrl` ou `Shift` + glisser), pour éviter les sélections accidentelles au clic.
 - **UX de layout hiérarchique** : les tags enfants sont maintenant rendus systématiquement sur une nouvelle ligne sous leur parent sélectionné, avec position du parent stable dans l'ordre de la catégorie (plus de saut de sous-catégorie). Les lignes enfants ont aussi un encadrement visuel léger.
+- **Nouveaux thèmes modernes** : ajout de trois thèmes avec dégradés (`Neon Night`, `Sunset Glass`, `Midnight Ocean`) et sélection possible depuis Settings et depuis le menu View > Theme.
+- **Modernisation du style dark par défaut** : mise à jour du thème sombre de base avec un fond en dégradé violet/indigo et des contrôles translucides plus propres. La typographie par défaut de l'app passe à `Segoe UI` pour un rendu blanc plus simple et moderne.
+- **Comportement de la sidebar tags** : suppression de la section haute devenue inutile dans le splitter vertical gauche et passage à une sidebar à largeur fixe, repliable/dépliable avec animation.
 - **Sécurité anti-boucle** : Ajout d'une protection contre les cycles dans la traversal des descendants pour éviter une récursion infinie si une boucle parent/enfant invalide existe dans les placements utilisateur.
 - **Tests** : Ajout de tests unitaires dans `tests/test_main_window.py` pour le cas attendu récursif, le cas limite d'un tag feuille, et le cas d'échec avec cycle.
  → Résultat : La hiérarchie de tags supporte des niveaux imbriqués illimités pour le filtrage, et cliquer une sous-catégorie parente remonte bien les images des sous-tags profonds.

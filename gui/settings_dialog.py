@@ -19,6 +19,14 @@ from core.settings import settings
 
 class SettingsDialog(QDialog):
     """Dialog for configuring application settings."""
+
+    THEME_OPTIONS = [
+        ("Dark", "dark"),
+        ("Light", "light"),
+        ("Neon Night", "neon_night"),
+        ("Sunset Glass", "sunset_glass"),
+        ("Midnight Ocean", "midnight_ocean"),
+    ]
     
     def __init__(self, parent=None):
         """
@@ -51,8 +59,12 @@ class SettingsDialog(QDialog):
         theme_layout = QFormLayout()
         
         self.theme_combo = QComboBox()
-        self.theme_combo.addItems(["Dark", "Light"])
-        self.theme_combo.setCurrentText(self.theme_value.capitalize())
+        for label, theme_key in self.THEME_OPTIONS:
+            self.theme_combo.addItem(label, theme_key)
+        current_index = self.theme_combo.findData(self.theme_value)
+        if current_index < 0:
+            current_index = self.theme_combo.findData("dark")
+        self.theme_combo.setCurrentIndex(current_index)
         theme_layout.addRow("Theme:", self.theme_combo)
         
         theme_group.setLayout(theme_layout)
@@ -149,9 +161,9 @@ class SettingsDialog(QDialog):
         Get selected theme.
         
         Returns:
-            Theme name ('light' or 'dark')
+            Theme key
         """
-        return self.theme_combo.currentText().lower()
+        return self.theme_combo.currentData()
     
     def get_max_width(self) -> int:
         """

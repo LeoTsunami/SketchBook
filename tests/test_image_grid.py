@@ -1,6 +1,7 @@
 """
 Tests for the image grid (visibility debounce, pending load queue).
 """
+
 import pytest
 from pathlib import Path
 from datetime import datetime
@@ -60,16 +61,17 @@ def test_check_visible_thumbnails_enqueues_and_starts_ticker(image_grid):
 
 def test_process_pending_loads_pops_max_per_tick(image_grid):
     """_process_pending_loads should pop at most MAX_LOADS_PER_TICK per call."""
-    image_grid.load_ticker_timer.stop()
+    max_per = image_grid.MAX_LOADS_PER_TICK
     image_grid.pending_load_queue.clear()
-    for i in range(5):
+    remaining = 5
+    for i in range(max_per + remaining):
         image_grid.pending_load_queue.append(f"fake_id_{i}")
+    image_grid.load_ticker_timer.start()
 
     with patch.object(image_grid, "_load_thumbnail_image"):
         image_grid._process_pending_loads()
-    # Should have popped at most MAX_LOADS_PER_TICK (2)
-    assert len(image_grid.pending_load_queue) >= 3
-    assert image_grid.load_ticker_timer.isActive() or len(image_grid.pending_load_queue) == 0
+    assert len(image_grid.pending_load_queue) == remaining
+    assert image_grid.load_ticker_timer.isActive()
 
 
 def test_process_pending_loads_stops_timer_when_queue_empty(image_grid):
@@ -89,3 +91,32 @@ def test_clear_stops_timers_and_empties_queue(image_grid):
     assert not image_grid.visibility_timer.isActive()
     assert not image_grid.load_ticker_timer.isActive()
     assert len(image_grid.pending_load_queue) == 0
+
+
+def test_relayout_after_sidebar_step_calls_update_and_stops_debounce_timer(image_grid):
+    """relayout_after_sidebar_step should bypass debounce and refresh layout once."""
+    image_grid.layout_timer.start()
+    with patch.object(image_grid, "_update_layout") as mock_update:
+        image_grid.relayout_after_sidebar_step()
+    assert not image_grid.layout_timer.isActive()
+    mock_update.assert_called_once()
+
+
+def test_relayout_after_sidebar_step_empty_grid_still_invokes_update(
+    qtbot, image_manager
+):
+    """Edge case: no thumbnails yet — _update_layout still runs (early exit inside)."""
+    grid = ImageGrid(image_manager)
+    qtbot.addWidget(grid)
+    with patch.object(grid, "_update_layout") as mock_update:
+        grid.relayout_after_sidebar_step()
+    mock_update.assert_called_once()
+
+
+def test_relayout_after_sidebar_step_stops_timer_even_when_update_raises(image_grid):
+    """Failure path: layout_timer is stopped before _update_layout runs."""
+    image_grid.layout_timer.start()
+    with patch.object(image_grid, "_update_layout", side_effect=RuntimeError("boom")):
+        with pytest.raises(RuntimeError):
+            image_grid.relayout_after_sidebar_step()
+    assert not image_grid.layout_timer.isActive()

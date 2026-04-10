@@ -11,6 +11,9 @@ Update this file via prompt:
 - [x] Add hierarchy depth colors and expand/collapse arrows for categories and tags with children (2026-04-08)
 - [x] Unify tag interactions: simple click for filter/expand-collapse and modifier+drag for tag-library multi-selection (2026-04-08)
 - [x] Improve hierarchy readability: keep sub-category position stable and render children directly below parent with subtle child framing (2026-04-08)
+- [x] Add 3 modern gradient themes and expose them in settings/theme menu (2026-04-08)
+- [x] Apply modern gradient dark UI baseline and switch to simple white UI typography (Segoe UI) (2026-04-08)
+- [x] Remove unused top-left splitter section and add fixed-width animated collapsible tag sidebar (2026-04-08)
 - [x] Fix recursive tag hierarchy filtering so selecting a parent sub-category includes all nested child tags in the image grid (2026-04-08)
 - [x] Update default tag dictionary and search autocomplete (2026-01-23)
 - [x] Validate tag input with feedback animation (2026-01-23)
@@ -30,6 +33,11 @@ Update this file via prompt:
 - [x] Code cleanup: remove unused code, factorize duplicates, improve maintainability (2026-02-06)
 - [x] Add "Session Course Random" sort option to preview session order before starting (2026-02-06)
 - [x] Image grid: right-click single image -> "Start session from this image" and ignore previous images in session order (2026-03-24)
+- [x] Tag sidebar: normal-size collapse toggle + smoother gallery thumbnail resize during sidebar open/close animation (2026-04-10)
+- [x] Tag UI: floating logo + Tags filters button on grid; tag rail collapses to 0 width; wider open panel; tag scroll full height; Start session bottom-center (2026-04-10)
+- [x] Tag sidebar UX: grid relayout only when animation ends; larger logo; tag panel top inset; narrower library width; image/selection stats in status bar (2026-04-10)
+- [x] Main layout: dedicated full-width top row (logo + Tags filters); splitter gallery/tags only below (2026-04-10)
+- [x] Top chrome: move Shuffle, Sort, Columns to same top row as logo (2026-04-10)
 
 ### Phase 1: Basic Structure ✅ (Completed: 2024-03-06)
 - [x] Set up base Python project with multi-file structure
