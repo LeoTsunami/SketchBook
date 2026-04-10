@@ -1,5 +1,95 @@
 # Changelog
 
+## 2026-04-10 (Text color consistency pass: white informational labels)
+### ✅ Tasks:
+- Unify key informational text colors to white for visual consistency
+
+- Updated tag library header labels (`Tags Library`, parent-selection helper text) to explicit white.
+- Updated top chrome helper labels (`Sort`, `Columns`, and column count) to white.
+- Updated right status metrics (`Images: N` and selection summary) to white.
+→ Result: Informational UI text now has consistent white contrast across the main screen.
+---
+
+## 2026-04-10 (Chrome balance tweak: bigger logo, stronger shadow, thinner top strip)
+### ✅ Tasks:
+- Adjust logo emphasis and reduce top chrome thickness
+
+- Increased floating logo size for stronger branding presence.
+- Added a pronounced drop shadow on the floating logo to improve depth and separation from background gradients.
+- Reduced top chrome bar height slightly to keep a lighter upper silhouette.
+→ Result: The header keeps strong branding with better logo contrast while the top strip feels slimmer and cleaner.
+---
+
+## 2026-04-10 (Custom chrome final UX pass)
+### ✅ Tasks:
+- Final polish for frameless window UX and top chrome proportions
+
+- Improved resize cursor feedback by updating edge-hit cursor state through the global event filter (including when hovering child widgets near borders).
+- Corrected custom window glyphs for minimize/maximize/restore (`-`, `□`, `❐`) to look closer to standard window controls.
+- Adjusted proportions: slightly reduced floating logo size, increased top chrome bar height, and widened compact left sidebar rail.
+→ Result: Frameless behavior feels more native (clear resize affordance) and the top layout balance is closer to the intended final design.
+---
+
+## 2026-04-10 (Top bar polish: resizable frameless + transparent menu buttons)
+### ✅ Tasks:
+- Keep the custom frameless window resizable and refine top menu button visuals
+
+- Added edge/corner hit-testing and native `startSystemResize(...)` delegation so the frameless main window remains resizable from borders.
+- Updated `File / View / Tools / Help` top buttons to transparent background, with very low-alpha white hover feedback.
+- Increased custom top chrome height for better readability and spacing.
+→ Result: The custom title bar keeps the desired visual style while preserving practical window resize behavior.
+---
+
+## 2026-04-10 (Custom themed window bar with app menus and window controls)
+### ✅ Tasks:
+- Replace the native title bar with a custom themed top bar that includes app menus and minimize/maximize/close controls
+
+- Enabled frameless main window mode and added custom window control buttons (`_`, `[]`/restore, `X`) in the existing top chrome row.
+- Kept `File / View / Tools / Help` in the same row as grid controls and added window-state sync for maximize/restore button behavior.
+- Added drag and double-click handling on the custom top bar background to support move and maximize/restore interactions.
+→ Result: The app now uses a non-white, theme-consistent custom title bar where menus and window controls live on the same horizontal row.
+---
+
+## 2026-04-10 (Tag sidebar visual cleanup: transparent library + hidden splitter handle)
+### ✅ Tasks:
+- Remove tag library scroll area background and make the main content splitter separator invisible
+
+- Updated `MainWindow` to make `tags_scroll_area` transparent via object-scoped stylesheet (`TagLibraryScrollArea`).
+- Updated the main horizontal splitter to use a zero-width, transparent handle (`MainImageSplitter`) so the divider is no longer visible.
+- Kept behavior intact while simplifying the visual separation between tag library and gallery.
+→ Result: The tag library now blends with its panel background, and the splitter separator is visually hidden for a cleaner interface.
+---
+
+## 2026-04-10 (Environment fix: stable Python for PySide6)
+### ✅ Tasks:
+- Replace unstable project virtual environment interpreter and restore Qt bindings loading
+
+- Installed stable Python 3.12.10 locally and recreated `.venv` with `py -3.12 -m venv .venv`.
+- Reinstalled all dependencies from `requirements.txt` in the new environment.
+- Verified that `PySide6` and `shiboken6` import successfully and that `main.py` imports without runtime binding errors.
+→ Result: The project now uses a stable virtual environment (`.venv`) where Qt bindings load correctly, enabling normal app startup from Cursor.
+---
+
+## 2026-04-10 (Developer experience: run main.py from Cursor Play button)
+### ✅ Tasks:
+- Add workspace VS Code/Cursor Python run configuration for direct launch of `main.py`
+
+- Added `.vscode/launch.json` with a dedicated `Python: Run main.py` launch profile.
+- Added `.vscode/settings.json` to pin the workspace interpreter to `.venv\\Scripts\\python.exe`.
+- Configured launch to run in integrated terminal with workspace root as current working directory.
+→ Result: `main.py` can now be launched directly from Cursor with the Play/Run action using the project virtual environment.
+---
+
+## 2026-04-10 (Environment setup: local Python virtual environment)
+### ✅ Tasks:
+- Create a local Python virtual environment and install project dependencies from `requirements.txt`
+
+- Created `.venv` at the project root with `py -3 -m venv .venv`.
+- Upgraded `pip` inside the virtual environment to latest available version.
+- Installed all dependencies listed in `requirements.txt` (GUI, image processing, validation, tooling, and typing packages).
+→ Result: The project now has a ready-to-use isolated Python environment with all required dependencies installed.
+---
+
 ## 2026-04-10 (Tag sidebar: floating controls, wider panel, grid relayout on animation end)
 ### ✅ Tasks:
 - Independent floating tag toggle + branding logo on the image grid; fully collapse the tag rail; open panel width for 3 tag columns; full-height tag scroll; center **Start session** at bottom; relayout grid only when sidebar animation ends

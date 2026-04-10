@@ -320,6 +320,11 @@ class MainWindow(QMainWindow):
         # Window setup
         self.setWindowTitle("SketchBook")
         self.resize(1280, 800)
+        self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
+        self._is_window_dragging = False
+        self._window_drag_offset = QPoint()
+        self._resize_margin_px = 6
+        self._resize_edges = Qt.Edges()
 
         # Menus must exist before top chrome (menu buttons next to logo)
         self._setup_statusbar()
@@ -360,7 +365,7 @@ class MainWindow(QMainWindow):
         cw = self.centralWidget()
         if not cw:
             return
-        self._logo_float_height_px = 80
+        self._logo_float_height_px = 84
         logo_path = (
             Path(__file__).resolve().parent
             / "ressources"
@@ -370,6 +375,11 @@ class MainWindow(QMainWindow):
         self._logo_label = QLabel(cw)
         self._logo_label.setAttribute(Qt.WA_TranslucentBackground)
         self._logo_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        logo_shadow = QGraphicsDropShadowEffect(self._logo_label)
+        logo_shadow.setBlurRadius(34)
+        logo_shadow.setOffset(0, 6)
+        logo_shadow.setColor(QColor(0, 0, 0, 210))
+        self._logo_label.setGraphicsEffect(logo_shadow)
         logo_pix = QPixmap(str(logo_path))
         if not logo_pix.isNull():
             self._logo_label.setPixmap(
@@ -440,13 +450,13 @@ class MainWindow(QMainWindow):
                     font-size: 11px;
                     font-weight: bold;
                     padding: 4px 10px;
-                    border: 1px solid #555;
+                    border: 1px solid transparent;
                     border-radius: 4px;
-                    background-color: rgba(45, 48, 52, 0.9);
+                    background-color: transparent;
                 }
                 QToolButton:hover {
-                    background-color: rgba(60, 64, 70, 0.95);
-                    border-color: #6b9bd1;
+                    background-color: rgba(255, 255, 255, 0.09);
+                    border-color: rgba(255, 255, 255, 0.12);
                 }
                 QToolButton::menu-indicator { width: 0px; }
             """)
@@ -477,7 +487,7 @@ class MainWindow(QMainWindow):
         self.shuffle_button.hide()
 
         sort_label = QLabel("Sort:", self._top_chrome_bar)
-        sort_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
+        sort_label.setStyleSheet("color: #ffffff; font-size: 11px;")
         self.sort_combo = QComboBox(self._top_chrome_bar)
         self.sort_combo.addItems(
             [
@@ -499,7 +509,7 @@ class MainWindow(QMainWindow):
         self.shuffle_button.setVisible(self.sort_combo.currentIndex() == 6)
 
         columns_label = QLabel("Columns:", self._top_chrome_bar)
-        columns_label.setStyleSheet("color: #aaaaaa; font-size: 11px;")
+        columns_label.setStyleSheet("color: #ffffff; font-size: 11px;")
         self.columns_slider = QSlider(Qt.Horizontal, self._top_chrome_bar)
         self.columns_slider.setMinimum(3)
         self.columns_slider.setMaximum(10)
@@ -510,7 +520,7 @@ class MainWindow(QMainWindow):
         self.columns_count = QLabel(
             str(self.columns_slider.value()), self._top_chrome_bar
         )
-        self.columns_count.setStyleSheet("color: #aaaaaa; font-size: 11px;")
+        self.columns_count.setStyleSheet("color: #ffffff; font-size: 11px;")
 
         top_row.addWidget(self.shuffle_button, 0, Qt.AlignVCenter)
         top_row.addWidget(sort_label, 0, Qt.AlignVCenter)
@@ -518,15 +528,212 @@ class MainWindow(QMainWindow):
         top_row.addWidget(columns_label, 0, Qt.AlignVCenter)
         top_row.addWidget(self.columns_slider, 0, Qt.AlignVCenter)
         top_row.addWidget(self.columns_count, 0, Qt.AlignVCenter)
+        top_row.addSpacing(8)
 
-        self._top_chrome_bar.setFixedHeight(30)
+        self._window_min_btn = QPushButton("-", self._top_chrome_bar)
+        self._window_min_btn.setToolTip("Minimize")
+        self._window_min_btn.setFixedSize(30, 22)
+        self._window_min_btn.clicked.connect(self.showMinimized)
+
+        self._window_max_btn = QPushButton("□", self._top_chrome_bar)
+        self._window_max_btn.setToolTip("Maximize")
+        self._window_max_btn.setFixedSize(30, 22)
+        self._window_max_btn.clicked.connect(self._toggle_maximize_restore)
+
+        self._window_close_btn = QPushButton("X", self._top_chrome_bar)
+        self._window_close_btn.setToolTip("Close")
+        self._window_close_btn.setFixedSize(30, 22)
+        self._window_close_btn.clicked.connect(self.close)
+
+        for btn in (self._window_min_btn, self._window_max_btn, self._window_close_btn):
+            btn.setStyleSheet("""
+                QPushButton {
+                    background-color: rgba(45, 48, 52, 0.9);
+                    color: #e0e0e0;
+                    border: 1px solid #555;
+                    border-radius: 4px;
+                    font-size: 11px;
+                    font-weight: bold;
+                }
+                QPushButton:hover {
+                    background-color: rgba(60, 64, 70, 0.95);
+                    border-color: #6b9bd1;
+                }
+                QPushButton:pressed {
+                    background-color: rgba(35, 38, 42, 0.95);
+                }
+            """)
+
+        self._window_close_btn.setStyleSheet("""
+            QPushButton {
+                background-color: rgba(140, 45, 45, 0.9);
+                color: #ffffff;
+                border: 1px solid #8a3a3a;
+                border-radius: 4px;
+                font-size: 11px;
+                font-weight: bold;
+            }
+            QPushButton:hover {
+                background-color: rgba(180, 55, 55, 0.95);
+                border-color: #d17a7a;
+            }
+            QPushButton:pressed {
+                background-color: rgba(120, 35, 35, 0.95);
+            }
+        """)
+
+        top_row.addWidget(self._window_min_btn, 0, Qt.AlignVCenter)
+        top_row.addWidget(self._window_max_btn, 0, Qt.AlignVCenter)
+        top_row.addWidget(self._window_close_btn, 0, Qt.AlignVCenter)
+
+        self._top_chrome_bar.setFixedHeight(36)
         main_layout.addWidget(self._top_chrome_bar, 0)
+
+    def _toggle_maximize_restore(self) -> None:
+        """Toggle between maximized and normal window states."""
+        if self.isMaximized():
+            self.showNormal()
+        else:
+            self.showMaximized()
+        self._update_window_controls_for_state()
+
+    def _update_window_controls_for_state(self) -> None:
+        """Refresh maximize button label/tooltip based on current window state."""
+        if not hasattr(self, "_window_max_btn"):
+            return
+        if self.isMaximized():
+            self._window_max_btn.setText("❐")
+            self._window_max_btn.setToolTip("Restore")
+        else:
+            self._window_max_btn.setText("□")
+            self._window_max_btn.setToolTip("Maximize")
+
+    def mousePressEvent(self, event) -> None:
+        """Start window drag when pressing on the custom top chrome background."""
+        if event.button() == Qt.LeftButton:
+            self._resize_edges = self._get_resize_edges_at_pos(
+                event.position().toPoint() if hasattr(event, "position") else event.pos()
+            )
+            if self._try_start_system_resize(self._resize_edges):
+                event.accept()
+                return
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            top_bar = getattr(self, "_top_chrome_bar", None)
+            if top_bar and top_bar.geometry().contains(pos):
+                target = self.childAt(pos)
+                if target in (top_bar,):
+                    self._is_window_dragging = True
+                    self._window_drag_offset = (
+                        event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                        if hasattr(event, "globalPosition")
+                        else event.globalPos() - self.frameGeometry().topLeft()
+                    )
+                    event.accept()
+                    return
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event) -> None:
+        """Move frameless window while dragging top chrome; update resize cursor."""
+        if not (event.buttons() & Qt.LeftButton):
+            self._update_resize_cursor(
+                event.position().toPoint() if hasattr(event, "position") else event.pos()
+            )
+        if self._is_window_dragging and (event.buttons() & Qt.LeftButton):
+            if self.isMaximized():
+                self.showNormal()
+                self._update_window_controls_for_state()
+            gp = (
+                event.globalPosition().toPoint()
+                if hasattr(event, "globalPosition")
+                else event.globalPos()
+            )
+            self.move(gp - self._window_drag_offset)
+            event.accept()
+            return
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event) -> None:
+        """Stop frameless window drag."""
+        if event.button() == Qt.LeftButton:
+            self._is_window_dragging = False
+            self._resize_edges = Qt.Edges()
+        super().mouseReleaseEvent(event)
+
+    def mouseDoubleClickEvent(self, event) -> None:
+        """Double-click top chrome background to maximize/restore."""
+        if event.button() == Qt.LeftButton:
+            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            top_bar = getattr(self, "_top_chrome_bar", None)
+            if top_bar and top_bar.geometry().contains(pos):
+                target = self.childAt(pos)
+                if target in (top_bar,):
+                    self._toggle_maximize_restore()
+                    event.accept()
+                    return
+        super().mouseDoubleClickEvent(event)
+
+    def changeEvent(self, event) -> None:
+        """Keep custom window controls in sync with native window state changes."""
+        super().changeEvent(event)
+        self._update_window_controls_for_state()
+
+    def _get_resize_edges_at_pos(self, pos: QPoint) -> Qt.Edges:
+        """Return edge mask for frameless resize hit-test."""
+        if self.isMaximized():
+            return Qt.Edges()
+        rect = self.rect()
+        margin = self._resize_margin_px
+        edges = Qt.Edges()
+        if pos.x() <= margin:
+            edges |= Qt.LeftEdge
+        elif pos.x() >= rect.width() - margin:
+            edges |= Qt.RightEdge
+        if pos.y() <= margin:
+            edges |= Qt.TopEdge
+        elif pos.y() >= rect.height() - margin:
+            edges |= Qt.BottomEdge
+        return edges
+
+    def _update_resize_cursor(self, pos: QPoint) -> None:
+        """Show resize cursor when hovering window edges in frameless mode."""
+        edges = self._get_resize_edges_at_pos(pos)
+        if edges in (Qt.LeftEdge, Qt.RightEdge):
+            self.setCursor(Qt.SizeHorCursor)
+        elif edges in (Qt.TopEdge, Qt.BottomEdge):
+            self.setCursor(Qt.SizeVerCursor)
+        elif edges in (
+            Qt.TopEdge | Qt.LeftEdge,
+            Qt.BottomEdge | Qt.RightEdge,
+        ):
+            self.setCursor(Qt.SizeFDiagCursor)
+        elif edges in (
+            Qt.TopEdge | Qt.RightEdge,
+            Qt.BottomEdge | Qt.LeftEdge,
+        ):
+            self.setCursor(Qt.SizeBDiagCursor)
+        else:
+            self.unsetCursor()
+
+    def _try_start_system_resize(self, edges: Qt.Edges) -> bool:
+        """Delegate frameless resize to the native window system when possible."""
+        if not edges:
+            return False
+        handle = self.windowHandle()
+        if handle is None or not hasattr(handle, "startSystemResize"):
+            return False
+        return bool(handle.startSystemResize(edges))
 
     def _setup_image_browser(self, main_layout: QVBoxLayout) -> None:
         """Set up the Image Browser with 2-panel splitter layout."""
         # Create main splitter (horizontal)
         main_splitter = QSplitter(Qt.Horizontal)
+        main_splitter.setObjectName("MainImageSplitter")
         main_splitter.setChildrenCollapsible(False)
+        # Reason: requested cleaner UI without visible divider between tag rail and gallery.
+        main_splitter.setHandleWidth(0)
+        main_splitter.setStyleSheet(
+            "QSplitter#MainImageSplitter::handle { background: transparent; }"
+        )
 
         # === LEFT PANEL: Fixed-width collapsible tag sidebar ===
         self.left_panel_container = QWidget()
@@ -544,7 +751,7 @@ class MainWindow(QMainWindow):
         # Reason: tag sub-grid uses 3 columns; slightly narrower than before per UX feedback.
         self._left_panel_open_width = 360
         # Reason: compact-by-default left rail with only the tags hover control visible.
-        self._left_panel_collapsed_width = 48
+        self._left_panel_collapsed_width = 56
         self._left_panel_expanded = False
         self.left_panel_container.setMinimumWidth(self._left_panel_collapsed_width)
         self.left_panel_container.setMaximumWidth(self._left_panel_collapsed_width)
@@ -601,7 +808,7 @@ class MainWindow(QMainWindow):
         tags_header_layout.setContentsMargins(0, 0, 0, 0)
         self._tags_library_title_label = QLabel("Tags Library")
         self._tags_library_title_label.setStyleSheet(
-            "font-size: 12px; font-weight: bold;"
+            "font-size: 12px; font-weight: bold; color: #ffffff;"
         )
         tags_header_layout.addWidget(self._tags_library_title_label)
         tags_header_layout.addStretch()
@@ -636,7 +843,7 @@ class MainWindow(QMainWindow):
         parent_select_layout = QHBoxLayout(self._parent_select_bar)
         parent_select_layout.setContentsMargins(0, 4, 0, 4)
         self._parent_select_label = QLabel("Select parent tag: (none)")
-        self._parent_select_label.setStyleSheet("font-size: 11px; color: #888;")
+        self._parent_select_label.setStyleSheet("font-size: 11px; color: #ffffff;")
         parent_select_layout.addWidget(self._parent_select_label)
         parent_select_layout.addStretch()
         self._parent_ok_btn = QPushButton("OK")
@@ -661,11 +868,17 @@ class MainWindow(QMainWindow):
         self.tags_grid_layout.setSizeConstraint(QLayout.SetMinimumSize)
 
         self.tags_scroll_area = QScrollArea()
+        self.tags_scroll_area.setObjectName("TagLibraryScrollArea")
         # False so content widget uses sizeHint() from layout; expanded rows then get correct height
         self.tags_scroll_area.setWidgetResizable(False)
         self.tags_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.tags_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.tags_scroll_area.setFrameShape(QFrame.NoFrame)
+        # Reason: keep tag library visually blended with the sidebar background.
+        self.tags_scroll_area.setStyleSheet(
+            "QScrollArea#TagLibraryScrollArea { background: transparent; border: none; }"
+            "QScrollArea#TagLibraryScrollArea > QWidget > QWidget { background: transparent; }"
+        )
         self.tags_scroll_area.setWidget(self.tags_grid_container)
         self.tags_scroll_area.setSizePolicy(
             QSizePolicy.Expanding, QSizePolicy.Expanding
@@ -2167,6 +2380,20 @@ class MainWindow(QMainWindow):
             _enter = QEvent.Enter
             _leave = QEvent.Leave
             _mouse_move = QEvent.MouseMove
+
+        # Keep resize cursor feedback reliable in frameless mode, even above child widgets.
+        if (
+            event.type() == _mouse_move
+            and hasattr(event, "pos")
+            and isinstance(obj, QWidget)
+            and not self.isMaximized()
+            and not (event.buttons() & Qt.LeftButton)
+        ):
+            local_pos = obj.mapTo(self, event.pos()) if obj is not self else event.pos()
+            self._update_resize_cursor(local_pos)
+
+        if event.type() == _leave and obj is self:
+            self.unsetCursor()
 
         # Hover over Tags filters opens the tag library when it is collapsed.
         if (
@@ -3743,11 +3970,11 @@ class MainWindow(QMainWindow):
         stats_layout.setSpacing(12)
         self.session_images_count_label = QLabel("Images: 0")
         self.session_images_count_label.setStyleSheet(
-            "font-size: 12px; font-weight: bold;"
+            "font-size: 12px; font-weight: bold; color: #ffffff;"
         )
         self.selection_info_label = QLabel("")
         self.selection_info_label.setStyleSheet(
-            "font-size: 12px; font-weight: bold; color: #7eb8da;"
+            "font-size: 12px; font-weight: bold; color: #ffffff;"
         )
         stats_layout.addWidget(self.session_images_count_label)
         stats_layout.addWidget(self.selection_info_label)

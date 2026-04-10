@@ -1,5 +1,95 @@
 # Journal des modifications
 
+## 2026-04-10 (Passe cohérence couleur texte : libellés informatifs en blanc)
+### ✅ Tâches :
+- Uniformiser en blanc les textes informatifs clés de l'interface
+
+- Mise à jour en blanc des libellés de la bibliothèque de tags (`Tags Library`, aide de sélection du parent).
+- Mise à jour en blanc des libellés utilitaires de la top bar (`Sort`, `Columns`, compteur de colonnes).
+- Mise à jour en blanc des métriques de la barre de statut (`Images: N` et résumé de sélection).
+→ Résultat : Les textes informatifs de l'écran principal ont maintenant un contraste blanc cohérent.
+---
+
+## 2026-04-10 (Ajustement d'équilibre chrome : logo plus grand, ombre plus marquée, barre haute plus fine)
+### ✅ Tâches :
+- Ajuster la présence du logo et affiner l'épaisseur de la barre supérieure
+
+- Augmentation de la taille du logo flottant pour renforcer la présence visuelle de la marque.
+- Ajout d'une drop shadow marquée sur le logo flottant pour améliorer la profondeur et le détachement sur les fonds en dégradé.
+- Réduction légère de la hauteur de la top bar pour garder une silhouette supérieure plus fine.
+→ Résultat : Le header conserve un branding fort avec un logo mieux détaché, tout en retrouvant une barre supérieure plus légère.
+---
+
+## 2026-04-10 (Passe finale UX de la barre custom)
+### ✅ Tâches :
+- Finaliser l’ergonomie frameless et les proportions de la barre supérieure custom
+
+- Amélioration du feedback de curseur de redimensionnement via l’event filter global (y compris au survol des widgets enfants proches des bords).
+- Correction des glyphes minimize/maximize/restore (`-`, `□`, `❐`) pour se rapprocher des contrôles fenêtre standards.
+- Ajustement des proportions : logo flottant légèrement réduit, barre supérieure augmentée en hauteur, et rail compact gauche un peu plus large.
+→ Résultat : Le comportement frameless est plus naturel (resize plus lisible) et l’équilibre visuel de la top bar est plus proche du rendu final souhaité.
+---
+
+## 2026-04-10 (Affinage top bar : fenêtre frameless redimensionnable + boutons menus transparents)
+### ✅ Tâches :
+- Conserver le redimensionnement de la fenêtre custom frameless et affiner le style des boutons de menu supérieurs
+
+- Ajout d'un hit-test sur les bords/coins et délégation native `startSystemResize(...)` pour garder le redimensionnement depuis les bordures.
+- Mise à jour des boutons `File / View / Tools / Help` en fond transparent, avec survol blanc à très faible alpha.
+- Augmentation de la hauteur de la barre supérieure custom pour améliorer lisibilité et respiration visuelle.
+→ Résultat : La barre de titre custom garde le style souhaité tout en conservant un comportement de redimensionnement pratique.
+---
+
+## 2026-04-10 (Barre de fenêtre custom thémée avec menus app et contrôles système)
+### ✅ Tâches :
+- Remplacer la barre de titre native par une barre supérieure custom thémée incluant menus de l'app et boutons minimize/maximize/close
+
+- Activation du mode fenêtre sans bordure native (frameless) et ajout des boutons de fenêtre custom (`_`, `[]`/restore, `X`) dans la barre supérieure existante.
+- Conservation de `File / View / Tools / Help` sur la même ligne que les contrôles de grille, avec synchronisation d'état pour le bouton maximize/restore.
+- Ajout de la gestion du drag et du double-clic sur le fond de la barre custom pour déplacer la fenêtre et basculer maximize/restore.
+→ Résultat : L'application utilise maintenant une barre de fenêtre custom non blanche, cohérente avec le thème, avec menus et contrôles fenêtre sur la même ligne.
+---
+
+## 2026-04-10 (Nettoyage visuel sidebar tags : bibliothèque transparente + séparateur masqué)
+### ✅ Tâches :
+- Supprimer le fond de la zone scrollable de la bibliothèque de tags et rendre invisible le séparateur du splitter principal
+
+- Mise à jour de `MainWindow` pour rendre `tags_scroll_area` transparent via un style ciblé par objet (`TagLibraryScrollArea`).
+- Mise à jour du splitter horizontal principal avec un handle de largeur nulle et transparent (`MainImageSplitter`) pour masquer visuellement le séparateur.
+- Comportement conservé, avec une séparation visuelle plus discrète entre la bibliothèque de tags et la galerie.
+→ Résultat : La bibliothèque de tags se fond dans le fond du panneau, et le séparateur du splitter est visuellement invisible pour une interface plus propre.
+---
+
+## 2026-04-10 (Correctif environnement : Python stable pour PySide6)
+### ✅ Tâches :
+- Remplacer l'interpréteur instable du venv du projet et rétablir le chargement des bindings Qt
+
+- Installation locale de Python 3.12.10 stable et recréation de `.venv` avec `py -3.12 -m venv .venv`.
+- Réinstallation de toutes les dépendances depuis `requirements.txt` dans le nouvel environnement.
+- Vérification que `PySide6` et `shiboken6` s'importent correctement, et que `main.py` s'importe sans erreur de binding Qt.
+→ Résultat : Le projet utilise désormais un environnement virtuel stable (`.venv`) où les bindings Qt se chargent correctement, permettant un lancement normal depuis Cursor.
+---
+
+## 2026-04-10 (Expérience développeur : lancer main.py via le bouton Play Cursor)
+### ✅ Tâches :
+- Ajouter une configuration VS Code/Cursor de workspace pour lancer directement `main.py`
+
+- Ajout de `.vscode/launch.json` avec un profil dédié `Python: Run main.py`.
+- Ajout de `.vscode/settings.json` pour forcer l'interpréteur du workspace vers `.venv\\Scripts\\python.exe`.
+- Configuration du lancement dans le terminal intégré avec la racine du workspace comme dossier courant.
+→ Résultat : `main.py` peut maintenant être lancé directement depuis Cursor avec l'action Play/Run en utilisant le venv du projet.
+---
+
+## 2026-04-10 (Configuration d'environnement : environnement virtuel Python local)
+### ✅ Tâches :
+- Créer un environnement virtuel Python local et installer les dépendances du projet depuis `requirements.txt`
+
+- Création de `.venv` à la racine du projet avec `py -3 -m venv .venv`.
+- Mise à jour de `pip` dans l'environnement virtuel vers la dernière version disponible.
+- Installation de toutes les dépendances listées dans `requirements.txt` (GUI, traitement d'image, validation, outils de dev et typage).
+→ Résultat : Le projet dispose d'un environnement Python isolé prêt à l'emploi avec toutes les dépendances nécessaires installées.
+---
+
 ## 2026-04-10 (Sidebar tags : contrôles flottants, panneau plus large, grille fluide)
 ### ✅ Tâches :
 - Bouton filtres tags et logo flottants sur la grille ; rail tags replié à largeur 0 ; panneau ouvert plus large ; zone scroll en pleine hauteur ; **Start session** centré en bas ; resize fluide de la galerie conservé

@@ -8,6 +8,15 @@ Update this file via prompt:
 
 ## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
 
+- [x] Unify key chrome and tag-library informational text colors to white (2026-04-10)
+- [x] Tune chrome proportions: larger logo, stronger logo shadow, and slightly thinner top bar (2026-04-10)
+- [x] Finalize custom chrome UX: reliable resize cursor, corrected min/max icons, slightly smaller logo, taller top bar, wider compact left rail (2026-04-10)
+- [x] Improve custom top bar: keep frameless window resizable, transparent menu buttons, and thicker chrome row (2026-04-10)
+- [x] Replace native title bar with themed custom window bar (menus + minimize/maximize/close) (2026-04-10)
+- [x] Make tag library scroll area background transparent and hide main splitter separator (2026-04-10)
+- [x] Recreate `.venv` with stable Python 3.12 to fix PySide6/Shiboken import errors (2026-04-10)
+- [x] Enable Cursor Play button execution for `main.py` via workspace launch configuration (2026-04-10)
+- [x] Create Python `.venv` and install dependencies from `requirements.txt` (2026-04-10)
 - [x] Add hierarchy depth colors and expand/collapse arrows for categories and tags with children (2026-04-08)
 - [x] Unify tag interactions: simple click for filter/expand-collapse and modifier+drag for tag-library multi-selection (2026-04-08)
 - [x] Improve hierarchy readability: keep sub-category position stable and render children directly below parent with subtle child framing (2026-04-08)
