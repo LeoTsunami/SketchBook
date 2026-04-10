@@ -9,6 +9,7 @@
 - **Ajustement interaction** : bouton **Tags filters** en version verticale tout à gauche sous la zone logo, ouverture pilotée uniquement par survol (enter/mouse-move quand fermé), et légère marge haute ajoutée dans la top bar pour aérer les boutons.
 - **Stabilité + layout** : correction du warning Qt `QFont::setPointSize <= 0` en clonant et bornant la taille de police des `TagChip` quand la police applicative est invalide ; conversion de **Tags filters** en rail vertical pleine hauteur collé au bord gauche (sous la zone logo).
 - **Mise à jour interaction** : suppression du comportement flottant du bouton tags. La sidebar gauche a désormais deux états animés pilotés au survol : rail compact (bouton seul, largeur réduite) par défaut, puis bibliothèque de tags ouverte (bouton masqué) au survol.
+- **Passe fluidité** : amélioration du repli avec des ticks de relayout coalescés plus fréquents, chemin de layout allégé pendant l’animation de sidebar, application différée du spacer compact uniquement en fin de repli, et préservation du ratio de scroll sans effets secondaires du scrollbar à chaque frame.
 - **Rail tags** : largeur **0** quand fermé ; **~360** px à l’ouverture ; marge haute pour ne pas passer sous le bandeau logo ; logo plus grand.
 - **Bibliothèque de tags** : la zone défilante prend l’espace vertical restant dans le panneau (stretch sur le `QScrollArea`, suppression de l’ancien stretch en bas).
 - **Start session** : ancré au **centre bas** du viewport de la grille (au lieu du coin bas-droit).

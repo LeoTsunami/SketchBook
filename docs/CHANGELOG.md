@@ -9,6 +9,7 @@
 - **Interaction tweak**: Floating **Tags filters** is now vertical on the far-left under the logo footprint; opening is driven by hover only (enter/mouse-move on the control while closed), and top-row buttons get a little extra top breathing space.
 - **Stability + layout tweak**: Fixed intermittent Qt warning `QFont::setPointSize <= 0` by cloning and clamping tag-chip font size when app font point size is invalid; converted **Tags filters** into a full-height left rail (glued to x=0) below logo area.
 - **Interaction model update**: Removed floating behavior for the tag toggle. Left sidebar now has two hover-driven animated states: compact rail (button-only, collapsed width) by default, and expanded tag library (button hidden) while hovered.
+- **Smoothness pass**: Improved collapse smoothness by using ultra-frequent coalesced relayout ticks, lightweight live layout path during sidebar animation, delayed compact spacer height application until collapse finishes, and scroll ratio preservation without triggering scrollbar side effects each frame.
 - **Tag rail**: Collapses to width **0** when closed; open width **~360** px; top inset so the library does not sit under the logo band; larger logo.
 - **Tag library layout**: Scroll area uses stretch so it fills the vertical space inside the folding panel; removed the old bottom stretch that stole height from the scroll view.
 - **Start session**: Anchored to the **bottom center** of the image grid viewport (was bottom-right).

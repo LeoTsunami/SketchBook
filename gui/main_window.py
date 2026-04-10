@@ -896,7 +896,7 @@ class MainWindow(QMainWindow):
         if not hasattr(self, "_sidebar_live_relayout_timer"):
             self._sidebar_live_relayout_timer = QTimer(self)
             self._sidebar_live_relayout_timer.setSingleShot(True)
-            self._sidebar_live_relayout_timer.setInterval(8)  # ~120 FPS budget
+            self._sidebar_live_relayout_timer.setInterval(0)  # asap coalesced tick
             self._sidebar_live_relayout_timer.timeout.connect(
                 self._flush_sidebar_live_relayout
             )

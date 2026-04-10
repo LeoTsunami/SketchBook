@@ -23,7 +23,7 @@ from qtpy.QtWidgets import (
     QApplication,
     QSizePolicy,
 )
-from qtpy.QtCore import Qt, QSize, Signal, QTimer, QThreadPool, QRect, QPoint, QUrl
+from qtpy.QtCore import Qt, QSize, Signal, QTimer, QThreadPool, QRect, QPoint, QUrl, QSignalBlocker
 from qtpy.QtGui import QPixmap, QImage, QResizeEvent, QIcon, QDragEnterEvent, QDropEvent
 from core.image_manager import ImageManager
 from core.image_db import ImageMetadata
@@ -534,6 +534,18 @@ class ImageGrid(QScrollArea):
 
     def _update_layout(self):
         """Handle all layout updates in one place."""
+        if getattr(self, "_sidebar_live_relayout_active", False):
+            if self._is_virtualized():
+                self._update_virtualized_view()
+                return
+            for thumb in self.thumbnail_pool:
+                thumb.hide()
+            if not self.thumbnails:
+                return
+            self._reset_content_height_for_layout()
+            self._calculate_row_heights()
+            self._do_relayout()
+            return
         if self._is_virtualized():
             self._update_virtualized_view()
             return
@@ -561,10 +573,19 @@ class ImageGrid(QScrollArea):
         old_value = vbar.value()
         old_max = max(1, vbar.maximum())
         old_ratio = old_value / old_max
-        self._update_layout()
-        # Reason: preserve user's relative position so same image area stays in view while resizing.
+        self._sidebar_live_relayout_active = True
+        try:
+            self._update_layout()
+        finally:
+            self._sidebar_live_relayout_active = False
+        # Preserve user's relative position so the same image region stays in view.
         new_max = max(1, vbar.maximum())
-        vbar.setValue(int(old_ratio * new_max))
+        target_value = int(old_ratio * new_max)
+        if target_value != vbar.value():
+            # Reason: avoid triggering scroll side effects on every animation frame.
+            blocker = QSignalBlocker(vbar)
+            vbar.setValue(target_value)
+            del blocker
 
     def set_columns(self, columns: int):
         """Set the number of columns in the grid."""
