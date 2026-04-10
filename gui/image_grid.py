@@ -372,7 +372,10 @@ class ImageGrid(QScrollArea):
             self._extract_loading.add(meta.id)
             path = self.image_manager.image_dir / meta.path
             worker = ImageLoaderWorker(
-                meta.id, path, (self.EXTRACT_LOAD_SIZE, self.EXTRACT_LOAD_SIZE)
+                meta.id,
+                path,
+                (self.EXTRACT_LOAD_SIZE, self.EXTRACT_LOAD_SIZE),
+                self._fit_mode,
             )
             worker.signals.finished.connect(self._on_image_loaded)
             worker.signals.error.connect(self._on_image_error)
@@ -991,7 +994,12 @@ class ImageGrid(QScrollArea):
             target_width = thumbnail_width - 4
             target_height = thumbnail_height - 4
         image_path = self.image_manager.image_dir / metadata.path
-        worker = ImageLoaderWorker(image_id, image_path, (target_width, target_height))
+        worker = ImageLoaderWorker(
+            image_id,
+            image_path,
+            (target_width, target_height),
+            self._fit_mode,
+        )
 
         worker.signals.finished.connect(self._on_image_loaded)
         worker.signals.error.connect(self._on_image_error)

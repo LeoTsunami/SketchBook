@@ -526,9 +526,13 @@ class MainWindow(QMainWindow):
         fit_label.setStyleSheet("color: #ffffff; font-size: 11px;")
         self.fit_mode_combo = QComboBox(self._top_chrome_bar)
         self.fit_mode_combo.addItems(FitMode.labels())
-        default_fit = settings.get("ui.grid.fit_mode", 0)
+        stored_fit = settings.get("ui.grid.fit_mode", None)
+        if stored_fit is None:
+            default_fit = FitMode.CROP_ALL.value
+        else:
+            default_fit = int(stored_fit)
         if not 0 <= default_fit < self.fit_mode_combo.count():
-            default_fit = 0
+            default_fit = FitMode.CROP_ALL.value
         self.fit_mode_combo.setCurrentIndex(default_fit)
         self.fit_mode_combo.setFixedWidth(100)
         self.fit_mode_combo.currentIndexChanged.connect(self._on_fit_mode_changed)

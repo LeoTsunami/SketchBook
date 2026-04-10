@@ -239,7 +239,7 @@ class ImageThumbnail(QFrame):
         self.original_pixmap = None
         self.pixmap_item = None
         self.tag_chips = {}  # Store tag chips by tag name
-        self._fit_mode: FitMode = FitMode.FIT_ALL
+        self._fit_mode: FitMode = FitMode.CROP_ALL
     
     def set_fit_mode(self, mode: FitMode) -> None:
         """
@@ -277,6 +277,7 @@ class ImageThumbnail(QFrame):
                 self.scene.removeItem(self.pixmap_item)
 
             self.pixmap_item = self.scene.addPixmap(pixmap)
+            self.pixmap_item.setTransformationMode(Qt.SmoothTransformation)
             self.graphics_view.setAlignment(Qt.AlignCenter)
             fit_pixmap_in_view(
                 self.graphics_view, self.scene, self.pixmap_item, self._fit_mode

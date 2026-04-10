@@ -150,10 +150,10 @@ When you close the session window (or finish the last image), the main window is
 
 The **Display** combo box (next to the Columns slider in the top bar) lets you choose how images are fitted inside each grid cell:
 
-- **Fit All** (default) — the entire image is visible, no crop. Bars may appear on the shorter axis.
+- **Crop All** (default) — fills the entire cell, cropping excess on both axes (classic "cover" mode).
+- **Fit All** — the entire image is visible, no crop. Bars may appear on the shorter axis.
 - **Fit Height** — fills the cell height; width may be clipped if the image is wider than the cell.
 - **Fit Width** — fills the cell width; height may be clipped if the image is taller than the cell.
-- **Crop All** — fills the entire cell, cropping excess on both axes (classic "cover" mode).
 
 The choice is saved automatically and restored on relaunch.
 

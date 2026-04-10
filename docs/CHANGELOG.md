@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-04-10 (Default Crop All + reduced thumbnail pixelation)
+### ✅ Tasks:
+- Make crop mode the default display strategy and improve perceived thumbnail sharpness
+
+- Changed default startup fit mode to `Crop All` when no previous user preference exists (`ui.grid.fit_mode` now defaults to `CROP_ALL`).
+- Increased high-quality worker upscale factor from `2.0x` to `3.0x` minimum to reduce visible pixelation during crop/fill rendering.
+- Aligned worker scaling mode with display mode: uses `KeepAspectRatioByExpanding` for crop/fill-like modes so the source pixmap has enough detail for clipped areas.
+- Enabled smooth transform mode directly on `QGraphicsPixmapItem` in thumbnails.
+→ Result: The default view is now crop/cover, and thumbnails stay cleaner when zoomed by crop/fill display modes.
+---
+
 ## 2026-04-10 (User-selectable image display mode: Fit All / Fit Height / Fit Width / Crop All)
 ### ✅ Tasks:
 - Add a "Display" combo box to the top chrome bar so the user chooses how images are fitted in grid cells

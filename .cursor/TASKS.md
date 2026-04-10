@@ -8,6 +8,7 @@ Update this file via prompt:
 
 ## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
 
+- [x] Default image display to Crop All and improve thumbnail sharpness in crop/fill modes (2026-04-10)
 - [x] Add user-selectable display mode combo box (Fit All / Fit Height / Fit Width / Crop All) with persistence (2026-04-10)
 - [x] Create unified thumbnail_fitting module and fix top-bar centering + no-crop image display (2026-04-10)
 - [x] Center top-bar controls vertically and enforce no-crop thumbnail fit within grid cells (2026-04-10)

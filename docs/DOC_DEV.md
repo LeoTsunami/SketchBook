@@ -405,8 +405,8 @@ The `ImageGrid` class manages the display of image thumbnails in a responsive gr
 - `QGraphicsView` render hints `SmoothPixmapTransform` and `Antialiasing` are enabled for crisp downscaling.
 - Thumbnails are loaded by `ImageLoaderWorker` with two passes:
   - A lightweight `fast_pixmap` (currently not displayed in the grid but kept for potential future uses such as placeholders).
-  - A **high‑quality pixmap** that is upscaled using a factor of at least 2.0× on standard DPI screens (or the device pixel ratio on HiDPI screens), then downscaled by Qt in the view.
-- The worker uses `Qt.SmoothTransformation` for the high‑quality pixmap and applies `setDevicePixelRatio()` so that thumbnails remain crisp even on HiDPI displays and after window resizes or when the user increases the number of columns.
+  - A **high‑quality pixmap** that is upscaled using a factor of at least 3.0× on standard DPI screens (or the device pixel ratio on HiDPI screens), then downscaled by Qt in the view.
+- The worker uses `Qt.SmoothTransformation` for the high‑quality pixmap, applies `setDevicePixelRatio()`, and uses `KeepAspectRatioByExpanding` for crop/fill-like modes so clipped areas still keep enough detail.
 - The grid caches these high‑quality pixmaps per image ID in `pixmap_cache` and reuses them both for the main grid and for the scroll preview overlay (extract strip), balancing quality and performance.
 
 ### Tag operations (apply / remove)

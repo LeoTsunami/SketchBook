@@ -1,5 +1,16 @@
 # Journal des modifications
 
+## 2026-04-10 (Crop All par défaut + réduction de la pixelisation des miniatures)
+### ✅ Tâches :
+- Mettre le mode crop par défaut et améliorer la netteté perçue des miniatures
+
+- Changement du mode de démarrage par défaut vers `Crop All` quand aucune préférence utilisateur n'existe (`ui.grid.fit_mode` par défaut sur `CROP_ALL`).
+- Augmentation du facteur d'upscale haute qualité du worker de `2.0x` à `3.0x` minimum pour réduire la pixelisation visible en modes crop/fill.
+- Alignement du mode de scaling du worker avec le mode d'affichage : utilisation de `KeepAspectRatioByExpanding` pour les modes type crop/fill afin de conserver assez de détails dans les zones rognées.
+- Activation du mode de transformation lisse directement sur `QGraphicsPixmapItem` dans les miniatures.
+→ Résultat : L'affichage par défaut est désormais en crop/cover, et les miniatures restent plus propres quand elles sont agrandies par les modes crop/fill.
+---
+
 ## 2026-04-10 (Mode d'affichage image sélectionnable : Fit All / Fit Height / Fit Width / Crop All)
 ### ✅ Tâches :
 - Ajouter une combo box "Display" dans la barre chrome pour que l'utilisateur choisisse comment les images sont affichées dans la grille
