@@ -31,17 +31,30 @@ SketchBook/
    # Sur Unix :
    source venv/bin/activate
    
-   # Installer les dépendances
+   # Dépendances runtime (application)
    pip install -r requirements.txt
+
+   # Outils de dev et tests (optionnel)
+   pip install -r requirements-dev.txt
+
+   # Script optionnel utils/download_animal_photo_refs.py (scraping)
+   pip install -r requirements-tools.txt
    ```
 
-   Le dépôt utilise en pratique le dossier **`.venv`** (à la racine). Si vous voyez une erreur du type « No Python at …\OtherUser\…\Python312\python.exe » après un clone ou un changement de machine, le venv a été créé sur un autre PC : supprimez le dossier `.venv`, puis recréez-le avec `py -3.12 -m venv .venv` (Windows) et `pip install -r requirements.txt`.
+   Le dépôt utilise en pratique le dossier **`.venv`** (à la racine). Si vous voyez une erreur du type « No Python at …\OtherUser\…\Python312\python.exe » après un clone ou un changement de machine, le venv a été créé sur un autre PC : supprimez le dossier `.venv`, puis recréez-le avec `py -3.12 -m venv .venv` (Windows) et `pip install -r requirements.txt` (puis `-r requirements-dev.txt` si vous développez).
+
+### Démarrage (performance)
+
+- Les polices embarquées **Kalam** ne sont chargées que pour les thèmes dont le QSS les référence (`light`, `neon_night`, `sunset_glass`, `midnight_ocean`). Le thème **dark** utilise **Segoe UI** (système) sans TTF au lancement.
+- Le **backfill** des dates d’import (`import_date`) pour les entrées anciennes est déclenché après le premier affichage via `QTimer`, pour ne pas bloquer l’ouverture sur une grosse base.
+- Les modules lourds **SessionSettingsDialog**, **SlideshowWindow** et **ImageViewerWindow** sont importés à la demande depuis `main_window.py` pour réduire le coût d’import initial.
 
 ## Architecture
 
 ### GUI (gui/)
+- `image_grid.py` : Au-delà de `VIRTUALIZATION_THRESHOLD` images, une grille virtualisée réutilise un **pool** de widgets `ImageThumbnail`. Le pool est **redimensionné** (agrandi si besoin) quand le nombre de colonnes ou la hauteur de ligne change, pour que `end_index - start_index` ne dépasse jamais `len(thumbnail_pool)` (sinon les lignes du bas restent vides). Les indices de lignes visibles utilisent la marge haute du layout pour rester alignés avec `setGeometry`.
 - `main_window.py` : Fenêtre principale. Crée et cache la fenêtre au lancement d’une session ; réaffiche à la fermeture de la session. Bibliothèque de tags : sélection multi-tags (Ctrl+clic), menu « Parent to tag... » avec mode parent (barre OK/Cancel), `_on_parent_select_ok` applique placements (category/parent_tag). Session : `_on_session_settings_clicked(start_from_image_id=...)` permet de démarrer depuis une image de la grille, en réutilisant le même dialogue. Sidebar tags non flottante : rail compact intégré au panneau gauche (largeur bouton) par défaut, ouverture animée au survol (button -> bibliothèque complète), repli au `Leave` du panneau ; bouton rail masqué quand la bibliothèque est ouverte.
-- `slideshow_window.py` : Fenêtre de session (plein écran ou toujours au premier plan). Décompte en haut à droite, barre de contrôles (Play/Pause, Précédent, Suivant). Appelle `SessionManager.start_session` avec les image_ids filtrés et les paramètres du dialogue.
+- `slideshow_window.py` : Fenêtre de session (plein écran ou toujours au premier plan). Décompte en haut à gauche, barre de contrôles (Play/Pause, Précédent, Suivant). Affichage image : `QGraphicsView` sans barres de défilement, `fitInView` sur le rect des items. En pause, **Éditer** ouvre `_SessionImageViewerWindow` (sous-classe de `ImageViewerWindow`), identique au double-clic sur la grille (crop, rotation, zoom dans la visionneuse).
 - `session_settings_dialog.py` : Type de session (Course / Constant), durée course (10–60 min) ou intervalle, mode fenêtre.
 - `image_viewer_window.py` : Fenêtre de visualisation d’une image (zoom molette, Précédent/Suivant, rotation, crop). Mode crop : clic sur Crop affiche une grille règle des tiers et 4 poignées (`CropHandleItem`) déplaçables ; Valider applique le crop (Pillow) et met à jour les métadonnées, Annuler quitte le mode. Overlay (rect, lignes, poignées) créés dans la scène et retirés à la sortie du mode pour éviter des références invalides après `scene.clear()`.
 
@@ -185,7 +198,7 @@ image_files = list_files(data_dir, "*.jpg", recursive=True)
 - `validate_dir(path)`: Check if directory exists and is accessible
 - `safe_path(base_path, *parts)`: Safely join paths (prevents directory traversal)
 - `list_files(directory, pattern="*", recursive=False)`: List files matching pattern
-- `safe_remove(path)`: Safely remove file or directory
+- `safe_remove(path)`: Remove file or directory; returns `True` on success, `False` if the path does not exist or removal fails
 - `get_file_size(path)`: Get file size in bytes
 
 ### File Locations

@@ -2,94 +2,95 @@
 """
 SketchBook - A desktop application for timed life drawing sessions.
 """
+
 import sys
-import os
 import threading
 from pathlib import Path
 from qtpy.QtWidgets import QApplication
 from qtpy.QtGui import QFontDatabase, QFont
+from qtpy.QtCore import QTimer
 from gui.main_window import MainWindow
 from core.settings import settings
 from core.user_data import user_data
 from core.config_backup import run_config_backup
 
-
 # Force stdout to be unbuffered for immediate print output
 sys.stdout.reconfigure(line_buffering=True)
 sys.stderr.reconfigure(line_buffering=True)
 
+# Themes whose QSS sets font-family to Kalam (see gui/styles/style_*.qss).
+_KALAM_THEMES = frozenset({"neon_night", "sunset_glass", "midnight_ocean", "light"})
 
-# Ensure all necessary directories exist
+
 def setup_directories():
     """Create necessary application directories if they don't exist."""
-    # Use user data manager to ensure directories exist
     user_data.ensure_directories()
 
+
 def load_stylesheet(path: str) -> str:
+    """Read a QSS file as UTF-8 text."""
     with open(path, "r", encoding="utf-8") as f:
         return f.read()
 
-def load_fonts():
-    """Load custom fonts for the application."""
-    fonts_loaded = {}
-    
-    # Load Kalam Regular font
-    kalam_dir = Path(__file__).parent / "gui" / "ressources" / "fonts" / "Kalam"
-    kalam_path = kalam_dir / "Kalam-Regular.ttf"
+
+def load_theme_fonts(theme: str) -> None:
+    """
+    Register embedded fonts only when the active stylesheet references them.
+
+    Kalam is bundled for several themes; dark uses Segoe UI (system). Caveat was
+    previously loaded but is not referenced in any QSS, so it is not registered.
+
+    Args:
+        theme: Active UI theme key (e.g. dark, light).
+    """
+    if theme not in _KALAM_THEMES:
+        return
+
+    kalam_path = (
+        Path(__file__).parent
+        / "gui"
+        / "ressources"
+        / "fonts"
+        / "Kalam"
+        / "Kalam-Regular.ttf"
+    )
     if kalam_path.exists():
         font_id = QFontDatabase.addApplicationFont(str(kalam_path))
         if font_id != -1:
-            font_families = QFontDatabase.applicationFontFamilies(font_id)
-            if font_families:
-                fonts_loaded["Kalam"] = font_families[0]
-                print(f"Loaded font: {font_families[0]}")
-    
-    # Load Caveat Regular font
-    caveat_dir = Path(__file__).parent / "gui" / "ressources" / "fonts" / "Caveat"
-    caveat_path = caveat_dir / "static" / "Caveat-Regular.ttf"
-    if caveat_path.exists():
-        font_id = QFontDatabase.addApplicationFont(str(caveat_path))
-        if font_id != -1:
-            font_families = QFontDatabase.applicationFontFamilies(font_id)
-            if font_families:
-                fonts_loaded["Caveat"] = font_families[0]
-                print(f"Loaded font: {font_families[0]}")
-    
-    return fonts_loaded
+            families = QFontDatabase.applicationFontFamilies(font_id)
+            if families:
+                print(f"Loaded font: {families[0]}")
+
 
 def main():
     """Main entry point of the application."""
-    # Create application instance
     app = QApplication(sys.argv)
-    
-    # Load custom fonts
-    fonts_loaded = load_fonts()
-    
-    # Use a clean modern UI font for the whole application.
-    # Reason: The new visual direction requires simpler typography.
-    app.setFont(QFont("Segoe UI", 10))
-    
-    # Charger le QSS global depuis gui/styles/ selon le thème
+
     theme = settings.get("ui.theme", "dark")
     if theme not in ("dark", "light", "neon_night", "sunset_glass", "midnight_ocean"):
         theme = "dark"
+
+    load_theme_fonts(theme)
+
+    # Reason: The visual direction uses simple system typography for the default dark theme.
+    app.setFont(QFont("Segoe UI", 10))
+
     qss = load_stylesheet(f"gui/styles/style_{theme}.qss")
     app.setStyleSheet(qss)
-    
-    # Ensure directories exist
+
     setup_directories()
 
-    # Backup config JSONs to config/backup/ in a background thread (date-time in name, keep 5)
     backup_thread = threading.Thread(target=run_config_backup, daemon=True)
     backup_thread.start()
 
-    # Initialize and show main window
     window = MainWindow()
     window.show()
-    
-    # Start event loop
+
+    # Reason: Defer DB backfill until after the first paint so large libraries do not block startup.
+    QTimer.singleShot(0, window.image_manager.run_import_date_backfill)
+
     sys.exit(app.exec())
 
 
 if __name__ == "__main__":
-    main() 
+    main()

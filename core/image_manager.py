@@ -1,6 +1,7 @@
 """
 Image management system for handling imports and processing.
 """
+
 import os
 from datetime import datetime
 from pathlib import Path
@@ -14,20 +15,29 @@ from core.image_db import ImageDatabase, ImageMetadata
 from core.user_data import user_data
 from utils.file_utils import ensure_dir, safe_path
 
+
 class ImageManager:
     """Manages image importing, processing, and storage."""
-    
+
     SUPPORTED_FORMATS = {".jpg", ".jpeg", ".png"}
-    
+
     def __init__(self):
         """Initialize the image manager."""
         # Use user data directory for images
         self.image_dir = user_data.get_images_dir()
         ensure_dir(self.image_dir)
         self.db = ImageDatabase()
-        # Backfill import_date for images that don't have it (imported before the field existed)
+        # Reason: import_date backfill scans the whole DB; run after first frame via
+        # `run_import_date_backfill()` so startup stays responsive on large libraries.
+
+    def run_import_date_backfill(self) -> None:
+        """
+        Backfill import_date from file mtime for legacy rows missing it.
+
+        Call once after the UI is shown (e.g. QTimer from main); safe to call multiple times.
+        """
         self._backfill_import_dates()
-    
+
     def _backfill_import_dates(self) -> None:
         """
         Set import_date from file mtime for images that have empty import_date.
@@ -49,11 +59,11 @@ class ImageManager:
     def _is_duplicate(self, source_path: Path, source_img: Image.Image) -> bool:
         """
         Check if an image is already imported by comparing name, size and resolution.
-        
+
         Args:
             source_path: Path to the source image
             source_img: PIL Image object of the source image
-            
+
         Returns:
             True if the image is a duplicate
         """
@@ -67,23 +77,25 @@ class ImageManager:
                 return True
 
             # Compare la taille et la résolution
-            if metadata.file_size == source_size and \
-               metadata.width == source_resolution[0] and \
-               metadata.height == source_resolution[1]:
+            if (
+                metadata.file_size == source_size
+                and metadata.width == source_resolution[0]
+                and metadata.height == source_resolution[1]
+            ):
                 # Si même taille et résolution, on compare les noms (sans extension)
-                existing_name = metadata.original_filename.rsplit('.', 1)[0].lower()
+                existing_name = metadata.original_filename.rsplit(".", 1)[0].lower()
                 if source_name == existing_name:
                     return True
 
         return False
-    
+
     def find_images_in_directory(self, directory: Path) -> List[Path]:
         """
         Find all supported images in a directory recursively.
-        
+
         Args:
             directory: Directory to search
-            
+
         Returns:
             List of paths to supported images
         """
@@ -94,14 +106,14 @@ class ImageManager:
                 if file_path.suffix.lower() in self.SUPPORTED_FORMATS:
                     image_paths.append(file_path)
         return image_paths
-    
+
     def import_directory(self, directory: Path) -> Tuple[int, int, int]:
         """
         Import all supported images from a directory recursively.
-        
+
         Args:
             directory: Directory to import
-            
+
         Returns:
             Tuple of (successful imports, duplicates found, total images)
         """
@@ -109,7 +121,7 @@ class ImageManager:
         successful = 0
         duplicates = 0
         total = len(image_paths)
-        
+
         for path in image_paths:
             try:
                 # Ouvrir l'image pour vérifier les doublons
@@ -117,25 +129,25 @@ class ImageManager:
                     if self._is_duplicate(path, img):
                         duplicates += 1
                         continue
-                        
+
                     if self.import_image(path) is not None:
                         successful += 1
             except Exception as e:
                 print(f"Error processing image {path}: {str(e)}")
                 continue
-        
+
         return successful, duplicates, total
-    
+
     def import_image(self, source_path: Path) -> Optional[Path]:
         """
         Import and process a single image.
-        
+
         Args:
             source_path: Path to the source image
-            
+
         Returns:
             Path to the processed image or None if import failed
-            
+
         Raises:
             ValueError: If file is not a supported image format
         """
@@ -143,24 +155,24 @@ class ImageManager:
             # Validate format
             if source_path.suffix.lower() not in self.SUPPORTED_FORMATS:
                 raise ValueError(f"Unsupported image format: {source_path.suffix}")
-            
+
             # Ouvre l'image pour vérifier si c'est un doublon
             with Image.open(source_path) as img:
                 if self._is_duplicate(source_path, img):
                     print(f"Skipping duplicate image: {source_path}")
                     return None
-                
+
                 # Create unique filename
                 dest_filename = f"{source_path.stem}_{os.urandom(4).hex()}{source_path.suffix.lower()}"
                 dest_path = safe_path(self.image_dir, dest_filename)
-                
+
                 # Get original dimensions
                 original_width, original_height = img.size
-                
+
                 # Convert to RGB if necessary
                 if img.mode != "RGB":
                     img = img.convert("RGB")
-                
+
                 # Resize if needed (fit within max_width x max_height from user settings)
                 # Note: Settings are read fresh on each import to ensure user preferences are applied
                 max_width = settings.get("images.max_width", 1920)
@@ -173,15 +185,12 @@ class ImageManager:
                     new_width = int(w * ratio)
                     new_height = int(h * ratio)
                     img = img.resize((new_width, new_height), Image.Resampling.LANCZOS)
-                
+
                 # Save with compression using user-defined quality setting
                 # Note: Settings are read fresh on each import to ensure user preferences are applied
                 compression_quality = settings.get("images.compression.quality", 75)
                 img.save(
-                    dest_path,
-                    format="JPEG",
-                    quality=compression_quality,
-                    optimize=True
+                    dest_path, format="JPEG", quality=compression_quality, optimize=True
                 )
                 # Metadata must reflect the final file on disk (compressed, resized)
                 import_date = datetime.now().isoformat()
@@ -197,27 +206,27 @@ class ImageManager:
                     import_date=import_date,
                 )
                 self.db.add_image(metadata)
-            
+
             return dest_path
-        
+
         except (OSError, ValueError) as e:
             print(f"Error importing image {source_path}: {str(e)}")
             return None
-    
+
     def import_images(self, source_paths: List[Path]) -> Tuple[int, int, int]:
         """
         Import multiple images.
-        
+
         Args:
             source_paths: List of paths to source images or directories
-            
+
         Returns:
             Tuple of (successful imports, duplicates found, total images)
         """
         successful = 0
         duplicates = 0
         total = 0
-        
+
         for path in source_paths:
             if path.is_dir():
                 s, d, t = self.import_directory(path)
@@ -232,53 +241,52 @@ class ImageManager:
                         if self._is_duplicate(path, img):
                             duplicates += 1
                             continue
-                            
+
                         if self.import_image(path) is not None:
                             successful += 1
                 except Exception as e:
                     print(f"Error processing image {path}: {str(e)}")
                     continue
-        
+
         return successful, duplicates, total
-    
+
     def get_image_list(self) -> List[Path]:
         """
         Get list of all imported images.
-        
+
         Returns:
             List of paths to imported images
         """
-        return [
-            self.image_dir / metadata.path
-            for metadata in self.db.list_images()
-        ]
-    
+        return [self.image_dir / metadata.path for metadata in self.db.list_images()]
+
     def get_image_metadata(self, image_id: str) -> Optional[ImageMetadata]:
         """
         Get metadata for an image.
-        
+
         Args:
             image_id: ID of the image
-            
+
         Returns:
             Image metadata or None if not found
         """
         return self.db.get_image(image_id)
-    
+
     def update_image_metadata(self, image_id: str, **updates) -> bool:
         """
         Update image metadata.
-        
+
         Args:
             image_id: ID of the image to update
             **updates: Fields to update and their new values
-            
+
         Returns:
             True if successful, False if image not found
         """
         return self.db.update_image(image_id, **updates)
 
-    def rotate_image_file(self, path: Path, clockwise: bool, format: str) -> _RotateResult:
+    def rotate_image_file(
+        self, path: Path, clockwise: bool, format: str
+    ) -> _RotateResult:
         """
         Rotate an image file by 90° (file I/O only, no DB update). Safe to call from a worker thread.
 
@@ -334,10 +342,10 @@ class ImageManager:
         """
         Delete an image and its metadata. If the file was already removed by hand,
         only the metadata is removed from the DB.
-        
+
         Args:
             image_id: ID of the image to delete
-            
+
         Returns:
             True if metadata was found and removed, False if image not found in DB
         """
@@ -353,31 +361,35 @@ class ImageManager:
                 print(f"Error deleting image file: {image_path}: {e}")
         # Always remove metadata from DB
         return self.db.delete_image(image_id)
-    
-    def search_images(self, tags: Optional[List[str]] = None, sort_by: str = "import_date_desc") -> List[ImageMetadata]:
+
+    def search_images(
+        self, tags: Optional[List[str]] = None, sort_by: str = "import_date_desc"
+    ) -> List[ImageMetadata]:
         """
         Search images by tags (deprecated - use search_images_advanced instead).
-        
+
         .. deprecated:: 0.1.0
             Use :meth:`search_images_advanced` instead for more flexible filtering.
             This method is kept for backward compatibility but will be removed in a future version.
-        
+
         Args:
             tags: List of tags to search for (if None, returns all images)
             sort_by: Sort order (see ImageDatabase.list_images for options)
-            
+
         Returns:
             List of matching image metadata, sorted
         """
         # Convert to search_images_advanced for consistency
         if not tags:
             return self.db.list_images(sort_by)
-        return self.db.search_images_advanced(and_tags=set(tags), or_tags=None, sort_by=sort_by)
-    
+        return self.db.search_images_advanced(
+            and_tags=set(tags), or_tags=None, sort_by=sort_by
+        )
+
     def get_all_tags(self) -> List[str]:
         """
         Get a sorted list of all unique tags in the image database.
-        
+
         Returns:
             List of unique tags
         """
@@ -385,38 +397,43 @@ class ImageManager:
         for metadata in self.db.list_images():
             tags.update(metadata.tags)
         return sorted(tags)
-    
+
     def add_tags(self, image_id: str, tags: List[str]) -> bool:
         """
         Add tags to an image.
-        
+
         Args:
             image_id: ID of the image to add tags to
             tags: List of tags to add
-            
+
         Returns:
             True if successful, False if image not found
         """
         metadata = self.db.get_image(image_id)
         if not metadata:
             return False
-        
+
         # Add new tags to existing tags
         metadata.tags.update(tags)
-        
+
         # Update the database
         return self.db.update_image(image_id, tags=metadata.tags)
-    
-    def search_images_advanced(self, and_tags: Set[str] = None, or_tags: Set[str] = None, sort_by: str = "import_date_desc") -> List[ImageMetadata]:
+
+    def search_images_advanced(
+        self,
+        and_tags: Set[str] = None,
+        or_tags: Set[str] = None,
+        sort_by: str = "import_date_desc",
+    ) -> List[ImageMetadata]:
         """
         Advanced search with AND and OR tag filtering.
-        
+
         Args:
             and_tags: Set of tags that must ALL be present (AND logic)
             or_tags: Set of tags where at least ONE must be present (OR logic)
             sort_by: Sort order (see ImageDatabase.list_images for options)
-            
+
         Returns:
             List of matching image metadata, sorted
         """
-        return self.db.search_images_advanced(and_tags, or_tags, sort_by) 
+        return self.db.search_images_advanced(and_tags, or_tags, sort_by)

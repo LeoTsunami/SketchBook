@@ -134,8 +134,9 @@ The main window is hidden and the session window opens. The image list is built 
 ### Session Window
 - **Screen awake**: While the session window is open, the screen and computer stay awake (no sleep or screen saver). Normal power behavior is restored when you close the session.
 - **Countdown**: Shown in the top-left for the current image; it decreases second by second and turns red as time approaches zero.
-- **Controls** (bottom bar): Previous, Next, and timer controls (Play/Pause, Reset). Press **Space** to show or hide the control bar. **Next** and **Previous** move one step at a time: the first screen (Get ready), each phase title, and each image are steps you can move through and come back to like images.
-- **Keyboard**: **Space** (toggle controls), **Left/Right** (previous/next), **S** (start/stop timer), **P** (pause), **Escape** (end session and return to main window).
+- **Controls** (bottom bar): **Previous**, **Next**, and **Play/Pause** for the timer. The bar can auto-hide after a moment; move the mouse or press a key to show it again. **Next** and **Previous** move one step at a time: the first screen (Get ready), each phase title, and each image are steps you can move through and come back to like images.
+- **Pause and edit**: When the session is **paused** (Play is shown), an **Éditer** button appears. It opens the **same image viewer** as when you **double-click** an image in the grid (zoom, rotate, crop, etc.). While the viewer is open, the session bar hides **Previous**, **Next**, **Play/Pause**, and **Éditer**; close the viewer window to return to the paused session with the slide reloaded from disk if you saved changes.
+- **Keyboard**: **Space** (toggle pause/play when focus is on the image area), **Left/Right** (previous/next), **Escape** (fullscreen → window, or close session in window mode).
 
 When you close the session window (or finish the last image), the main window is shown again.
 

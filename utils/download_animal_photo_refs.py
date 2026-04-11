@@ -6,8 +6,8 @@ animal-photo-references.com à partir de la section Mammals.
 Usage:
     python -m utils.download_animal_photo_refs
 
-Dépendances (installer si besoin): requests, beautifulsoup4
-    pip install requests beautifulsoup4
+Dépendances (hors requirements runtime) : voir `requirements-tools.txt`
+    pip install -r requirements-tools.txt
 
 Les images sont enregistrées dans le dossier configuré (OUTPUT_DIR).
 Respecte une pause entre requêtes pour limiter la charge sur le serveur.
@@ -27,7 +27,7 @@ try:
 except ImportError as e:
     raise ImportError(
         "Ce script nécessite requests et beautifulsoup4. "
-        "Installez-les avec: pip install requests beautifulsoup4"
+        "Installez-les avec: pip install -r requirements-tools.txt"
     ) from e
 
 # Configuration

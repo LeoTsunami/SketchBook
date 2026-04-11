@@ -23,7 +23,17 @@ from qtpy.QtWidgets import (
     QApplication,
     QSizePolicy,
 )
-from qtpy.QtCore import Qt, QSize, Signal, QTimer, QThreadPool, QRect, QPoint, QUrl, QSignalBlocker
+from qtpy.QtCore import (
+    Qt,
+    QSize,
+    Signal,
+    QTimer,
+    QThreadPool,
+    QRect,
+    QPoint,
+    QUrl,
+    QSignalBlocker,
+)
 from qtpy.QtGui import QPixmap, QImage, QResizeEvent, QIcon, QDragEnterEvent, QDropEvent
 from core.image_manager import ImageManager
 from core.image_db import ImageMetadata
@@ -417,23 +427,37 @@ class ImageGrid(QScrollArea):
         """True when we have too many images and use a fixed pool of widgets."""
         return len(self.all_images) > self.VIRTUALIZATION_THRESHOLD
 
-    def _ensure_virtualized_pool(self) -> None:
-        """Create the thumbnail pool once when in virtualized mode."""
-        if self.thumbnail_pool:
-            return
+    def _required_virtualized_pool_size(self) -> int:
+        """
+        Number of thumbnail widgets needed to cover the viewport plus buffer rows.
+
+        Reason: Row height shrinks when columns increase (narrower cells), so more rows
+        fit on screen; the pool must grow or the bottom of the viewport stays empty.
+
+        Returns:
+            int: Pool size (never greater than ``len(self.all_images)``).
+        """
+        if not self.all_images:
+            return 0
         thumbnail_width, row_height = self._calculate_optimal_dimensions()
         spacing = self.grid.spacing()
-        margins = self.grid.contentsMargins()
         viewport_h = self.viewport().height()
-        # Pool size = enough rows to fill viewport + extra above/below
         rows_visible = max(1, (viewport_h + spacing) // (row_height + spacing))
         pool_rows = rows_visible + 2 * self.VIRTUALIZED_POOL_EXTRA_ROWS
-        pool_size = min(pool_rows * self.columns, len(self.all_images) or 1)
-        pool_size = max(pool_size, self.columns * 2)
-        for _ in range(pool_size):
+        pool_size = min(pool_rows * self.columns, len(self.all_images))
+        pool_size = max(pool_size, min(self.columns * 2, len(self.all_images)))
+        return pool_size
+
+    def _ensure_virtualized_pool(self) -> None:
+        """Create or grow the thumbnail pool so it always fits the visible index range."""
+        pool_size = self._required_virtualized_pool_size()
+        if pool_size <= 0:
+            return
+        thumbnail_width, row_height = self._calculate_optimal_dimensions()
+        while len(self.thumbnail_pool) < pool_size:
             meta = self.all_images[0] if self.all_images else None
             if not meta:
-                continue
+                return
             thumb = ImageThumbnail(
                 meta.id,
                 meta.original_filename,
@@ -474,10 +498,14 @@ class ImageGrid(QScrollArea):
         scroll_y = self.verticalScrollBar().value()
         viewport_h = self.viewport().height()
         row_h = row_height + spacing
-        first_row = max(0, scroll_y // row_h - self.VIRTUALIZED_POOL_EXTRA_ROWS)
+        mt = margins.top()
+        # Map scroll position to row indices using the same origin as setGeometry (y = mt + row * row_h).
+        adj_top = scroll_y - mt
+        adj_bottom = scroll_y + viewport_h - mt
+        first_row = max(0, adj_top // row_h - self.VIRTUALIZED_POOL_EXTRA_ROWS)
         last_row = min(
             total_rows - 1,
-            (scroll_y + viewport_h) // row_h + self.VIRTUALIZED_POOL_EXTRA_ROWS,
+            adj_bottom // row_h + self.VIRTUALIZED_POOL_EXTRA_ROWS,
         )
         start_index = first_row * self.columns
         end_index = min(total_images, (last_row + 1) * self.columns)

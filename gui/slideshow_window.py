@@ -3,6 +3,7 @@ Fullscreen or always-on-top slideshow window for drawing sessions.
 Image full area; countdown (top-left); Escape = fullscreen->window, window->close;
 Plein écran button (windowed); bottom bar: Previous, Next, Play/Pause.
 """
+
 import time
 from pathlib import Path
 from typing import Optional, List, Dict, Any
@@ -21,7 +22,16 @@ from qtpy.QtWidgets import (
     QGridLayout,
     QStyle,
 )
-from qtpy.QtCore import Qt, QTimer, Signal, QThreadPool, QVariantAnimation, QRectF, QEvent, QSize
+from qtpy.QtCore import (
+    Qt,
+    QTimer,
+    Signal,
+    QThreadPool,
+    QVariantAnimation,
+    QRectF,
+    QEvent,
+    QSize,
+)
 from qtpy.QtGui import (
     QPixmap,
     QKeySequence,
@@ -39,11 +49,33 @@ from core.image_manager import ImageManager
 from gui.session_timer import SessionTimer
 from gui.image_loader_worker import ImageLoaderWorker
 from gui.icon_utils import invert_icon
+from gui.image_viewer_window import ImageViewerWindow
 from utils.keep_awake import prevent_sleep, allow_sleep
+
+
+class _SessionImageViewerWindow(ImageViewerWindow):
+    """
+    Same window as double-click on the grid (crop, rotate, zoom).
+    Notifies the slideshow when closed so the slide reloads from disk.
+    """
+
+    def __init__(self, image_manager: ImageManager, slideshow: "SlideshowWindow"):
+        self._slideshow = slideshow
+        self._notify_slideshow_on_close: bool = True
+        super().__init__(image_manager, slideshow)
+
+    def closeEvent(self, event):
+        """Restore session chrome and reload the current slide."""
+        if self._notify_slideshow_on_close:
+            self._slideshow._on_session_viewer_closed()
+        super().closeEvent(event)
+
 
 # Debug flags: set to True to enable debug output
 # These flags control debug functions below - useful for troubleshooting
-_DEBUG_SLIDESHOW_DIMENSIONS = False  # Print dimension debug (viewport, scene rect, items)
+_DEBUG_SLIDESHOW_DIMENSIONS = (
+    False  # Print dimension debug (viewport, scene rect, items)
+)
 _DEBUG_SPACE_PLAYPAUSE = False  # Print Space key / play-pause toggle debug
 # UI auto-hide: show overlays + cursor on key/mouse, hide after inactivity
 _UI_HIDE_AFTER_MS = 2000
@@ -67,7 +99,7 @@ _PHASE_TITLE_DURATION_SEC = 5
 def _dbg(msg: str) -> None:
     """
     Debug function for slideshow dimensions (controlled by _DEBUG_SLIDESHOW_DIMENSIONS flag).
-    
+
     Args:
         msg: Debug message to print.
     """
@@ -78,14 +110,12 @@ def _dbg(msg: str) -> None:
 def _dbg_space(msg: str) -> None:
     """
     Debug function for Space key / play-pause toggle (controlled by _DEBUG_SPACE_PLAYPAUSE flag).
-    
+
     Args:
         msg: Debug message to print.
     """
     if _DEBUG_SPACE_PLAYPAUSE:
         pass  # debug: msg
-
-
 
 
 def _get_media_icons():
@@ -180,7 +210,9 @@ class SlideshowWindow(QMainWindow):
 
     session_ended = Signal()  # Emitted when session ends (user closed or run finished)
 
-    def __init__(self, session_manager: SessionManager, image_manager: ImageManager, parent=None):
+    def __init__(
+        self, session_manager: SessionManager, image_manager: ImageManager, parent=None
+    ):
         """
         Initialize the slideshow window.
 
@@ -194,7 +226,9 @@ class SlideshowWindow(QMainWindow):
         self.image_manager = image_manager
 
         self.setWindowTitle("SketchBook - Drawing Session")
-        self.setCursor(Qt.BlankCursor)  # Hide cursor during session; window state set in start_session
+        self.setCursor(
+            Qt.BlankCursor
+        )  # Hide cursor during session; window state set in start_session
 
         central_widget = QWidget()
         self.setCentralWidget(central_widget)
@@ -207,7 +241,7 @@ class SlideshowWindow(QMainWindow):
         self._setup_get_ready_overlay()
         self._setup_phase_title_overlay()
         self._setup_fullscreen_button()
-        self._setup_controls()  # Previous, Next, Play/Pause (timer)
+        self._setup_controls()  # Previous, Next, Play/Pause (timer) + Éditer
         self._overlay_container = _OverlayContainer(self)
         self._overlay_container.set_content(
             self.graphics_view,
@@ -232,21 +266,28 @@ class SlideshowWindow(QMainWindow):
         self.current_pixmap: Optional[QPixmap] = None
         self._first_image = True
         self._fade_animation: Optional[QVariantAnimation] = None
+        self._fade_in_progress: bool = False
         self._is_fullscreen = False
-        self._last_play_pause_toggle_time: float = 0.0  # Debounce: avoid double toggle on one Space press
+        self._session_viewer_open: bool = False
+        self._session_image_viewer: Optional[_SessionImageViewerWindow] = None
+        self._last_play_pause_toggle_time: float = (
+            0.0  # Debounce: avoid double toggle on one Space press
+        )
         # Title screen countdown (Get ready / phase): ticks every second, then calls done callback
         self._title_countdown_timer = QTimer(self)
         self._title_countdown_timer.setInterval(1000)
         self._title_countdown_timer.timeout.connect(self._on_title_countdown_tick)
         self._title_countdown_remaining: int = 0
         self._title_countdown_total: int = 1  # Duration (sec) for color ratio
-        self._title_countdown_done_callback = None  # Callable[[], None] when countdown reaches 0
+        self._title_countdown_done_callback = (
+            None  # Callable[[], None] when countdown reaches 0
+        )
         # Step navigation: Get ready, phase titles and images are all steps (Next/Previous move one step)
         self._showing_get_ready: bool = False
         self._showing_phase_title: bool = False
 
         self._apply_theme()
-    
+
     def _setup_image_display(self):
         """Set up the image display (two layers for crossfade). Will be placed full-size in container."""
         self.graphics_view = QGraphicsView()
@@ -254,10 +295,18 @@ class SlideshowWindow(QMainWindow):
         self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.graphics_view.setRenderHint(QPainter.SmoothPixmapTransform)
         self.graphics_view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
-        self.graphics_view.setStyleSheet("background: black;")  # Letterbox color when ratio differs
-        self.graphics_view.setFocusPolicy(Qt.StrongFocus)  # Reason: so Space is received by view first
-        self.graphics_view.setMouseTracking(True)  # Reason: receive MouseMove without button pressed (show controls)
-        self.graphics_view.viewport().setMouseTracking(True)  # QGraphicsView forwards to viewport
+        self.graphics_view.setStyleSheet(
+            "background: black;"
+        )  # Letterbox color when ratio differs
+        self.graphics_view.setFocusPolicy(
+            Qt.StrongFocus
+        )  # Reason: so Space is received by view first
+        self.graphics_view.setMouseTracking(
+            True
+        )  # Reason: receive MouseMove without button pressed (show controls)
+        self.graphics_view.viewport().setMouseTracking(
+            True
+        )  # QGraphicsView forwards to viewport
 
         self.scene = QGraphicsScene()
         self.graphics_view.setScene(self.scene)
@@ -295,7 +344,9 @@ class SlideshowWindow(QMainWindow):
         self.get_ready_frame.setStyleSheet("background: rgba(0,0,0,0.85);")
         lay = QVBoxLayout(self.get_ready_frame)
         lay.setAlignment(Qt.AlignCenter)
-        self.get_ready_label = QLabel("Get ready, your drawing session is about to begin")
+        self.get_ready_label = QLabel(
+            "Get ready, your drawing session is about to begin"
+        )
         self.get_ready_label.setAlignment(Qt.AlignCenter)
         self.get_ready_label.setWordWrap(True)
         font = QFont()
@@ -338,11 +389,11 @@ class SlideshowWindow(QMainWindow):
         self.fullscreen_btn.setVisible(False)
 
     def _setup_controls(self):
-        """Bottom bar: Previous, Play/Pause, Next (no progress bar, no timer; countdown stays top-left)."""
+        """Bottom bar: Previous, Play/Pause, Next; Éditer opens the same viewer as grid double-click."""
         self.controls_frame = QFrame()
         self.controls_frame.setObjectName("controlsFrame")
-        self.controls_frame.setFixedHeight(70)
-        self.controls_frame.setVisible(True)  # Always visible for now; show/hide later
+        self.controls_frame.setMinimumHeight(70)
+        self.controls_frame.setVisible(True)
 
         bar = QHBoxLayout(self.controls_frame)
         bar.setContentsMargins(16, 8, 16, 8)
@@ -350,7 +401,9 @@ class SlideshowWindow(QMainWindow):
 
         self.prev_button = QPushButton("← Préc.")
         self.prev_button.setFixedSize(90, 40)
-        self.prev_button.setFocusPolicy(Qt.NoFocus)  # Reason: Space must go to view, not trigger button
+        self.prev_button.setFocusPolicy(
+            Qt.NoFocus
+        )  # Reason: Space must go to view, not trigger button
         self.prev_button.clicked.connect(self._previous_image)
         bar.addWidget(self.prev_button)
 
@@ -358,22 +411,95 @@ class SlideshowWindow(QMainWindow):
         self.play_pause_btn = QPushButton("Play")
         self.play_pause_btn.setObjectName("playPauseBtn")
         self.play_pause_btn.setFixedSize(90, 40)
-        self.play_pause_btn.setFocusPolicy(Qt.NoFocus)  # Reason: Space must go to view, not trigger button
+        self.play_pause_btn.setFocusPolicy(
+            Qt.NoFocus
+        )  # Reason: Space must go to view, not trigger button
         self.play_pause_btn.clicked.connect(self._on_play_pause_clicked)
         bar.addWidget(self.play_pause_btn)
         self._icon_play, self._icon_pause = _get_media_icons()
 
         self.next_button = QPushButton("Suiv. →")
         self.next_button.setFixedSize(90, 40)
-        self.next_button.setFocusPolicy(Qt.NoFocus)  # Reason: Space must go to view, not trigger button
+        self.next_button.setFocusPolicy(
+            Qt.NoFocus
+        )  # Reason: Space must go to view, not trigger button
         self.next_button.clicked.connect(self._next_image)
         bar.addWidget(self.next_button)
+
+        bar.addStretch()
+
+        self.edit_session_btn = QPushButton("Éditer")
+        self.edit_session_btn.setFixedSize(90, 40)
+        self.edit_session_btn.setFocusPolicy(Qt.NoFocus)
+        self.edit_session_btn.setToolTip(
+            "Même visionneuse que le double-clic sur la grille (crop, rotation)"
+        )
+        self.edit_session_btn.clicked.connect(self._on_session_edit_clicked)
+        self.edit_session_btn.hide()
+        bar.addWidget(self.edit_session_btn)
 
         # Timer widget: hidden, drives countdown (top-left) and session logic (timer_finished)
         self.timer_widget = SessionTimer(self)
         self.timer_widget.setVisible(False)
         self.timer_widget.timer_finished.connect(self._on_timer_finished)
         self.timer_widget.timer_updated.connect(self._on_timer_updated)
+
+    def _set_session_nav_visible(self, visible: bool) -> None:
+        """Show or hide Précédent / Pause / Suivant (Éditer handled separately)."""
+        self.prev_button.setVisible(visible)
+        self.play_pause_btn.setVisible(visible)
+        self.next_button.setVisible(visible)
+
+    def _on_session_edit_clicked(self) -> None:
+        """Open the grid image viewer (crop, rotate) while keeping the session paused."""
+        image_id = self.session_manager.get_current_image_id()
+        if not image_id:
+            return
+        self._session_viewer_open = True
+        self._set_session_nav_visible(False)
+        self.edit_session_btn.hide()
+        if self._session_image_viewer is None:
+            self._session_image_viewer = _SessionImageViewerWindow(
+                self.image_manager, self
+            )
+        self._session_image_viewer.set_image(image_id)
+        self._session_image_viewer.show()
+        self._session_image_viewer.raise_()
+        self._session_image_viewer.activateWindow()
+
+    def _on_session_viewer_closed(self) -> None:
+        """Reload slide after the user closed the editor; restore chrome; stay paused."""
+        if not self._session_viewer_open:
+            return
+        self._session_viewer_open = False
+        self.current_pixmap = None
+        self._do_load_current_image()
+        self._sync_session_edit_visibility()
+
+    def _close_session_viewer_if_open(self) -> None:
+        """Close the image viewer without duplicating reload (closeEvent calls _on_session_viewer_closed)."""
+        if self._session_image_viewer and self._session_image_viewer.isVisible():
+            self._session_image_viewer.close()
+
+    def _sync_session_edit_visibility(self) -> None:
+        """Éditer visible only when paused on an image step; chrome hidden while viewer is open."""
+        if not hasattr(self, "edit_session_btn"):
+            return
+        paused = self.timer_widget.is_running and self.timer_widget.is_paused
+        has_image = self.session_manager.get_current_image_id() is not None
+        can_edit = (
+            paused
+            and not self._showing_get_ready
+            and not self._showing_phase_title
+            and not self._fade_in_progress
+            and has_image
+        )
+        if self._session_viewer_open:
+            self._set_session_nav_visible(False)
+            self.edit_session_btn.hide()
+            return
+        self._set_session_nav_visible(True)
+        self.edit_session_btn.setVisible(can_edit)
 
     def _setup_ui_auto_hide(self):
         """Setup 2s inactivity timer; show overlays + cursor on key/mouse, hide after inactivity (no fade)."""
@@ -392,6 +518,9 @@ class SlideshowWindow(QMainWindow):
 
     def _hide_ui(self):
         """Hide controls and cursor after inactivity; countdown (timer) stays visible."""
+        if self._session_viewer_open:
+            self._hide_ui_timer.start(_UI_HIDE_AFTER_MS)
+            return
         self.fullscreen_btn.setVisible(False)
         self.controls_frame.setVisible(False)
         self.setCursor(Qt.BlankCursor)
@@ -405,11 +534,11 @@ class SlideshowWindow(QMainWindow):
         self.prev_shortcut.activated.connect(self._previous_image)
         self.exit_shortcut = QShortcut(QKeySequence("Escape"), self)
         self.exit_shortcut.activated.connect(self._on_escape)
-    
+
     def _apply_theme(self):
         """Apply theme-aware styles."""
         from core.settings import settings
-        
+
         if settings.get("ui.theme") == "dark":
             # Dark theme (countdown frame uses same as controls for visibility)
             self.setStyleSheet("""
@@ -513,7 +642,7 @@ class SlideshowWindow(QMainWindow):
                     color: #ffffff;
                 }
             """)
-    
+
     def start_session(
         self,
         image_ids: List[str],
@@ -541,7 +670,11 @@ class SlideshowWindow(QMainWindow):
             True if session started (run has at least one image), False otherwise.
         """
         course_config: Optional[Dict[str, Any]] = None
-        if session_type == "Course" and course_config_path and course_config_path.exists():
+        if (
+            session_type == "Course"
+            and course_config_path
+            and course_config_path.exists()
+        ):
             course_config = load_course_config(course_config_path)
 
         ok = self.session_manager.start_session(
@@ -604,9 +737,11 @@ class SlideshowWindow(QMainWindow):
         self._show_ui_and_restart_timer()
         if self._is_fullscreen:
             self.setWindowState(Qt.WindowFullScreen)
+
             def _delayed_fit_after_fullscreen():
                 _dbg("delayed (100ms) fitInView after setWindowState(WindowFullScreen)")
                 self._fit_scene_in_view()
+
             QTimer.singleShot(100, _delayed_fit_after_fullscreen)
         self._start_title_countdown(_GET_READY_DURATION_SEC, self._on_get_ready_done)
         prevent_sleep()  # Keep display and system awake during session
@@ -619,7 +754,9 @@ class SlideshowWindow(QMainWindow):
         self._title_countdown_remaining = self._title_countdown_total
         self._title_countdown_done_callback = on_done
         self._update_title_countdown_label()
-        self._apply_countdown_color(self._title_countdown_remaining, self._title_countdown_total)
+        self._apply_countdown_color(
+            self._title_countdown_remaining, self._title_countdown_total
+        )
         self._title_countdown_timer.start()
 
     def _on_title_countdown_tick(self) -> None:
@@ -634,7 +771,9 @@ class SlideshowWindow(QMainWindow):
                 cb()
             return
         self._update_title_countdown_label()
-        self._apply_countdown_color(self._title_countdown_remaining, self._title_countdown_total)
+        self._apply_countdown_color(
+            self._title_countdown_remaining, self._title_countdown_total
+        )
 
     def _update_title_countdown_label(self) -> None:
         """Set countdown label to current title countdown (e.g. 00:03)."""
@@ -679,14 +818,14 @@ class SlideshowWindow(QMainWindow):
             else:
                 timing = f"{duration_sec // 60} min {duration_sec % 60}"
             self.phase_title_label.setText(phase_name)
-            self.phase_subtitle_label.setText(
-                f"{count} Images of {timing}"
-            )
+            self.phase_subtitle_label.setText(f"{count} Images of {timing}")
             self.phase_title_frame.setVisible(True)
             self.phase_title_frame.raise_()
             self.countdown_frame.raise_()  # Timer visible during phase title
             self.timer_widget.pause_timer()  # Pause during title so first image gets full duration
-            self._start_title_countdown(_PHASE_TITLE_DURATION_SEC, self._on_phase_title_done)
+            self._start_title_countdown(
+                _PHASE_TITLE_DURATION_SEC, self._on_phase_title_done
+            )
             return
         self._showing_phase_title = False
         self._do_load_current_image()
@@ -705,40 +844,40 @@ class SlideshowWindow(QMainWindow):
         image_id = self.session_manager.get_current_image_id()
         if not image_id:
             return
-        
+
         # Get image metadata
         metadata = self.image_manager.get_image_metadata(image_id)
         if not metadata:
             return
-        
+
         # Load image asynchronously
         image_path = self.image_manager.image_dir / metadata.path
         worker = ImageLoaderWorker(image_id, image_path, (1920, 1080))  # Full HD max
-        
+
         worker.signals.finished.connect(self._on_image_loaded)
         worker.signals.error.connect(self._on_image_error)
-        
+
         self.thread_pool.start(worker)
-    
+
     def _on_image_loaded(self, image_id: str, pixmaps: tuple):
         """Handle loaded image."""
         fast_pixmap, high_quality_pixmap = pixmaps
-        
+
         # Store the high quality pixmap
         self.current_pixmap = high_quality_pixmap
-        
+
         # Update display
         self._update_image_display()
-    
+
     def _on_image_error(self, image_id: str, error_msg: str):
         """Handle image loading error."""
         # Create a placeholder image
         placeholder = QPixmap(800, 600)
         placeholder.fill(Qt.gray)
-        
+
         self.current_pixmap = placeholder
         self._update_image_display()
-    
+
     def _get_viewport_size(self):
         """Return (width, height) in logical pixels. Use container size if viewport not yet sized (e.g. before show/fullscreen)."""
         vp = self.graphics_view.viewport()
@@ -831,11 +970,12 @@ class SlideshowWindow(QMainWindow):
         return (max(1, int(round(w * dpr))), max(1, int(round(h * dpr))))
 
     def _fit_scene_in_view(self) -> None:
-        """Fit the scene (items rect) in the viewport via fitInView. Real fullscreen (Qt does scale/center)."""
+        """Fit the scene (items rect) in the viewport via fitInView (full-area display)."""
         rect = self.scene.itemsBoundingRect()
         if rect.isEmpty():
             return
         self.scene.setSceneRect(rect)
+        self.graphics_view.resetTransform()
         self.graphics_view.fitInView(rect, Qt.KeepAspectRatio)
         self._debug_dimensions("_fit_scene_in_view")
 
@@ -848,8 +988,13 @@ class SlideshowWindow(QMainWindow):
         sr = self.scene.sceneRect()
         ibr = self.scene.itemsBoundingRect()
         _dbg(f"--- {label} ---")
-        _dbg(f"viewport: ({vpw}, {vph})  sceneRect: ({sr.width():.1f}, {sr.height():.1f})  itemsBoundingRect: ({ibr.width():.1f}, {ibr.height():.1f})")
-        for name, item in [("pixmap_item", self.pixmap_item), ("pixmap_item_next", self.pixmap_item_next)]:
+        _dbg(
+            f"viewport: ({vpw}, {vph})  sceneRect: ({sr.width():.1f}, {sr.height():.1f})  itemsBoundingRect: ({ibr.width():.1f}, {ibr.height():.1f})"
+        )
+        for name, item in [
+            ("pixmap_item", self.pixmap_item),
+            ("pixmap_item_next", self.pixmap_item_next),
+        ]:
             pix = item.pixmap()
             if pix.isNull():
                 _dbg(f"{name}: pixmap=null")
@@ -877,7 +1022,9 @@ class SlideshowWindow(QMainWindow):
     def _give_focus_to_view(self) -> None:
         """Set keyboard focus to the graphics view so Space is handled by eventFilter (first press works)."""
         self.graphics_view.setFocus(Qt.OtherFocusReason)
-        _dbg_space(f"_give_focus_to_view done, focusWidget={QApplication.focusWidget()}")
+        _dbg_space(
+            f"_give_focus_to_view done, focusWidget={QApplication.focusWidget()}"
+        )
 
     def _on_container_resized(self) -> None:
         """On resize: refit scene in viewport (fitInView)."""
@@ -916,6 +1063,8 @@ class SlideshowWindow(QMainWindow):
 
     def _start_fade_animation(self):
         """Start the crossfade (called after resize/repaint so image is at correct size)."""
+        self._fade_in_progress = True
+        self._sync_session_edit_visibility()
         self._fade_animation = QVariantAnimation(self)
         self._fade_animation.setStartValue(0.0)
         self._fade_animation.setEndValue(1.0)
@@ -933,12 +1082,15 @@ class SlideshowWindow(QMainWindow):
         self.pixmap_item.setPixmap(self.pixmap_item_next.pixmap())
         self.pixmap_item_next.setOpacity(0.0)
         self._fit_scene_in_view()
+        self._fade_in_progress = False
+        self._sync_session_edit_visibility()
         if self._fade_animation:
             self._fade_animation.valueChanged.disconnect(self._on_fade_value_changed)
             self._fade_animation.finished.disconnect(self._on_fade_finished)
-    
+
     def _next_image(self):
         """Go to the next step: Get ready -> first phase/image, phase title -> image, image -> next phase title or image."""
+        self._close_session_viewer_if_open()
         if self._showing_get_ready:
             self._cancel_get_ready_if_visible()
             self.timer_widget.start_timer()
@@ -971,6 +1123,7 @@ class SlideshowWindow(QMainWindow):
 
     def _previous_image(self):
         """Go to the previous step: image -> phase title if phase start, or Get ready if at first image."""
+        self._close_session_viewer_if_open()
         if self._showing_get_ready:
             return
         if self._showing_phase_title:
@@ -982,7 +1135,9 @@ class SlideshowWindow(QMainWindow):
                 self.countdown_frame.raise_()
                 self._showing_get_ready = True
                 self.timer_widget.pause_timer()
-                self._start_title_countdown(_GET_READY_DURATION_SEC, self._on_get_ready_done)
+                self._start_title_countdown(
+                    _GET_READY_DURATION_SEC, self._on_get_ready_done
+                )
             else:
                 self.session_manager.previous_image()
                 self._sync_timer_to_current_image()
@@ -1000,7 +1155,9 @@ class SlideshowWindow(QMainWindow):
                 self.countdown_frame.raise_()
                 self._showing_get_ready = True
                 self.timer_widget.pause_timer()
-                self._start_title_countdown(_GET_READY_DURATION_SEC, self._on_get_ready_done)
+                self._start_title_countdown(
+                    _GET_READY_DURATION_SEC, self._on_get_ready_done
+                )
             return
         self.session_manager.previous_image()
         self._sync_timer_to_current_image()
@@ -1058,6 +1215,7 @@ class SlideshowWindow(QMainWindow):
             self.play_pause_btn.setObjectName("playPauseBtnPaused")
         self.play_pause_btn.style().unpolish(self.play_pause_btn)
         self.play_pause_btn.style().polish(self.play_pause_btn)
+        self._sync_session_edit_visibility()
 
     def _toggle_controls(self):
         """Show/hide bottom bar (reserved for later; not bound to Space)."""
@@ -1078,14 +1236,29 @@ class SlideshowWindow(QMainWindow):
             self.timer_widget.start_timer()
         else:
             self.timer_widget.pause_timer()  # toggles pause <-> resume
+        # Reason: leaving pause for play should close crop/rotate tools (session continues).
+        if self.timer_widget.is_running and not self.timer_widget.is_paused:
+            self._close_session_viewer_if_open()
         self._sync_play_pause_button()
-        _dbg_space(f"after toggle | is_running={self.timer_widget.is_running} is_paused={self.timer_widget.is_paused}")
+        _dbg_space(
+            f"after toggle | is_running={self.timer_widget.is_running} is_paused={self.timer_widget.is_paused}"
+        )
 
-    def _apply_countdown_color(self, remaining_seconds: int, total_seconds: Optional[int] = None):
+    def _apply_countdown_color(
+        self, remaining_seconds: int, total_seconds: Optional[int] = None
+    ):
         """Set countdown label color: more red as remaining time approaches 0."""
-        total = max(1, total_seconds if total_seconds is not None else self.timer_widget.total_seconds)
+        total = max(
+            1,
+            (
+                total_seconds
+                if total_seconds is not None
+                else self.timer_widget.total_seconds
+            ),
+        )
         ratio = remaining_seconds / total  # 1 = full time left, 0 = no time
         from core.settings import settings
+
         dark = settings.get("ui.theme") == "dark"
         if dark:
             g, b = int(255 * ratio), int(255 * ratio)
@@ -1110,7 +1283,7 @@ class SlideshowWindow(QMainWindow):
         self._next_image()
         if self.controls_frame.isVisible():
             self._sync_play_pause_button()
-    
+
     def showEvent(self, event):
         """Re-fit when window is shown so viewport has final size."""
         super().showEvent(event)
@@ -1121,23 +1294,45 @@ class SlideshowWindow(QMainWindow):
         """Catch Space on graphics view; show UI on any key, mouse move, or mouse click."""
         # Viewport receives mouse events (QGraphicsView delegates to viewport())
         if obj == self.graphics_view.viewport():
-            if event.type() in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            if event.type() in (
+                QEvent.MouseMove,
+                QEvent.MouseButtonPress,
+                QEvent.MouseButtonRelease,
+            ):
                 self._show_ui_and_restart_timer()
                 return False
         if obj == self.graphics_view:
-            if event.type() in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+            if event.type() in (
+                QEvent.MouseMove,
+                QEvent.MouseButtonPress,
+                QEvent.MouseButtonRelease,
+            ):
                 self._show_ui_and_restart_timer()
                 return False
             if event.type() == QEvent.KeyPress:
                 self._show_ui_and_restart_timer()
                 if event.key() == Qt.Key_Space and not event.isAutoRepeat():
-                    _dbg_space("eventFilter: Space on graphics_view, toggling play/pause")
+                    _dbg_space(
+                        "eventFilter: Space on graphics_view, toggling play/pause"
+                    )
                     self._on_play_pause_clicked()
                     return True
-        if obj == self._overlay_container and event.type() in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+        if obj == self._overlay_container and event.type() in (
+            QEvent.MouseMove,
+            QEvent.MouseButtonPress,
+            QEvent.MouseButtonRelease,
+        ):
             self._show_ui_and_restart_timer()
             return False
-        if obj in (self.countdown_frame, self.fullscreen_btn, self.controls_frame) and event.type() in (QEvent.MouseMove, QEvent.MouseButtonPress, QEvent.MouseButtonRelease):
+        if obj in (
+            self.countdown_frame,
+            self.fullscreen_btn,
+            self.controls_frame,
+        ) and event.type() in (
+            QEvent.MouseMove,
+            QEvent.MouseButtonPress,
+            QEvent.MouseButtonRelease,
+        ):
             self._show_ui_and_restart_timer()
             return False
         return super().eventFilter(obj, event)
@@ -1158,9 +1353,14 @@ class SlideshowWindow(QMainWindow):
 
     def closeEvent(self, event):
         """Handle window close event: end session and notify parent to re-show main window."""
+        if self._session_image_viewer is not None:
+            self._session_image_viewer._notify_slideshow_on_close = False
+            self._session_image_viewer.close()
+            self._session_image_viewer = None
+        self._session_viewer_open = False
         allow_sleep()  # Restore normal power behavior (screen can sleep again)
         if self.session_manager.session_run:
             self.session_ended.emit()
         self.session_manager.end_session()
         self.setCursor(Qt.ArrowCursor)
-        super().closeEvent(event) 
+        super().closeEvent(event)

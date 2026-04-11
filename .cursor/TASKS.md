@@ -8,6 +8,10 @@ Update this file via prompt:
 
 ## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
 
+- [x] Startup: split requirements (runtime / dev / tools), remove unused pydantic; defer import_date backfill; lazy-import session/viewer/slideshow modules; load Kalam only when theme QSS needs it (2026-04-11)
+- [x] Virtualized image grid: grow thumbnail pool on column/viewport change; fix row range using content top margin (2026-04-11)
+- [x] Session window: Éditer opens ImageViewerWindow (grid parity); fullscreen QGraphicsView fit; hide nav while viewer open (2026-04-11)
+
 - [x] Default image display to Crop All and improve thumbnail sharpness in crop/fill modes (2026-04-10)
 - [x] Add user-selectable display mode combo box (Fit All / Fit Height / Fit Width / Crop All) with persistence (2026-04-10)
 - [x] Create unified thumbnail_fitting module and fix top-bar centering + no-crop image display (2026-04-10)

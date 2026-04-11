@@ -1,5 +1,46 @@
 # Changelog
 
+## 2026-04-11 (`safe_remove`: missing path returns False)
+### ✅ Tasks:
+- Fix `safe_remove` so a non-existent path returns `False` (previously fell through and returned `True`).
+
+→ Result: Aligns with docstring and `tests/test_file_utils.py`.
+---
+
+## 2026-04-11 (Session: fullscreen fit + Éditer opens ImageViewerWindow)
+### ✅ Tasks:
+- Slideshow: restore `QGraphicsView` fullscreen `fitInView`; pause edit uses the grid viewer
+
+- Replaced embedded session crop/rotate with `_SessionImageViewerWindow` (subclass of `ImageViewerWindow`): **Éditer** opens the same viewer as grid double-click; closing it reloads the slide and restores Précédent/Suivant/Pause (session stays paused).
+- While the viewer is open, session navigation buttons are hidden.
+- Removed `session_graphics_view.py` and `session_image_edit.py`; closing the session window disables viewer callback to avoid reload during shutdown.
+→ Result: Full-area image display again; editing matches the main image viewer UX.
+---
+
+## 2026-04-11 (Virtualized image grid: fix empty rows when changing columns)
+### ✅ Tasks:
+- Fix progressive empty rows at the bottom of the grid (virtualized mode)
+
+- The thumbnail pool was allocated only once; more columns → narrower cells → shorter rows → more rows visible in the same viewport, so the pool became too small and lower slots had no widget.
+- `_ensure_virtualized_pool` now grows the pool to `_required_virtualized_pool_size()` whenever layout/viewport/columns change; capped pool size by catalog length.
+- Row index math for the visible range now subtracts the grid’s top content margin so scroll position matches `y = margin_top + row * stride`.
+- Tests in `tests/test_image_grid_virtualized_pool.py`.
+→ Result: Scrolling and column changes keep all visible cells filled in large libraries.
+---
+
+## 2026-04-11 (Faster startup: deps split, lazy imports, deferred backfill, theme fonts)
+### ✅ Tasks:
+- Startup performance and dependency cleanup
+
+- Trimmed `requirements.txt` to runtime only (PySide6, QtPy, Pillow); removed unused `pydantic`.
+- Added `requirements-dev.txt` (black, pytest, pytest-qt, mypy, types-Pillow) and `requirements-tools.txt` (requests, beautifulsoup4 for `utils/download_animal_photo_refs.py`).
+- Deferred `import_date` backfill to `QTimer.singleShot(0, ...)` after the main window is shown (`ImageManager.run_import_date_backfill()`).
+- Lazy-import `SessionSettingsDialog`, `SlideshowWindow`, and `ImageViewerWindow` inside `gui/main_window.py` handlers.
+- Load embedded **Kalam** only when the active theme’s QSS uses it; removed unused **Caveat** registration at startup.
+- Tests: `run_import_date_backfill` delegation/error propagation; `load_theme_fonts` behavior for dark vs Kalam themes.
+→ Result: Leaner installs, less work before first frame, and fewer font files touched on the default dark theme.
+---
+
 ## 2026-04-10 (Ignore `.venv` in Git)
 ### ✅ Tasks:
 - Stop tracking the virtual environment in version control

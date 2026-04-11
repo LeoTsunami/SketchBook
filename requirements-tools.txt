@@ -1,0 +1,4 @@
+# Optional: utils/download_animal_photo_refs.py (scraping)
+-r requirements.txt
+requests>=2.28.0
+beautifulsoup4>=4.11.0

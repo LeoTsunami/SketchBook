@@ -2,8 +2,10 @@
 Main window of the SketchBook application.
 """
 
+from __future__ import annotations
+
 from pathlib import Path
-from typing import Any, Dict, List, Set, Optional, Tuple
+from typing import Any, Dict, List, Set, Optional, Tuple, TYPE_CHECKING
 from qtpy.QtWidgets import (
     QMainWindow,
     QMenu,
@@ -81,13 +83,13 @@ from gui.thumbnail_fitting import FitMode
 from gui.tag_widgets import DraggableTagChip
 from gui.add_tag_dialog import AddTagDialog, IconPickerDialog
 from gui.tag_apply_worker import TagApplyWorker
-from gui.session_settings_dialog import SessionSettingsDialog
-from gui.image_viewer_window import ImageViewerWindow
-from gui.slideshow_window import SlideshowWindow
 from core.session_manager import SessionManager
 from gui.icon_utils import find_tag_icon, invert_icon
 import os
 import json
+
+if TYPE_CHECKING:
+    from gui.slideshow_window import SlideshowWindow
 
 
 class DraggableTreeWidget(QTreeWidget):
@@ -629,19 +631,26 @@ class MainWindow(QMainWindow):
         """Start window drag when pressing on the custom top chrome background."""
         if event.button() == Qt.LeftButton:
             self._resize_edges = self._get_resize_edges_at_pos(
-                event.position().toPoint() if hasattr(event, "position") else event.pos()
+                event.position().toPoint()
+                if hasattr(event, "position")
+                else event.pos()
             )
             if self._try_start_system_resize(self._resize_edges):
                 event.accept()
                 return
-            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            pos = (
+                event.position().toPoint()
+                if hasattr(event, "position")
+                else event.pos()
+            )
             top_bar = getattr(self, "_top_chrome_bar", None)
             if top_bar and top_bar.geometry().contains(pos):
                 target = self.childAt(pos)
                 if target in (top_bar,):
                     self._is_window_dragging = True
                     self._window_drag_offset = (
-                        event.globalPosition().toPoint() - self.frameGeometry().topLeft()
+                        event.globalPosition().toPoint()
+                        - self.frameGeometry().topLeft()
                         if hasattr(event, "globalPosition")
                         else event.globalPos() - self.frameGeometry().topLeft()
                     )
@@ -653,7 +662,9 @@ class MainWindow(QMainWindow):
         """Move frameless window while dragging top chrome; update resize cursor."""
         if not (event.buttons() & Qt.LeftButton):
             self._update_resize_cursor(
-                event.position().toPoint() if hasattr(event, "position") else event.pos()
+                event.position().toPoint()
+                if hasattr(event, "position")
+                else event.pos()
             )
         if self._is_window_dragging and (event.buttons() & Qt.LeftButton):
             if self.isMaximized():
@@ -679,7 +690,11 @@ class MainWindow(QMainWindow):
     def mouseDoubleClickEvent(self, event) -> None:
         """Double-click top chrome background to maximize/restore."""
         if event.button() == Qt.LeftButton:
-            pos = event.position().toPoint() if hasattr(event, "position") else event.pos()
+            pos = (
+                event.position().toPoint()
+                if hasattr(event, "position")
+                else event.pos()
+            )
             top_bar = getattr(self, "_top_chrome_bar", None)
             if top_bar and top_bar.geometry().contains(pos):
                 target = self.childAt(pos)
@@ -778,7 +793,9 @@ class MainWindow(QMainWindow):
         self.left_panel_container.installEventFilter(self)
 
         # Compact rail control (non-floating): lives inside left panel and fills its height when collapsed.
-        self.tag_filters_floating_btn = QPushButton("Tags\nfilters\n>", self.left_panel_container)
+        self.tag_filters_floating_btn = QPushButton(
+            "Tags\nfilters\n>", self.left_panel_container
+        )
         self.tag_filters_floating_btn.setObjectName("TagFiltersFloatingButton")
         self.tag_filters_floating_btn.setToolTip("Hover to expand tags sidebar")
         self.tag_filters_floating_btn.setStyleSheet("""
@@ -1577,6 +1594,8 @@ class MainWindow(QMainWindow):
         )
         image_count = len(filtered_images)
 
+        from gui.session_settings_dialog import SessionSettingsDialog
+
         dialog = SessionSettingsDialog(self.image_manager, image_count, self)
         if dialog.exec_() != QDialog.Accepted or not dialog.session_started:
             return
@@ -1606,6 +1625,8 @@ class MainWindow(QMainWindow):
             interval_seconds = _interval_map.get(interval_text, 60)
 
         if self._slideshow_window is None:
+            from gui.slideshow_window import SlideshowWindow
+
             self._slideshow_window = SlideshowWindow(
                 self.session_manager, self.image_manager, parent=self
             )
@@ -4129,6 +4150,8 @@ class MainWindow(QMainWindow):
     def _on_image_clicked(self, image_id: str):
         """Open the image in a large viewer window."""
         if self._image_viewer_window is None:
+            from gui.image_viewer_window import ImageViewerWindow
+
             self._image_viewer_window = ImageViewerWindow(self.image_manager, self)
         if self._image_viewer_window.set_image(image_id):
             self._image_viewer_window.show()

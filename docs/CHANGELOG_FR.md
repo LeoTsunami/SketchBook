@@ -1,5 +1,47 @@
 # Journal des modifications
 
+## 2026-04-11 (`safe_remove` : chemin absent → False)
+### ✅ Tâches :
+- Correction : `safe_remove` renvoie `False` si le chemin n’existe pas (avant : retour `True` par erreur).
+
+→ Résultat : cohérent avec la doc et `tests/test_file_utils.py`.
+---
+
+## 2026-04-11 (Session : plein écran + Éditer = visionneuse grille)
+### ✅ Tâches :
+- Diaporama : retrouver un vrai `fitInView` plein cadre ; édition = même fenêtre que le double-clic
+
+- Retour à `QGraphicsView` sans barres de défilement pour l’image de session.
+- `_SessionImageViewerWindow` (hérite de `ImageViewerWindow`) : **Éditer** ouvre la même visionneuse que la grille ; à la fermeture, rechargement de la diapositive et réaffichage des boutons (session toujours en pause).
+- Boutons Précédent/Suivant/Pause masqués tant que la visionneuse est ouverte ; fermeture session sans notifier rechargement.
+- Suppression de `session_graphics_view.py` et `session_image_edit.py`.
+→ Résultat : image plein cadre comme avant ; édition fiable, identique à la grille.
+---
+
+## 2026-04-11 (Grille virtualisée : lignes vides en bas lors du changement de colonnes)
+### ✅ Tâches :
+- Correction des lignes qui se vident progressivement en bas de la grille (mode virtualisé)
+
+- Le pool de miniatures n’était créé qu’une fois ; plus de colonnes → cellules plus étroites → lignes plus courtes → plus de lignes visibles dans la même fenêtre, donc pool trop petit et cases sans widget en bas.
+- `_ensure_virtualized_pool` agrandit désormais le pool selon `_required_virtualized_pool_size()` à chaque changement de mise en page / colonnes ; plafond aligné sur le nombre d’images.
+- Le calcul des indices de lignes visibles tient compte de la marge haute du contenu pour rester cohérent avec `setGeometry`.
+- Tests dans `tests/test_image_grid_virtualized_pool.py`.
+→ Résultat : défilement et changement de colonnes conservent toutes les cellules visibles remplies sur les grosses bibliothèques.
+---
+
+## 2026-04-11 (Démarrage plus rapide : dépendances, imports paresseux, backfill différé, polices)
+### ✅ Tâches :
+- Performance au lancement et nettoyage des dépendances
+
+- `requirements.txt` limité au runtime (PySide6, QtPy, Pillow) ; suppression de `pydantic` inutilisé.
+- Ajout de `requirements-dev.txt` (black, pytest, pytest-qt, mypy, types-Pillow) et `requirements-tools.txt` (requests, beautifulsoup4 pour `utils/download_animal_photo_refs.py`).
+- Backfill des `import_date` différé après le premier affichage via `QTimer` (`ImageManager.run_import_date_backfill()`).
+- Imports paresseux de `SessionSettingsDialog`, `SlideshowWindow` et `ImageViewerWindow` dans `gui/main_window.py`.
+- Chargement de la police embarquée **Kalam** uniquement si le thème actif l’utilise dans le QSS ; plus d’enregistrement de **Caveat** au démarrage (non référencé dans les QSS).
+- Tests : délégation / erreurs pour `run_import_date_backfill` ; comportement de `load_theme_fonts` (dark vs thèmes Kalam).
+→ Résultat : installation plus légère, moins de travail avant la première frame, et moins de fichiers de polices lus avec le thème sombre par défaut.
+---
+
 ## 2026-04-10 (Ignorer `.venv` dans Git)
 ### ✅ Tâches :
 - Ne plus versionner l’environnement virtuel
