@@ -1,5 +1,73 @@
 # Changelog
 
+## 2026-04-12 (Floating tag panel UX)
+### ✅ Tasks:
+- Tag library overlay polish
+
+  - Hide **Tags filters** trigger while the tag panel is visible (`isVisible()`), including during slide animations; show again only after `panel_did_hide`
+  - Tag panel and trigger use a top inset (`logo height + 24px`) so they no longer extend under the floating logo; `TagPanelOverlay` animates at `y = top_inset` with reduced height
+  - **Start session** is raised last in `_position_floating_grid_overlays` so it stays above the tag rail, overlay, and image tag popover
+  - `TagHoverPopover` stores anchor thumbnail + viewport and `refresh_position()` on scroll/resize; `stackUnder(session button)` keeps the popover below **Start session**
+→ Result: Tag UI stays clear of the logo; session button remains topmost among viewport overlays; selected-image tag popover follows the thumbnail while scrolling.
+---
+
+## 2026-04-12 (Image grid: unified sidebar animation system)
+### ✅ Tasks:
+- Replace crossfade overlay with ultra-fast per-frame resize during sidebar animation; fix scroll stability and eliminate sporadic image resets
+
+  - Remove QLabel crossfade overlay system entirely (QGraphicsOpacityEffect, QPropertyAnimation, QEasingCurve)
+  - `_get_scroll_anchor` uses cached `_last_layout_row_h` (from previous layout pass) to match current content layout
+  - `_store_layout_row_height()` at end of every layout pass
+  - `_sidebar_anim_active` flag on `ImageThumbnail`: `resizeEvent` uses `resetTransform + scale + centerOn` instead of `fitInView`
+  - `_fast_scale_in_view()` on `ImageThumbnail`: direct transform for all FitMode variants with `FastTransformation`
+  - Per-frame visible-only relayout (`_do_relayout_visible_only`), content height set explicitly, anchor restored
+  - `_apply_full_quality_fit_visible_thumbnails()`: quality fit on visible ~30 thumbnails only at animation end
+  - **Scroll signal blocking**: `QSignalBlocker` on scrollbar for entire duration of `relayout_after_sidebar_step` and `set_sidebar_width_animation_active(False)` — prevents `_on_scroll` from firing when `content.setFixedHeight` clamps the scroll value
+  - **`_on_scroll` guard**: early return when `_sidebar_width_animation_active` is True — prevents visibility timer, load batches, and scroll preview during animation
+  - **`set_image` respects `_sidebar_anim_active`**: images arriving from thread pool during animation use `_fast_scale_in_view` instead of expensive `fitInView + SmoothTransformation`
+  - **Animation-end content height**: explicitly set `content.setMinimumHeight` at animation end before scroll anchor restore (QGridLayout LayoutRequest hasn't processed yet)
+→ Result: Sidebar expand/collapse works identically at any scroll position (top, middle, bottom); no sporadic image resets; scroll perfectly preserved; expand and collapse behave symmetrically.
+---
+
+## 2026-04-12 (Image grid: defer all relayout during sidebar animation)
+### ✅ Tasks:
+- Sidebar animation resize optimization — zero relayout during animation
+
+  - Remove per-frame grid relayout during sidebar animation: `_flush_sidebar_live_relayout` now only repositions floating overlays (no `relayout_after_sidebar_step` per tick)
+  - Qt's `setWidgetResizable(True)` + `setFixedSize` children handles viewport clip/expand natively in C++ at near-zero cost
+  - Replace `setFixedWidth()` + `setFixedHeight()` with single `setFixedSize()` in `_do_relayout`, `_update_virtualized_view`, `_load_next_batch`, `prepend_image` — halves the number of `resizeEvent` firings per thumbnail
+  - `_apply_full_quality_fit_all_thumbnails()` runs once at animation end for sharp rendering
+→ Result: Sidebar expand/collapse is completely lag-free; thumbnails snap to new size at animation end.
+---
+
+## 2026-04-12 (Image grid: comprehensive resize + scroll performance overhaul)
+### ✅ Tasks:
+- Resize performance
+
+  - Direct `_fast_resize_active` flag on thumbnails — eliminates O(depth) parent-chain walk on every resizeEvent for every visible cell
+  - Skip `_calculate_row_heights` during interactive resize (wasted O(n) iteration)
+  - Virtualized view: skip same-image reassign (`assign_metadata` + `clear_pixmap` + `set_image`) for thumbnails that already show the correct image — major win for small scrolls
+  - Virtualized view: skip geometry calls (`setFixedWidth/Height`, `setFixedSize`) when dimensions haven't changed
+  - Content height update only when value actually changed
+
+- Lazy load / scroll performance
+
+  - O(1) `_image_id_to_index` dict replaces O(n) linear scans in `_load_thumbnail_image` and `_on_image_loaded` (called every 15ms tick with up to 20k images)
+  - Two-phase image loading: worker emits `fast_ready` with cell-sized FastTransformation pixmap *before* computing HQ — thumbnails show content instantly while sharp version loads
+  - Thread pool increased 4 → 8; loads per tick 8 → 16; pending queue 220 → 300
+  - Scale factor reduced 3.0x → 2.0x (loads 600x720 instead of 900x1080 per cell — ~55% fewer pixels)
+  - Extract (scroll preview) workers skip fast_ready emission (240x240 previews don't need two-phase)
+→ Result: Window resize and scroll are significantly more fluid; images appear near-instantly with fast preview then upgrade to sharp.
+---
+
+## 2026-04-11 (Image grid: smooth sidebar fold)
+### ✅ Tasks:
+- Tag sidebar collapse: avoid debounced `layout_timer` during width animation so only `relayout_after_sidebar_step` updates the grid (preserves scroll ratio).
+
+- `ImageGrid.set_sidebar_width_animation_active()`; `MainWindow` sets it for the duration of `_toggle_left_sidebar` animation.
+→ Result: Gallery resize stays as fluid when folding the sidebar as when expanding it.
+---
+
 ## 2026-04-11 (`safe_remove`: missing path returns False)
 ### ✅ Tasks:
 - Fix `safe_remove` so a non-existent path returns `False` (previously fell through and returned `True`).

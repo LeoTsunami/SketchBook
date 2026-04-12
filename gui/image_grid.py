@@ -32,7 +32,7 @@ from qtpy.QtCore import (
     QRect,
     QPoint,
     QUrl,
-    QSignalBlocker,
+    QElapsedTimer,
 )
 from qtpy.QtGui import QPixmap, QImage, QResizeEvent, QIcon, QDragEnterEvent, QDropEvent
 from core.image_manager import ImageManager
@@ -72,20 +72,17 @@ class ImageGrid(QScrollArea):
     MIN_THUMBNAIL_HEIGHT = 150
     MIN_WINDOW_WIDTH = 800
     ASPECT_RATIO = 1.2
-    # Virtualization: above this count we use a fixed pool of widgets (smooth scroll with 20k+ images)
     VIRTUALIZATION_THRESHOLD = 400
     VIRTUALIZED_POOL_EXTRA_ROWS = (
         10  # Rows above/below viewport so more images load ahead
     )
-    SCROLL_FAST_THRESHOLD = 104  # Pixel delta above this = show scroll preview overlay (higher = need faster scroll)
-    SCROLL_PREVIEW_HIDE_MS = 650  # Hide overlay after this ms without fast scroll (longer so user can see it)
-    EXTRACT_STEP_FACTOR = 4  # One extract every (EXTRACT_STEP_FACTOR * columns) images (e.g. 10 cols -> every 40)
-    EXTRACT_LOAD_SIZE = (
-        240  # Size for preloaded extract thumbnails (matches overlay 240x240)
-    )
-    EXTRACT_PRELOAD_PER_TICK = (
-        2  # How many extract images to start loading per timer tick
-    )
+    SCROLL_FAST_THRESHOLD = 104
+    SCROLL_PREVIEW_HIDE_MS = 650
+    EXTRACT_STEP_FACTOR = 4
+    EXTRACT_LOAD_SIZE = 240
+    EXTRACT_PRELOAD_PER_TICK = 2
+    RESIZE_COARSE_INTERVAL_MS = 16
+    RESIZE_FINALIZE_MS = 140
 
     def __init__(self, image_manager: ImageManager, parent=None):
         """
@@ -163,6 +160,8 @@ class ImageGrid(QScrollArea):
         self.thumbnails: Dict[str, ImageThumbnail] = {}
         self.current_filter = None
         self.all_images: List[ImageMetadata] = []
+        # Reason: O(1) lookup by image_id instead of O(n) linear scans in load/display paths.
+        self._image_id_to_index: Dict[str, int] = {}
         self.loaded_count = 0
         self.loading_images: Set[str] = set()  # Track images being loaded
         self.pixmap_cache: Dict[str, QPixmap] = {}  # Cache loaded pixmaps
@@ -174,9 +173,7 @@ class ImageGrid(QScrollArea):
 
         # Set up thread pool for main image loading (thumbnails in the grid)
         self.thread_pool = QThreadPool.globalInstance()
-        self.thread_pool.setMaxThreadCount(
-            4
-        )  # Limit concurrent image loads for main grid
+        self.thread_pool.setMaxThreadCount(8)
 
         # Separate, low-concurrency pool for scroll preview extracts so it never
         # blocks the main grid loading; both run in parallel.
@@ -205,12 +202,8 @@ class ImageGrid(QScrollArea):
             15
         )  # Reason: faster ticks = images appear sooner
         self.load_ticker_timer.timeout.connect(self._process_pending_loads)
-        self.MAX_LOADS_PER_TICK = (
-            8  # Reason: load more images per tick for snappier grid
-        )
-        self.PENDING_QUEUE_MAX = (
-            220  # Larger preload queue (extra rows = more items to load)
-        )
+        self.MAX_LOADS_PER_TICK = 16
+        self.PENDING_QUEUE_MAX = 300
 
         # Connect scroll bar (valueChanged is enough; we debounce with visibility_timer)
         self.verticalScrollBar().valueChanged.connect(self._on_scroll)
@@ -225,6 +218,18 @@ class ImageGrid(QScrollArea):
 
         self.is_layout_locked = False  # Add lock to prevent concurrent layout updates
         self.pending_column_change = None  # Store pending column change
+
+        # Interactive window resize: fast (pixelated) fits during drag; smooth fit at end.
+        self._resize_interactive = False
+        self._coarse_throttle_timer = QElapsedTimer()
+        self._coarse_throttle_started = False
+        self._coarse_debounce_timer = QTimer(self)
+        self._coarse_debounce_timer.setSingleShot(True)
+        self._coarse_debounce_timer.timeout.connect(self._on_resize_coarse_debounce)
+        self.resize_finalize_timer = QTimer(self)
+        self.resize_finalize_timer.setSingleShot(True)
+        self.resize_finalize_timer.setInterval(self.RESIZE_FINALIZE_MS)
+        self.resize_finalize_timer.timeout.connect(self._on_resize_finalize)
 
         # Create context menu
         self.context_menu = QMenu(self)
@@ -254,6 +259,10 @@ class ImageGrid(QScrollArea):
     def _update_thumbnail_theme(self, theme: str):
         pass  # Le style des thumbnails est désormais géré uniquement par QSS global
 
+    def _rebuild_image_id_index(self) -> None:
+        """Rebuild the O(1) image-id-to-index mapping after any change to ``all_images``."""
+        self._image_id_to_index = {m.id: i for i, m in enumerate(self.all_images)}
+
     def _on_scroll(self, value):
         """Handle scroll events. Visibility check is debounced via visibility_timer."""
         delta = abs(value - self._last_scroll_value)
@@ -273,6 +282,8 @@ class ImageGrid(QScrollArea):
             and self.loaded_count < len(self.all_images)
         ):
             self._load_next_batch()
+
+        self._tag_popover.refresh_position()
 
     def _update_scroll_preview_position(self) -> None:
         """Update overlay position to follow the scrollbar thumb."""
@@ -386,10 +397,10 @@ class ImageGrid(QScrollArea):
                 path,
                 (self.EXTRACT_LOAD_SIZE, self.EXTRACT_LOAD_SIZE),
                 self._fit_mode,
+                emit_fast=False,
             )
             worker.signals.finished.connect(self._on_image_loaded)
             worker.signals.error.connect(self._on_image_error)
-            # Use dedicated pool so preview loading does not starve the main grid thread pool.
             self.extract_thread_pool.start(worker)
         if not self._extract_pending_indices:
             self._extract_preload_timer.stop()
@@ -477,7 +488,11 @@ class ImageGrid(QScrollArea):
             self.thumbnail_pool.append(thumb)
 
     def _update_virtualized_view(self) -> None:
-        """In virtualized mode: set content height and assign pool to visible indices."""
+        """In virtualized mode: set content height and assign pool to visible indices.
+
+        Optimised to skip redundant geometry calls and reuse thumbnails that
+        already display the correct image (avoids scene-clear + re-set on every scroll).
+        """
         if not self._is_virtualized() or not self.all_images:
             return
         self._ensure_virtualized_pool()
@@ -492,14 +507,14 @@ class ImageGrid(QScrollArea):
             + margins.top()
             + margins.bottom()
         )
-        self._virtualized_content_height = content_height
-        self.content.setMinimumHeight(content_height)
-        self.content.setFixedHeight(content_height)
+        if self._virtualized_content_height != content_height:
+            self._virtualized_content_height = content_height
+            self.content.setMinimumHeight(content_height)
+            self.content.setFixedHeight(content_height)
         scroll_y = self.verticalScrollBar().value()
         viewport_h = self.viewport().height()
         row_h = row_height + spacing
         mt = margins.top()
-        # Map scroll position to row indices using the same origin as setGeometry (y = mt + row * row_h).
         adj_top = scroll_y - mt
         adj_bottom = scroll_y + viewport_h - mt
         first_row = max(0, adj_top // row_h - self.VIRTUALIZED_POOL_EXTRA_ROWS)
@@ -509,29 +524,46 @@ class ImageGrid(QScrollArea):
         )
         start_index = first_row * self.columns
         end_index = min(total_images, (last_row + 1) * self.columns)
-        # Assign pool widgets to indices [start_index, end_index)
+
+        inner_w = thumbnail_width - 4
+        inner_h = row_height - 4
+
         self.thumbnails.clear()
         for i, thumb in enumerate(self.thumbnail_pool):
             idx = start_index + i
             if idx >= end_index:
-                thumb.clear_pixmap()
-                thumb.hide()
+                if thumb.isVisible():
+                    thumb.clear_pixmap()
+                    thumb.hide()
                 continue
+
             meta = self.all_images[idx]
-            thumb.assign_metadata(meta)
-            if meta.id in self.pixmap_cache:
+            same_image = thumb.image_id == meta.id
+
+            if not same_image:
+                thumb.assign_metadata(meta)
+                if meta.id in self.pixmap_cache:
+                    thumb.set_image(self.pixmap_cache[meta.id])
+            elif meta.id in self.pixmap_cache and thumb.pixmap_item is None:
                 thumb.set_image(self.pixmap_cache[meta.id])
+
             thumb.set_selected(meta.id in self.selected_images)
-            thumb.setFixedWidth(thumbnail_width)
-            thumb.setFixedHeight(row_height)
-            thumb.image_container.setFixedSize(thumbnail_width - 4, row_height - 4)
-            thumb.graphics_view.setFixedSize(thumbnail_width - 4, row_height - 4)
+
+            # Reason: only push geometry when it actually changed to avoid
+            # cascading relayout and repaint on every scroll tick.
+            if thumb.width() != thumbnail_width or thumb.height() != row_height:
+                thumb.setFixedSize(thumbnail_width, row_height)
+                thumb.image_container.setFixedSize(inner_w, inner_h)
+                thumb.graphics_view.setFixedSize(inner_w, inner_h)
+
             row, col = idx // self.columns, idx % self.columns
             x = margins.left() + col * (thumbnail_width + spacing)
-            y = margins.top() + row * (row_height + spacing)
+            y = mt + row * row_h
             thumb.setGeometry(x, y, thumbnail_width, row_height)
-            thumb.show()
+            if not thumb.isVisible():
+                thumb.show()
             self.thumbnails[meta.id] = thumb
+
         # Enqueue pixmap loads for visible range
         self.pending_load_queue.clear()
         for idx in range(start_index, end_index):
@@ -545,14 +577,14 @@ class ImageGrid(QScrollArea):
                 self.pending_load_queue.append(image_id)
         if self.pending_load_queue:
             self.load_ticker_timer.start()
-        # Keep pixmap cache bounded: evict off-screen entries when over limit (Reason: 20k images = avoid OOM)
-        visible_ids = {self.all_images[i].id for i in range(start_index, end_index)}
-        max_cache = 400
-        if len(self.pixmap_cache) > max_cache:
+
+        # Keep pixmap cache bounded (Reason: 20k images = avoid OOM)
+        if len(self.pixmap_cache) > 400:
+            visible_ids = {self.all_images[i].id for i in range(start_index, end_index)}
             for pid in list(self.pixmap_cache.keys()):
                 if pid not in visible_ids and pid not in self.loading_images:
                     self.pixmap_cache.pop(pid, None)
-                    if len(self.pixmap_cache) <= max_cache:
+                    if len(self.pixmap_cache) <= 400:
                         break
 
     def _reset_content_height_for_layout(self) -> None:
@@ -568,18 +600,6 @@ class ImageGrid(QScrollArea):
 
     def _update_layout(self):
         """Handle all layout updates in one place."""
-        if getattr(self, "_sidebar_live_relayout_active", False):
-            if self._is_virtualized():
-                self._update_virtualized_view()
-                return
-            for thumb in self.thumbnail_pool:
-                thumb.hide()
-            if not self.thumbnails:
-                return
-            self._reset_content_height_for_layout()
-            self._calculate_row_heights()
-            self._do_relayout()
-            return
         if self._is_virtualized():
             self._update_virtualized_view()
             return
@@ -588,38 +608,76 @@ class ImageGrid(QScrollArea):
         if not self.thumbnails:
             return
         self._reset_content_height_for_layout()
-        self._calculate_row_heights()
+        if not self._resize_interactive:
+            self._calculate_row_heights()
         self._do_relayout()
-        self._check_visible_thumbnails()
+        if not self._resize_interactive:
+            self._check_visible_thumbnails()
 
-    def relayout_after_sidebar_step(self) -> None:
+    def _schedule_window_resize_relayout(self) -> None:
         """
-        Apply thumbnail layout for the current viewport without waiting for the debounce timer.
+        Throttle grid relayout during live window resize and schedule a final sharp refit.
 
-        MainWindow calls this while the tag sidebar width animates; otherwise the grid's
-        ``layout_timer`` would typically fire only after the last resize event.
-
-        Returns:
-            None
+        Coarse passes use ImageGrid._resize_interactive so thumbnails use fast scaling;
+        after RESIZE_FINALIZE_MS without width changes, apply smooth scaling to all visible cells.
         """
-        self.layout_timer.stop()
-        vbar = self.verticalScrollBar()
-        old_value = vbar.value()
-        old_max = max(1, vbar.maximum())
-        old_ratio = old_value / old_max
-        self._sidebar_live_relayout_active = True
+        self.resize_finalize_timer.stop()
+        self.resize_finalize_timer.start(self.RESIZE_FINALIZE_MS)
+
+        if not self._coarse_throttle_started:
+            self._coarse_throttle_timer.start()
+            self._coarse_throttle_started = True
+            self._run_interactive_layout()
+            return
+
+        elapsed = self._coarse_throttle_timer.elapsed()
+        if elapsed >= self.RESIZE_COARSE_INTERVAL_MS:
+            self._coarse_throttle_timer.restart()
+            self._run_interactive_layout()
+            self._coarse_debounce_timer.stop()
+        elif not self._coarse_debounce_timer.isActive():
+            delay = max(1, self.RESIZE_COARSE_INTERVAL_MS - int(elapsed))
+            self._coarse_debounce_timer.start(delay)
+
+    def _on_resize_coarse_debounce(self) -> None:
+        """Run one throttled coarse layout after the debounce delay."""
+        self._coarse_throttle_timer.restart()
+        self._run_interactive_layout()
+
+    def _set_fast_resize_flag(self, active: bool) -> None:
+        """Set ``_fast_resize_active`` on all live thumbnails (pool + dict)."""
+        for thumb in self.thumbnail_pool:
+            thumb._fast_resize_active = active
+        for thumb in self.thumbnails.values():
+            thumb._fast_resize_active = active
+
+    def _run_interactive_layout(self) -> None:
+        """Run a full layout pass with fast (coarse) thumbnail scaling."""
+        self._resize_interactive = True
+        self._set_fast_resize_flag(True)
         try:
             self._update_layout()
         finally:
-            self._sidebar_live_relayout_active = False
-        # Preserve user's relative position so the same image region stays in view.
-        new_max = max(1, vbar.maximum())
-        target_value = int(old_ratio * new_max)
-        if target_value != vbar.value():
-            # Reason: avoid triggering scroll side effects on every animation frame.
-            blocker = QSignalBlocker(vbar)
-            vbar.setValue(target_value)
-            del blocker
+            self._resize_interactive = False
+
+    def _on_resize_finalize(self) -> None:
+        """End of window resize: stop throttling state and apply smooth pixmap fitting."""
+        self._coarse_debounce_timer.stop()
+        self._coarse_throttle_started = False
+        self._set_fast_resize_flag(False)
+        self._apply_full_quality_fit_all_thumbnails()
+
+    def _apply_full_quality_fit_all_thumbnails(self) -> None:
+        """Restore SmoothTransformation + full-quality fit on every loaded thumbnail."""
+        seen: Set[ImageThumbnail] = set()
+        for thumb in list(self.thumbnails.values()):
+            if thumb in seen:
+                continue
+            seen.add(thumb)
+            thumb.apply_full_quality_fit()
+        for thumb in self.thumbnail_pool:
+            if thumb.isVisible():
+                thumb.apply_full_quality_fit()
 
     def set_fit_mode(self, mode: FitMode) -> None:
         """
@@ -722,50 +780,47 @@ class ImageGrid(QScrollArea):
         return thumbnail_width, thumbnail_height
 
     def _do_relayout(self):
-        """Perform the actual grid layout."""
+        """Perform the actual grid layout (in-place updates; avoids full grid clear on resize)."""
         if not self.thumbnails:
             return
 
-        # Get optimal dimensions
         thumbnail_width, thumbnail_height = self._calculate_optimal_dimensions()
 
-        # Clear the grid
-        while self.grid.count():
-            item = self.grid.takeAt(0)
-            if item.widget():
-                item.widget().hide()
-
-        # Re-add all thumbnails with proper sizes
         for idx, metadata in enumerate(self.all_images):
             if idx >= self.loaded_count:
                 break
+            if metadata.id not in self.thumbnails:
+                continue
 
+            thumbnail = self.thumbnails[metadata.id]
             row = idx // self.columns
             col = idx % self.columns
 
-            if metadata.id in self.thumbnails:
-                thumbnail = self.thumbnails[metadata.id]
+            cell_item = self.grid.itemAtPosition(row, col)
+            cell_w = cell_item.widget() if cell_item is not None else None
+            if cell_w is not None and cell_w is not thumbnail:
+                self.grid.removeWidget(cell_w)
 
-                # Set sizes
-                thumbnail.setFixedWidth(thumbnail_width)
-                thumbnail.setFixedHeight(thumbnail_height)
-                thumbnail.image_container.setFixedSize(
-                    thumbnail_width - 4, thumbnail_height - 4
-                )
-                thumbnail.graphics_view.setFixedSize(
-                    thumbnail_width - 4, thumbnail_height - 4
-                )
-
-                # Add to grid
+            cell_item = self.grid.itemAtPosition(row, col)
+            cell_w = cell_item.widget() if cell_item is not None else None
+            if cell_w is not thumbnail:
                 self.grid.addWidget(thumbnail, row, col)
-                thumbnail.show()
 
-                # Update image scaling (handled by resizeEvent in thumbnail)
-                # No need to call fitInView as it causes pixelation
+            thumbnail.setFixedSize(thumbnail_width, thumbnail_height)
+            thumbnail.image_container.setFixedSize(
+                thumbnail_width - 4, thumbnail_height - 4
+            )
+            thumbnail.graphics_view.setFixedSize(
+                thumbnail_width - 4, thumbnail_height - 4
+            )
+            thumbnail.show()
 
     def clear(self):
         """Remove all thumbnails from the grid."""
         self.layout_timer.stop()
+        self.resize_finalize_timer.stop()
+        self._coarse_debounce_timer.stop()
+        self._coarse_throttle_started = False
         self.visibility_timer.stop()
         self.load_ticker_timer.stop()
         self._overlay_hide_timer.stop()
@@ -787,6 +842,7 @@ class ImageGrid(QScrollArea):
                 thumb.hide()
             self.loaded_count = 0
             self.all_images.clear()
+            self._image_id_to_index.clear()
             self.content.setMinimumHeight(0)
             self.content.setFixedHeight(0)
             return
@@ -797,6 +853,7 @@ class ImageGrid(QScrollArea):
         self.pixmap_cache.clear()
         self.loaded_count = 0
         self.all_images.clear()
+        self._image_id_to_index.clear()
 
     def load_images(
         self, filter_tags: Optional[List[str]] = None, sort_by: str = "import_date_desc"
@@ -824,6 +881,7 @@ class ImageGrid(QScrollArea):
             )
         else:
             self.all_images = self.image_manager.db.list_images(sort_by)
+        self._rebuild_image_id_index()
         self._rebuild_extract_indices()
         if not self._is_virtualized():
             self._load_next_batch()
@@ -872,9 +930,7 @@ class ImageGrid(QScrollArea):
             )
             thumbnail._fit_mode = self._fit_mode
 
-            # Set initial size
-            thumbnail.setFixedWidth(thumbnail_width)
-            thumbnail.setFixedHeight(thumbnail_height)
+            thumbnail.setFixedSize(thumbnail_width, thumbnail_height)
             thumbnail.image_container.setFixedSize(
                 thumbnail_width - 4, thumbnail_height - 4
             )
@@ -897,6 +953,7 @@ class ImageGrid(QScrollArea):
         Used when a new image is imported so it appears immediately at the top.
         """
         self.all_images.insert(0, metadata)
+        self._rebuild_image_id_index()
         if self._is_virtualized():
             self.layout_timer.start()
             self.visibility_timer.start()
@@ -913,8 +970,7 @@ class ImageGrid(QScrollArea):
             import_drop_callback=self._import_drop_callback,
         )
         thumbnail._fit_mode = self._fit_mode
-        thumbnail.setFixedWidth(thumbnail_width)
-        thumbnail.setFixedHeight(thumbnail_height)
+        thumbnail.setFixedSize(thumbnail_width, thumbnail_height)
         thumbnail.image_container.setFixedSize(
             thumbnail_width - 4, thumbnail_height - 4
         )
@@ -1005,9 +1061,10 @@ class ImageGrid(QScrollArea):
         """Load image for a thumbnail asynchronously. When virtualized, may load for cache only (thumbnail not visible)."""
         if image_id in self.loading_images:
             return
-        metadata = next((m for m in self.all_images if m.id == image_id), None)
-        if not metadata:
+        idx = self._image_id_to_index.get(image_id)
+        if idx is None or idx >= len(self.all_images):
             return
+        metadata = self.all_images[idx]
         if image_id in self.pixmap_cache:
             if image_id in self.thumbnails:
                 self.thumbnails[image_id].set_image(self.pixmap_cache[image_id])
@@ -1029,36 +1086,50 @@ class ImageGrid(QScrollArea):
             self._fit_mode,
         )
 
+        worker.signals.fast_ready.connect(self._on_image_fast_ready)
         worker.signals.finished.connect(self._on_image_loaded)
         worker.signals.error.connect(self._on_image_error)
 
         self.thread_pool.start(worker)
 
-    def _on_image_loaded(self, image_id: str, pixmaps: tuple):
-        """Handle loaded image. Extracts are duplicated: in _extract_pixmaps for overlay AND in grid cache so grid shows them too."""
+    def _on_image_fast_ready(self, image_id: str, pixmap):
+        """Show fast-scaled pixmap immediately for visual feedback while HQ loads.
+
+        Only applied when the thumbnail has no image yet (avoids downgrading
+        a previously cached HQ pixmap).
+        """
+        if image_id not in self._image_id_to_index:
+            return
+        if image_id in self.pixmap_cache:
+            return
+        thumb = self.thumbnails.get(image_id)
+        if thumb and thumb.image_id == image_id and thumb.pixmap_item is None:
+            thumb.set_image(pixmap)
+
+    def _on_image_loaded(self, image_id: str, pixmap):
+        """Handle loaded HQ image and update cache + display."""
         self.loading_images.discard(image_id)
         self._extract_loading.discard(image_id)
-        if not any(m.id == image_id for m in self.all_images):
+        if image_id not in self._image_id_to_index:
             return
-        fast_pixmap, high_quality_pixmap = pixmaps
         if image_id in self._image_id_to_extract_index:
             extract_i = self._image_id_to_extract_index[image_id]
-            self._extract_pixmaps[extract_i] = high_quality_pixmap
+            self._extract_pixmaps[extract_i] = pixmap
             if self._scroll_preview.isVisible():
                 self._update_scroll_preview_image()
-            self.pixmap_cache[image_id] = high_quality_pixmap
+            self.pixmap_cache[image_id] = pixmap
             if (
                 image_id in self.thumbnails
                 and self.thumbnails[image_id].image_id == image_id
             ):
-                self.thumbnails[image_id].set_image(high_quality_pixmap)
+                self.thumbnails[image_id].set_image(pixmap)
             return
-        self.pixmap_cache[image_id] = high_quality_pixmap
+        self.pixmap_cache[image_id] = pixmap
         if (
             image_id in self.thumbnails
             and self.thumbnails[image_id].image_id == image_id
         ):
-            self.thumbnails[image_id].set_image(high_quality_pixmap)
+            self.thumbnails[image_id].set_image(pixmap)
 
     def _on_image_error(self, image_id: str, error_msg: str):
         """Handle image loading error."""
@@ -1071,9 +1142,10 @@ class ImageGrid(QScrollArea):
         """Handle resize events to adjust grid layout."""
         super().resizeEvent(event)
         self._update_scroll_preview_position()
+        self._tag_popover.refresh_position()
         if event.size().width() != event.oldSize().width():
             self.needs_relayout = True
-            self.layout_timer.start()
+            self._schedule_window_resize_relayout()
 
     def _calculate_thumbnail_size(self):
         """Calculate the width and height for thumbnails."""
@@ -1410,6 +1482,10 @@ class ImageGrid(QScrollArea):
         else:
             self._tag_popover.hide_popover()
 
+    def set_tag_popover_stack_under(self, widget: QWidget) -> None:
+        """Stack the tag chip popover below ``widget`` (e.g. Start session button)."""
+        self._tag_popover.set_stack_under_widget(widget)
+
     def _show_tag_popover(
         self, thumbnail: ImageThumbnail, image_id: str, tags: Set[str]
     ) -> None:
@@ -1488,10 +1564,9 @@ class ImageGrid(QScrollArea):
             self.thumbnails[image_id].clear_pixmap()
         meta = self.image_manager.get_image_metadata(image_id)
         if meta:
-            for i, m in enumerate(self.all_images):
-                if m.id == image_id:
-                    self.all_images[i] = meta
-                    break
+            idx = self._image_id_to_index.get(image_id)
+            if idx is not None and idx < len(self.all_images):
+                self.all_images[idx] = meta
         self._check_visible_thumbnails()
         self.layout_timer.start()
 
@@ -1626,6 +1701,7 @@ class ImageGrid(QScrollArea):
         self.all_images = self.image_manager.search_images_advanced(
             and_tags, or_tags, sort_by
         )
+        self._rebuild_image_id_index()
         self._rebuild_extract_indices()
         if not self._is_virtualized():
             self._load_next_batch()
@@ -1654,6 +1730,7 @@ class ImageGrid(QScrollArea):
 
         self.current_filter = filter_key
         self.all_images = list(images)
+        self._rebuild_image_id_index()
         self._rebuild_extract_indices()
         if self._is_virtualized():
             self._update_virtualized_view()

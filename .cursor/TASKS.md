@@ -8,9 +8,15 @@ Update this file via prompt:
 
 ## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
 
+- [x] Image grid: unified sidebar animation system (scrollbar signal blocking, _on_scroll guard, set_image respects anim flag, explicit content height at animation end) (2026-04-12)
+- [x] Image grid: ultra-fast sidebar resize with direct transform (remove crossfade, fix scroll anchor with cached row height, _sidebar_anim_active + _fast_scale_in_view on thumbnails, visible-only per-frame relayout) (2026-04-12)
+- [x] Image grid: anchor-based scroll + crossfade on sidebar animation end (deterministic scroll preservation, 200ms viewport crossfade overlay, zero per-frame relayout) (2026-04-12)
+- [x] Image grid: defer all relayout during sidebar animation (zero per-frame relayout, single relayout+scroll restore at animation end, setFixedSize batching) (2026-04-12)
+- [x] Image grid: comprehensive resize + scroll performance overhaul (direct fast flag, O(1) index, two-phase load, skip same-image reassign, 8 threads, 2x scale) (2026-04-12)
 - [x] Startup: split requirements (runtime / dev / tools), remove unused pydantic; defer import_date backfill; lazy-import session/viewer/slideshow modules; load Kalam only when theme QSS needs it (2026-04-11)
 - [x] Virtualized image grid: grow thumbnail pool on column/viewport change; fix row range using content top margin (2026-04-11)
 - [x] Session window: Éditer opens ImageViewerWindow (grid parity); fullscreen QGraphicsView fit; hide nav while viewer open (2026-04-11)
+- [x] Image grid: suppress debounced layout during tag sidebar width animation so fold matches expand fluidity (2026-04-11)
 
 - [x] Default image display to Crop All and improve thumbnail sharpness in crop/fill modes (2026-04-10)
 - [x] Add user-selectable display mode combo box (Fit All / Fit Height / Fit Width / Crop All) with persistence (2026-04-10)

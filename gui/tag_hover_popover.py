@@ -37,6 +37,9 @@ class TagHoverPopover(QFrame):
         self._chips: dict = {}  # tag -> TagChip
         self._image_id: Optional[str] = None
         self._remove_tag_callback: Optional[Callable[[str], None]] = None
+        self._anchor_thumbnail: Optional[QWidget] = None
+        self._viewport: Optional[QWidget] = None
+        self._stack_under_widget: Optional[QWidget] = None
         self.hide()
 
     def show_below(
@@ -69,8 +72,13 @@ class TagHoverPopover(QFrame):
         self._clear_chips()
 
         if not tags:
+            self._anchor_thumbnail = None
+            self._viewport = None
             self.hide()
             return
+
+        self._anchor_thumbnail = thumbnail
+        self._viewport = viewport
 
         # Build chips with full text (no elision)
         for tag in sorted(tags):
@@ -92,12 +100,39 @@ class TagHoverPopover(QFrame):
                 col = 0
                 row += 1
 
-        # Size: at least thumbnail width or min, then adjust height to content
+        self._apply_geometry(thumbnail, viewport, x, y)
+        self.show()
+        self._raise_with_z_order()
+
+    def set_stack_under_widget(self, widget: Optional[QWidget]) -> None:
+        """Keep this popover below ``widget`` in stacking order (e.g. Start session button)."""
+        self._stack_under_widget = widget
+
+    def refresh_position(self) -> None:
+        """Recompute position from the anchored thumbnail (call on scroll/resize)."""
+        if not self.isVisible() or not self._chips:
+            return
+        thumb = self._anchor_thumbnail
+        vp = self._viewport
+        if thumb is None or vp is None:
+            return
+        if not thumb.isVisible():
+            self.hide_popover()
+            return
+        top_left = thumb.mapTo(vp, thumb.rect().bottomLeft())
+        x = top_left.x()
+        y = top_left.y() + self.GAP_BELOW_THUMB
+        self._apply_geometry(thumb, vp, x, y)
+        self._raise_with_z_order()
+
+    def _apply_geometry(
+        self, thumbnail: QWidget, viewport: QWidget, x: int, y: int
+    ) -> None:
+        """Set size and clamped position inside the viewport."""
         w = max(thumbnail.width(), self.MIN_WIDTH)
         self.setMinimumWidth(w)
         self.adjustSize()
 
-        # Clamp position so popover stays fully inside viewport (ImageGrid zone)
         pw, ph = self.width(), self.height()
         if x + pw > viewport.width():
             x = viewport.width() - pw
@@ -109,8 +144,12 @@ class TagHoverPopover(QFrame):
             y = 0
 
         self.setGeometry(x, y, pw, ph)
-        self.show()
+
+    def _raise_with_z_order(self) -> None:
+        """Raise above grid content but below optional sibling (e.g. session button)."""
         self.raise_()
+        if self._stack_under_widget is not None:
+            self.stackUnder(self._stack_under_widget)
 
     def _clear_chips(self) -> None:
         """Remove all tag chips from the popover."""
@@ -132,6 +171,8 @@ class TagHoverPopover(QFrame):
             chip.deleteLater()
             self._relayout_chips()
         if not self._chips:
+            self._anchor_thumbnail = None
+            self._viewport = None
             self.hide()
 
     def _relayout_chips(self) -> None:
@@ -157,4 +198,6 @@ class TagHoverPopover(QFrame):
         """Hide and clear the popover (e.g. when hover moves to another image)."""
         self._clear_chips()
         self._image_id = None
+        self._anchor_thumbnail = None
+        self._viewport = None
         self.hide()

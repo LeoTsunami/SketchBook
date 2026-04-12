@@ -8,7 +8,8 @@ from datetime import datetime
 from unittest.mock import patch, MagicMock
 from PIL import Image
 
-from qtpy.QtCore import QTimer
+from qtpy.QtCore import QTimer, QSize, Qt
+from qtpy.QtGui import QResizeEvent
 from gui.image_grid import ImageGrid
 from core.image_manager import ImageManager
 from core.image_db import ImageMetadata
@@ -93,30 +94,78 @@ def test_clear_stops_timers_and_empties_queue(image_grid):
     assert len(image_grid.pending_load_queue) == 0
 
 
-def test_relayout_after_sidebar_step_calls_update_and_stops_debounce_timer(image_grid):
-    """relayout_after_sidebar_step should bypass debounce and refresh layout once."""
-    image_grid.layout_timer.start()
-    with patch.object(image_grid, "_update_layout") as mock_update:
-        image_grid.relayout_after_sidebar_step()
-    assert not image_grid.layout_timer.isActive()
-    mock_update.assert_called_once()
+def test_resize_schedules_finalize_timer(image_grid):
+    """Normal width resize uses throttled coarse layout + finalize timer (fluid resize)."""
+    with patch.object(image_grid.resize_finalize_timer, "start") as mock_finalize:
+        old = image_grid.size()
+        image_grid.resizeEvent(QResizeEvent(QSize(old.width() + 25, old.height()), old))
+    mock_finalize.assert_called_once()
 
 
-def test_relayout_after_sidebar_step_empty_grid_still_invokes_update(
-    qtbot, image_manager
-):
-    """Edge case: no thumbnails yet — _update_layout still runs (early exit inside)."""
-    grid = ImageGrid(image_manager)
-    qtbot.addWidget(grid)
-    with patch.object(grid, "_update_layout") as mock_update:
-        grid.relayout_after_sidebar_step()
-    mock_update.assert_called_once()
+def test_on_resize_finalize_resets_coarse_throttle_state(image_grid):
+    """Finalize clears coarse-throttle state so the next resize gets an immediate layout."""
+    image_grid._coarse_throttle_started = True
+    image_grid._on_resize_finalize()
+    assert image_grid._coarse_throttle_started is False
 
 
-def test_relayout_after_sidebar_step_stops_timer_even_when_update_raises(image_grid):
-    """Failure path: layout_timer is stopped before _update_layout runs."""
-    image_grid.layout_timer.start()
-    with patch.object(image_grid, "_update_layout", side_effect=RuntimeError("boom")):
-        with pytest.raises(RuntimeError):
-            image_grid.relayout_after_sidebar_step()
-    assert not image_grid.layout_timer.isActive()
+def test_finalize_restores_smooth_pixmap_scaling(image_grid):
+    """After interactive resize, finalize should restore SmoothTransformation on thumbnails."""
+    thumbs = list(image_grid.thumbnails.values())
+    assert len(thumbs) >= 1
+    thumb = thumbs[0]
+    if thumb.pixmap_item is None:
+        return
+    thumb.pixmap_item.setTransformationMode(Qt.FastTransformation)
+    image_grid._on_resize_finalize()
+    assert thumb.pixmap_item.transformationMode() == Qt.SmoothTransformation
+
+
+def test_image_id_index_built_on_load(image_grid):
+    """_image_id_to_index should contain every image in all_images after load."""
+    assert len(image_grid._image_id_to_index) == len(image_grid.all_images)
+    for i, meta in enumerate(image_grid.all_images):
+        assert image_grid._image_id_to_index[meta.id] == i
+
+
+def test_clear_empties_image_id_index(image_grid):
+    """clear() must also empty the _image_id_to_index dict."""
+    assert len(image_grid._image_id_to_index) > 0
+    image_grid.clear()
+    assert len(image_grid._image_id_to_index) == 0
+
+
+def test_set_fast_resize_flag_propagates_to_thumbnails(image_grid):
+    """_set_fast_resize_flag should set _fast_resize_active on all thumbnails."""
+    thumbs = list(image_grid.thumbnails.values())
+    assert len(thumbs) >= 1
+    image_grid._set_fast_resize_flag(True)
+    for thumb in thumbs:
+        assert thumb._fast_resize_active is True
+    image_grid._set_fast_resize_flag(False)
+    for thumb in thumbs:
+        assert thumb._fast_resize_active is False
+
+
+def test_on_resize_finalize_clears_fast_resize_flag(image_grid):
+    """After finalize, _fast_resize_active should be False on all thumbnails."""
+    image_grid._set_fast_resize_flag(True)
+    image_grid._on_resize_finalize()
+    for thumb in image_grid.thumbnails.values():
+        assert thumb._fast_resize_active is False
+
+
+def test_resize_event_triggers_schedule(image_grid):
+    """Width change in resizeEvent should schedule the window resize relayout."""
+    with patch.object(image_grid, "_schedule_window_resize_relayout") as mock_sched:
+        old = image_grid.size()
+        image_grid.resizeEvent(QResizeEvent(QSize(old.width() + 30, old.height()), old))
+    mock_sched.assert_called_once()
+
+
+def test_resize_event_no_width_change_does_not_schedule(image_grid):
+    """Height-only resize should not schedule relayout."""
+    with patch.object(image_grid, "_schedule_window_resize_relayout") as mock_sched:
+        old = image_grid.size()
+        image_grid.resizeEvent(QResizeEvent(QSize(old.width(), old.height() + 30), old))
+    mock_sched.assert_not_called()

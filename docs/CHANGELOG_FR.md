@@ -1,5 +1,68 @@
 # Journal des modifications
 
+## 2026-04-12 (Panneau tags flottant : UX)
+### ✅ Tâches :
+- Finitions overlay bibliothèque de tags
+
+  - Masquer le bouton **Tags filters** tant que le panneau est affiché (`isVisible()`), y compris pendant l'animation ; réaffichage après `panel_did_hide`
+  - Panneau et bouton avec retrait haut (`hauteur logo + 24px`) pour ne pas passer sous le logo flottant ; `TagPanelOverlay` animé à `y = top_inset` avec hauteur réduite
+  - **Start session** relevé en dernier dans `_position_floating_grid_overlays` pour rester au-dessus du rail, de l'overlay et du popover de tags d'image
+  - `TagHoverPopover` mémorise la vignette et le viewport ; `refresh_position()` au scroll/redimensionnement ; `stackUnder(bouton session)` pour garder le popover sous **Start session**
+→ Résultat : l'UI tags ne chevauche plus le logo ; le bouton session reste au premier plan parmi les overlays du viewport ; le popover des tags de l'image suit la vignette au scroll.
+---
+
+## 2026-04-12 (Grille : système d'animation sidebar unifié)
+### ✅ Tâches :
+- Remplacement du crossfade par resize ultra-rapide par frame ; correction stabilité scroll et suppression des resets d'images sporadiques
+
+  - Suppression du crossfade QLabel (QGraphicsOpacityEffect, QPropertyAnimation, QEasingCurve)
+  - `_get_scroll_anchor` utilise `_last_layout_row_h` (hauteur de ligne cachée du dernier layout)
+  - `_store_layout_row_height()` en fin de chaque passe de layout
+  - Flag `_sidebar_anim_active` sur `ImageThumbnail` : `resizeEvent` utilise `resetTransform + scale + centerOn` au lieu de `fitInView`
+  - `_fast_scale_in_view()` : transform directe pour tous les modes FitMode avec `FastTransformation`
+  - Relayout visible-only par frame, hauteur contenu explicite, ancrage restauré
+  - `_apply_full_quality_fit_visible_thumbnails()` : qualité sur ~30 vignettes visibles uniquement en fin d'animation
+  - **Blocage signaux scroll** : `QSignalBlocker` sur la scrollbar pendant toute la durée de `relayout_after_sidebar_step` et `set_sidebar_width_animation_active(False)` — empêche `_on_scroll` de se déclencher quand `setFixedHeight` clamp la valeur du scroll
+  - **Garde `_on_scroll`** : retour immédiat quand `_sidebar_width_animation_active` est True — empêche visibility timer, chargements batch et scroll preview pendant l'animation
+  - **`set_image` respecte `_sidebar_anim_active`** : les images arrivant du thread pool pendant l'animation utilisent `_fast_scale_in_view` au lieu du coûteux `fitInView + SmoothTransformation`
+  - **Hauteur contenu en fin d'animation** : `content.setMinimumHeight` défini explicitement avant la restauration du scroll (le LayoutRequest du QGridLayout n'a pas encore été traité)
+→ Résultat : l'expand/collapse de la sidebar fonctionne de manière identique quelle que soit la position de scroll (haut, milieu, bas) ; aucun reset d'image sporadique ; scroll parfaitement conservé ; expand et collapse se comportent symétriquement.
+---
+
+## 2026-04-12 (Grille : aucun relayout pendant l'animation sidebar)
+### ✅ Tâches :
+- Optimisation animation sidebar — zéro relayout pendant l'animation
+
+  - Suppression du relayout par frame : `_flush_sidebar_live_relayout` ne repositionne que les overlays flottants
+  - `setWidgetResizable(True)` + enfants `setFixedSize` : Qt gère le clip/expand nativement en C++
+  - Remplacement de `setFixedWidth()` + `setFixedHeight()` par `setFixedSize()` — divise par 2 les `resizeEvent`
+  - `_apply_full_quality_fit_all_thumbnails()` en fin d'animation
+→ Résultat : animation sans lag ; redimensionnement en fin d'animation.
+---
+
+## 2026-04-12 (Grille : refonte complète perf resize + scroll)
+### ✅ Tâches :
+- Performance de resize
+  - Flag `_fast_resize_active` direct sur les vignettes (supprime parcours parent O(profondeur))
+  - `_calculate_row_heights` ignoré pendant le resize interactif
+  - Vue virtualisée : pas de réassignation si la vignette affiche déjà la bonne image
+  - Pas d’appels géométrie quand les dimensions n’ont pas changé
+- Performance lazy load / scroll
+  - Dict O(1) `_image_id_to_index` remplace les scans linéaires O(n)
+  - Chargement deux phases : `fast_ready` avant le calcul HQ
+  - Pool threads 4→8 ; chargements/tick 8→16 ; file 220→300
+  - Facteur d’échelle 3.0x→2.0x (~55% pixels en moins)
+→ Résultat : resize et scroll nettement plus fluides ; images quasi-instantanées.
+---
+
+## 2026-04-11 (Grille : repli fluide du panneau tags)
+### ✅ Tâches :
+- Pendant l’animation de largeur du panneau gauche, désactiver le `layout_timer` différé pour ne garder que `relayout_after_sidebar_step` (ratio de scroll conservé).
+
+- `ImageGrid.set_sidebar_width_animation_active()` ; la fenêtre principale l’active le temps de l’animation.
+→ Résultat : le redimensionnement de la galerie reste aussi fluide au repli qu’à l’extension du panneau.
+---
+
 ## 2026-04-11 (`safe_remove` : chemin absent → False)
 ### ✅ Tâches :
 - Correction : `safe_remove` renvoie `False` si le chemin n’existe pas (avant : retour `True` par erreur).

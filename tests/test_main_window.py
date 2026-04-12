@@ -535,65 +535,24 @@ def test_get_tag_depth_in_category_failure_case_cycle_safe() -> None:
 
 
 def test_event_filter_hover_tag_button_expected_use_opens_sidebar() -> None:
-    """Hovering the floating button opens the collapsed sidebar."""
+    """Hovering the floating button opens the tag overlay."""
     window = MainWindow.__new__(MainWindow)
     window.tag_filters_floating_btn = object()
-    window.left_panel_container = object()
     window._left_panel_expanded = False
-    window._left_panel_animating = False
     called = {"n": 0}
-    window._toggle_left_sidebar = lambda: called.__setitem__("n", called["n"] + 1)
+
+    class _Overlay:
+        def isVisible(self):
+            return False
+
+        def show_animated(self):
+            called["n"] += 1
+
+    window._tag_panel_overlay = _Overlay()
+    window._position_floating_grid_overlays = lambda: None
 
     event = QEvent(QEvent.Type.Enter)
     consumed = window.eventFilter(window.tag_filters_floating_btn, event)
 
     assert consumed is False
     assert called["n"] == 1
-
-
-def test_event_filter_leave_sidebar_edge_case_collapsed_no_action() -> None:
-    """Leaving sidebar while already collapsed does not trigger toggle."""
-    window = MainWindow.__new__(MainWindow)
-    window.left_panel_container = object()
-    window._left_panel_expanded = False
-    window._left_panel_animating = False
-    called = {"n": 0}
-    window._toggle_left_sidebar = lambda: called.__setitem__("n", called["n"] + 1)
-
-    event = QEvent(QEvent.Type.Leave)
-    consumed = window.eventFilter(window.left_panel_container, event)
-
-    assert consumed is False
-    assert called["n"] == 0
-
-
-def test_event_filter_leave_sidebar_expected_use_closes_sidebar() -> None:
-    """Leaving expanded sidebar triggers auto-collapse."""
-    window = MainWindow.__new__(MainWindow)
-    window.left_panel_container = object()
-    window._left_panel_expanded = True
-    window._left_panel_animating = False
-    called = {"n": 0}
-    window._toggle_left_sidebar = lambda: called.__setitem__("n", called["n"] + 1)
-
-    event = QEvent(QEvent.Type.Leave)
-    consumed = window.eventFilter(window.left_panel_container, event)
-
-    assert consumed is False
-    assert called["n"] == 1
-
-
-def test_event_filter_leave_sidebar_failure_case_animating_no_action() -> None:
-    """Leaving sidebar during animation does not trigger re-collapse."""
-    window = MainWindow.__new__(MainWindow)
-    window.left_panel_container = object()
-    window._left_panel_expanded = True
-    window._left_panel_animating = True
-    called = {"n": 0}
-    window._toggle_left_sidebar = lambda: called.__setitem__("n", called["n"] + 1)
-
-    event = QEvent(QEvent.Type.Leave)
-    consumed = window.eventFilter(window.left_panel_container, event)
-
-    assert consumed is False
-    assert called["n"] == 0

@@ -36,18 +36,16 @@ Available themes:
 - Sunset Glass
 - Midnight Ocean
 
-## Tag Sidebar
+## Tag library (floating panel)
 
-The left area is a tag library panel that slides in from the left (animated width). By default it stays in a compact rail state (button-only width), and expands on hover.
+The tag library is a **floating panel** over the **left edge** of the image gallery (the gallery does not resize when you open it). A compact **Tags filters** vertical strip sits on the left edge of the gallery. **Hover** opens the full library; moving the pointer **away from the panel** closes it. While the panel is open, the **Tags filters** strip stays hidden so it does not sit on top of the library. The panel and strip are **shorter in height** than the viewport so they stay **below the floating logo** (top-left).
 
-**Top bar** (full width, thin strip, above the main splitter):
+**Top bar** (full width, thin strip, above the gallery):
 
 - The **SketchBook** logo is **floating** on top of the window (top-left); it does not set the height of the bar. **File**, **View**, **Tools**, and **Help** start to the right of the logo area (import, settings, themes, dev tools, about).
 - On the **right** of the same row: **Shuffle** (when using Session Course Random sort), **Sort** order, and **Columns** (slider + count).
 
-The compact **Tags filters** vertical control now lives inside the left sidebar rail (not floating over the gallery). **Hover alone** opens the tag library (no click required), and leaving the sidebar area auto-collapses it.
-
-**Below** the top bar, the horizontal **splitter** shows the tag library rail (left, collapsible) and the image gallery (right). The left side has two states: compact rail with only **Tags filters**, or expanded full tag library. The library content starts with extra top margin so it stays clear of the floating logo area. **Start session** stays **centered at the bottom** of the gallery viewport.
+**Below** the top bar, the **image gallery** uses the full width. **Start session** stays **centered at the bottom** of the gallery viewport and remains **above** other floating controls in that area (tag panel, tag popover).
 
 **Image count and selection size** (number of filtered images and total size of the current selection) appear on the **right side of the status bar**, next to the usual status messages (same band as quick / dev log feedback).
 
@@ -71,7 +69,7 @@ You can add tags and notes to your images to help organize and find them later:
    - Write notes about the image
 
 ### Viewing Tags on Selected Images
-When you select an image in the gallery, its tags are automatically displayed at the bottom of the thumbnail:
+When you select an image in the gallery, its tags are automatically displayed at the bottom of the thumbnail. The small floating tag panel **stays aligned with that thumbnail** when you **scroll** the gallery.
 - Each tag appears as a small chip with its icon (if available)
 - Click the × button on any tag chip to remove that tag from all selected images (removal runs in the background; a progress indicator may appear when many images are updated)
 - Tags are displayed in a grid layout that wraps automatically
@@ -158,11 +156,11 @@ The **Display** combo box (next to the Columns slider in the top bar) lets you c
 
 The choice is saved automatically and restored on relaunch.
 
-### Thumbnail quality in the image grid
+### Thumbnail quality and loading in the image grid
 
-- Thumbnails in the image grid are generated from higher‑resolution source images using smooth scaling.
-- Internally, SketchBook now loads a slightly larger version of each image for thumbnails and lets Qt downscale it, which produces a sharper result, especially after window resizes or when using many columns.
-- This may use a bit more GPU/CPU when scrolling fast through very large libraries, but greatly improves the perceived quality of the preview images you draw from.
+- When you scroll through the grid, a fast low-quality preview appears for each new thumbnail almost instantly. A moment later it is silently replaced by a crisp, high-quality version. This two-phase approach keeps the grid responsive even with thousands of images.
+- While you **drag a window edge** to resize the main window, previews may look slightly softer or blocky for a moment so the UI stays responsive; a moment after you **release** the mouse, thumbnails are refitted with full smooth scaling again.
+- Internally, SketchBook loads a 2x-resolution version of each image for thumbnails and lets Qt downscale it, which produces a sharp result, especially after window resizes or when using many columns.
 
 ## Single Image Viewer
 

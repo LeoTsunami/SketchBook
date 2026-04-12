@@ -66,6 +66,7 @@ def main():
     """Main entry point of the application."""
     app = QApplication(sys.argv)
 
+
     theme = settings.get("ui.theme", "dark")
     if theme not in ("dark", "light", "neon_night", "sunset_glass", "midnight_ocean"):
         theme = "dark"
@@ -94,3 +95,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
