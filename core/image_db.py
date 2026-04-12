@@ -239,13 +239,25 @@ class ImageDatabase:
         self._request_save()
         return True
     
+    def snapshot_metadata_values(self) -> List[ImageMetadata]:
+        """
+        Return a copy of all metadata objects under the save lock.
+
+        Safe to pass to a background thread for sorting (read-only snapshot).
+
+        Returns:
+            List of all ImageMetadata rows currently in memory.
+        """
+        with self._save_lock:
+            return list(self._images.values())
+
     def get_image(self, image_id: str) -> Optional[ImageMetadata]:
         """
         Get metadata for an image.
-        
+
         Args:
             image_id: ID of the image
-            
+
         Returns:
             Image metadata or None if not found
         """

@@ -13,6 +13,7 @@ from qtpy.QtWidgets import (
 )
 from qtpy.QtCore import (
     Qt,
+    QAbstractAnimation,
     QPropertyAnimation,
     QEasingCurve,
     QPoint,
@@ -98,7 +99,13 @@ class TagPanelOverlay(QFrame):
         self._anim.setStartValue(QPoint(-self._panel_width, y0))
         self._anim.setEndValue(QPoint(0, y0))
         self._anim.setEasingCurve(QEasingCurve.OutCubic)
+        self._anim.finished.connect(self._on_show_anim_finished)
         self._anim.start()
+
+    def _on_show_anim_finished(self) -> None:
+        """Snap to final geometry after slide-in (safe for reposition calls)."""
+        if self._is_showing:
+            self.move(0, self._top_inset)
 
     def hide_animated(self) -> None:
         """Slide the panel out of view to the left."""
@@ -137,6 +144,13 @@ class TagPanelOverlay(QFrame):
     def reposition(self) -> None:
         """Reposition the panel after the parent viewport resizes."""
         self._update_height()
+        # Reason: never snap position while a slide anim runs (show or hide); otherwise
+        # reposition() fights QPropertyAnimation and the rail looks like it replays.
+        if (
+            self._anim is not None
+            and self._anim.state() == QAbstractAnimation.Running
+        ):
+            return
         if self._is_showing:
             self.move(0, self._top_inset)
         else:

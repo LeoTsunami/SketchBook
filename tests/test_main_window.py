@@ -11,9 +11,10 @@ from core.settings import settings
 
 @pytest.fixture
 def main_window(qtbot):
-    """Create a MainWindow instance."""
+    """Create a MainWindow instance with tag grid and image list loaded (sync test path)."""
     window = MainWindow()
     qtbot.addWidget(window)
+    window.run_startup_load_for_tests()
     return window
 
 @pytest.fixture

@@ -81,6 +81,7 @@ from gui.tag_widgets import DraggableTagChip
 from gui.add_tag_dialog import AddTagDialog, IconPickerDialog
 from gui.tag_apply_worker import TagApplyWorker
 from gui.tag_panel_overlay import TagPanelOverlay
+from gui.startup_sort_worker import StartupSortRunnable, StartupSortSignals
 from core.session_manager import SessionManager
 from gui.icon_utils import find_tag_icon, invert_icon
 import os
@@ -256,6 +257,10 @@ class MainWindow(QMainWindow):
         self.image_manager = ImageManager()
         self.session_manager = SessionManager()
         self.thread_pool = QThreadPool()
+        self._startup_sort_signals = StartupSortSignals()
+        self._startup_sort_signals.finished.connect(self._on_startup_sort_finished)
+        self._startup_load_done = False
+        self._startup_scheduled = False
 
         # Session slideshow window (created when needed, parent=self for hide/show)
         self._slideshow_window: Optional[SlideshowWindow] = None
@@ -359,7 +364,7 @@ class MainWindow(QMainWindow):
         self._setup_image_browser(layout)
         self._setup_floating_logo()
 
-        self._apply_category_filters()
+        # Tag grid + image list load deferred to first show (see showEvent).
 
     def _setup_floating_logo(self) -> None:
         """Place the logo above the top chrome (does not affect chrome height)."""
@@ -411,6 +416,65 @@ class MainWindow(QMainWindow):
         super().resizeEvent(event)
         self._position_floating_logo()
         self._position_floating_grid_overlays()
+
+    def showEvent(self, event) -> None:
+        """Defer heavy DB/tag/grid work until after the empty window can paint."""
+        super().showEvent(event)
+        if self._startup_scheduled:
+            return
+        self._startup_scheduled = True
+        QTimer.singleShot(0, self._deferred_startup_load)
+
+    def _deferred_startup_load(self) -> None:
+        """
+        Load tag library UI and image grid after first frame.
+
+        Sorting runs in the global QThreadPool when not in course_random mode.
+        """
+        if self._startup_load_done:
+            return
+        self.statusBar().showMessage("Loading library…", 0)
+        self._load_tags_into_grid()
+        sort_by = self._get_current_sort_order()
+        if sort_by == "course_random":
+            self._apply_category_filters()
+            self._finalize_startup_load()
+            return
+        worker = StartupSortRunnable(
+            self.image_manager.db,
+            sort_by,
+            self._shuffle_counter,
+            self._startup_sort_signals,
+        )
+        QThreadPool.globalInstance().start(worker)
+
+    def _on_startup_sort_finished(self, result: object) -> None:
+        """Apply filters on the main thread using background-sorted metadata."""
+        if self._startup_load_done:
+            return
+        if isinstance(result, Exception):
+            self._apply_category_filters()
+        else:
+            self._apply_category_filters(_pre_sorted_images=result)
+        self._finalize_startup_load()
+
+    def _finalize_startup_load(self) -> None:
+        """Mark startup complete, restore status, run deferred DB maintenance."""
+        self._startup_load_done = True
+        self.statusBar().showMessage("Ready")
+        self.image_manager.run_import_date_backfill()
+
+    def run_startup_load_for_tests(self) -> None:
+        """
+        Synchronously load tags + grid (for unit tests that never show the window).
+
+        Skips the background sort thread so tests stay deterministic.
+        """
+        if self._startup_load_done:
+            return
+        self._load_tags_into_grid()
+        self._apply_category_filters()
+        self._finalize_startup_load()
 
     def _setup_top_chrome_bar(self, main_layout: QVBoxLayout) -> None:
         """
@@ -926,7 +990,7 @@ class MainWindow(QMainWindow):
         self._tag_library_rubber_band.raise_()
         QApplication.instance().installEventFilter(self)
 
-        self._load_tags_into_grid()
+        # Tag library content is filled on first window show (fast empty shell at startup).
 
         self._tag_panel_overlay.set_content_widget(self._tag_content_wrapper)
 
@@ -1119,7 +1183,9 @@ class MainWindow(QMainWindow):
                 return True
         return False
 
-    def _apply_category_filters(self) -> None:
+    def _apply_category_filters(
+        self, _pre_sorted_images: Optional[List[ImageMetadata]] = None
+    ) -> None:
         """Apply category/subtag filters to the image grid."""
         # Get current sort order
         sort_by = self._get_current_sort_order()
@@ -1142,7 +1208,10 @@ class MainWindow(QMainWindow):
             shuffle_iteration = self._shuffle_counter
         else:
             # Normal filtering and sorting for other sort modes
-            filtered_images = self._filter_images_by_category()
+            if _pre_sorted_images is not None:
+                filtered_images = self._filter_images_by_category(_pre_sorted_images)
+            else:
+                filtered_images = self._filter_images_by_category()
             filtered_images = self._apply_and_or_filters(filtered_images)
             shuffle_iteration = 0
             images_to_display = self.image_manager.db._sort_images(
@@ -2295,11 +2364,12 @@ class MainWindow(QMainWindow):
         if event.type() == _leave and obj is self:
             self.unsetCursor()
 
-        # Hover over Tags filters trigger button opens the floating tag panel.
+        # Hover over Tags filters trigger: open on Enter only (not every MouseMove —
+        # that retriggered reposition and fought the slide animation).
         if (
             hasattr(self, "tag_filters_floating_btn")
             and obj == self.tag_filters_floating_btn
-            and event.type() in (_enter, _mouse_move)
+            and event.type() == _enter
             and hasattr(self, "_tag_panel_overlay")
             and not self._tag_panel_overlay.isVisible()
         ):
@@ -3156,16 +3226,24 @@ class MainWindow(QMainWindow):
             return ""
         return tag.lower().replace(" ", "").replace("-", "").replace("_", "")
 
-    def _filter_images_by_category(self) -> List:
+    def _filter_images_by_category(
+        self, pre_sorted: Optional[List[ImageMetadata]] = None
+    ) -> List:
         """
         Filter images by category (OR) and sub-tags (narrowing by path).
         Miscellaneous = AND (image must have all selected tags).
         Camera-Angle = OR (image must have at least one selected tag, e.g. Hands or Feet).
         Tag matching is case- and separator-insensitive.
+
+        Args:
+            pre_sorted: If set, use this list instead of loading/sorting from the DB
+                (e.g. background thread already sorted a snapshot for startup).
         """
-        # Get current sort order and apply it
         sort_by = self._get_current_sort_order()
-        all_images = self.image_manager.db.list_images(sort_by)
+        if pre_sorted is not None:
+            all_images = pre_sorted
+        else:
+            all_images = self.image_manager.db.list_images(sort_by)
 
         # Label categories: Miscellaneous = AND (all selected); Camera-Angle = OR (any selected)
         label_categories_and = ["Miscellaneous:"]

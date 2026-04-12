@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-04-12 (Startup: empty window first, background sort)
+### ✅ Tasks:
+- Deferred heavy work until after the first paint
+
+  - `MainWindow.showEvent` schedules `_deferred_startup_load` via `QTimer.singleShot(0)` so the frameless shell + chrome appear before tag grid fill and image list
+  - Tag library (`_load_tags_into_grid`) + status **Loading library…** run first on the GUI thread; metadata **sort** for non-`course_random` modes runs in `QThreadPool` via `StartupSortRunnable` (`gui/startup_sort_worker.py`)
+  - `ImageDatabase.snapshot_metadata_values()` returns a thread-safe copy under `_save_lock`; main thread applies filters with `_apply_category_filters(_pre_sorted_images=…)`
+  - `course_random` startup path stays on the GUI thread (shuffle + filters)
+  - `run_import_date_backfill` moved to `_finalize_startup_load` (after grid is ready); removed duplicate `QTimer` from `main.py`
+  - Tests: `run_startup_load_for_tests()` sync path for `main_window` fixture
+→ Result: Faster time-to-window; large libraries sort off the main thread before the first grid bind.
+---
+
 ## 2026-04-12 (Floating tag panel UX)
 ### ✅ Tasks:
 - Tag library overlay polish

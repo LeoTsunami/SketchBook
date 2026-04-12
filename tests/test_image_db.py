@@ -6,6 +6,7 @@ from datetime import datetime
 from pathlib import Path
 import pytest
 from core.image_db import ImageDatabase, ImageMetadata
+from core.user_data import user_data
 
 @pytest.fixture
 def image_db(tmp_path):
@@ -201,3 +202,23 @@ def test_rename_tag_idempotent_same_name(image_db, sample_metadata):
     n = image_db.rename_tag("same", "same")
     assert n == 0
     assert image_db.get_image(sample_metadata.id).tags == {"same"}
+
+
+def test_snapshot_metadata_values_matches_list(image_db, sample_metadata):
+    """snapshot_metadata_values is consistent with list_images length and ids."""
+    image_db.add_image(sample_metadata)
+    snap = image_db.snapshot_metadata_values()
+    listed = image_db.list_images()
+    assert len(snap) == len(listed)
+    assert {m.id for m in snap} == {m.id for m in listed}
+
+
+def test_snapshot_metadata_values_empty(tmp_path, monkeypatch):
+    """Empty database snapshot is an empty list (isolated DB path)."""
+    cfg = tmp_path / "config"
+    cfg.mkdir(parents=True)
+    db_file = cfg / "images.json"
+    db_file.write_text("{}")
+    monkeypatch.setattr(user_data, "get_images_db_path", lambda: db_file)
+    isolated = ImageDatabase()
+    assert isolated.snapshot_metadata_values() == []

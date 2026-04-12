@@ -8,6 +8,7 @@ Update this file via prompt:
 
 ## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
 
+- [x] Startup: show empty window first; defer tag grid + image list; sort metadata in QThreadPool (`StartupSortRunnable`); `snapshot_metadata_values`; `run_startup_load_for_tests` for pytest (2026-04-12)
 - [x] Image grid: unified sidebar animation system (scrollbar signal blocking, _on_scroll guard, set_image respects anim flag, explicit content height at animation end) (2026-04-12)
 - [x] Image grid: ultra-fast sidebar resize with direct transform (remove crossfade, fix scroll anchor with cached row height, _sidebar_anim_active + _fast_scale_in_view on thumbnails, visible-only per-frame relayout) (2026-04-12)
 - [x] Image grid: anchor-based scroll + crossfade on sidebar animation end (deterministic scroll preservation, 200ms viewport crossfade overlay, zero per-frame relayout) (2026-04-12)

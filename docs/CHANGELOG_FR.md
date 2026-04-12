@@ -1,5 +1,18 @@
 # Journal des modifications
 
+## 2026-04-12 (Démarrage : fenêtre vide puis chargement)
+### ✅ Tâches :
+- Reporter le travail lourd après le premier affichage
+
+  - `showEvent` planifie `_deferred_startup_load` (`QTimer.singleShot(0)`) pour afficher la coquille avant la bibliothèque de tags et la grille
+  - Remplissage des tags + message **Loading library…** sur le thread GUI ; tri des métadonnées (hors mode `course_random`) dans `QThreadPool` via `StartupSortRunnable`
+  - `ImageDatabase.snapshot_metadata_values()` copie thread-safe ; filtrage sur le thread principal avec `_pre_sorted_images`
+  - Mode `course_random` : tout sur le thread GUI au démarrage
+  - `run_import_date_backfill` à la fin du chargement ; suppression du `QTimer` dans `main.py`
+  - Tests : `run_startup_load_for_tests()` pour la fixture
+→ Résultat : fenêtre visible plus tôt ; gros catalogues triés hors thread GUI avant branchement de la grille.
+---
+
 ## 2026-04-12 (Panneau tags flottant : UX)
 ### ✅ Tâches :
 - Finitions overlay bibliothèque de tags

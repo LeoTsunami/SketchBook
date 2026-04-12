@@ -8,7 +8,6 @@ import threading
 from pathlib import Path
 from qtpy.QtWidgets import QApplication
 from qtpy.QtGui import QFontDatabase, QFont
-from qtpy.QtCore import QTimer
 from gui.main_window import MainWindow
 from core.settings import settings
 from core.user_data import user_data
@@ -86,9 +85,6 @@ def main():
 
     window = MainWindow()
     window.show()
-
-    # Reason: Defer DB backfill until after the first paint so large libraries do not block startup.
-    QTimer.singleShot(0, window.image_manager.run_import_date_backfill)
 
     sys.exit(app.exec())
 

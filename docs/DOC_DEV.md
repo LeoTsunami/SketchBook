@@ -393,6 +393,13 @@ The `ImageGrid` class manages the display of image thumbnails in a responsive gr
 - **`set_sidebar_width_animation_active(bool)`**: While `True`, `resizeEvent` does **not** start the debounced `layout_timer` and **no grid relayout happens**. Qt handles viewport clip/expand natively via `setWidgetResizable(True)` + `setFixedSize` children at near-zero cost. When set to `False` (animation ends): captures viewport as crossfade overlay (`_start_crossfade_overlay`), then runs a single `_update_layout()` + `_apply_full_quality_fit_all_thumbnails()`, restores scroll via anchor-based `_get_scroll_anchor` / `_restore_scroll_anchor` (deterministic first-row + pixel-offset — no ratio drift), and fades out the overlay over 200ms (`QPropertyAnimation` on `QGraphicsOpacityEffect`).
 - **`setFixedSize(w, h)`** is used instead of separate `setFixedWidth` + `setFixedHeight` calls in `_do_relayout`, `_update_virtualized_view`, `_load_next_batch`, and `prepend_image` — halves the number of `resizeEvent` firings per thumbnail during any relayout pass.
 
+### Application startup sequence
+
+- **`main.py`**: Builds `QApplication`, theme/QSS, then `MainWindow()` + `show()` + `exec()`. No longer schedules `run_import_date_backfill` here.
+- **`MainWindow`**: `ImageManager()` still loads `images.json` synchronously in its constructor (unavoidable without a larger DB refactor). UI shell (menus, chrome, empty `ImageGrid`, overlays) builds in `__init__`. **Tag grid content** and **image list** are **not** loaded in `_setup_ui`; first **`showEvent`** sets `_startup_scheduled` and **`QTimer.singleShot(0, _deferred_startup_load)`**.
+- **`_deferred_startup_load()`**: Status *Loading library…*, `_load_tags_into_grid()`, then either **`StartupSortRunnable`** on `QThreadPool.globalInstance()` (non-`course_random`) — snapshot via **`ImageDatabase.snapshot_metadata_values()`** + **`_sort_images`** off the GUI thread — or synchronous `_apply_category_filters()` for **`course_random`**. **`_finalize_startup_load()`** sets *Ready*, runs **`run_import_date_backfill`**, sets **`_startup_load_done`**. **`run_startup_load_for_tests()`** performs the same steps synchronously (pytest fixture).
+- **`gui/startup_sort_worker.py`**: `StartupSortSignals` lives on the main thread; `StartupSortRunnable.run()` emits `finished` with a sorted `list` or an `Exception` (fallback to unsorted path).
+
 ### Main window layout (central widget)
 
 - **`_setup_menu()`**: Builds `self._file_menu`, `_view_menu`, `_tools_menu`, `_help_menu` as `QMenu` instances (no `QMenuBar` — `menuBar().hide()`). Shortcuts on actions still work.
