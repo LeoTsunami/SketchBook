@@ -97,6 +97,27 @@ QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical {
 QScrollBar::add-page:vertical, QScrollBar::sub-page:vertical {
     background-color: #2d2d2d;
 }
+QWidget#TabBarRow {
+    background-color: rgba(10, 12, 20, 0.7);
+}
+QPushButton#TabButton {
+    background-color: transparent;
+    color: rgba(255, 255, 255, 0.6);
+    border: none;
+    border-bottom: 2px solid transparent;
+    border-radius: 0px;
+    padding: 4px 14px;
+    font-size: 11px;
+    font-weight: bold;
+}
+QPushButton#TabButton:hover {
+    color: #ffffff;
+    background-color: rgba(255, 255, 255, 0.06);
+}
+QPushButton#TabButton:checked {
+    color: #ffffff;
+    border-bottom: 2px solid #6b9bd1;
+}
 QWidget#content {
     background-color: transparent;
 }

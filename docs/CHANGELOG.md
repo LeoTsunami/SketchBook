@@ -1,5 +1,54 @@
 # Changelog
 
+## 2026-04-13 (Tab system layout)
+### ✅ Tasks:
+- Introduce a two-line header with tab navigation
+
+  - Line 1 (top chrome): logo reserve, File/View/Tools/Help menus, window buttons (unchanged)
+  - Line 2 (tab bar): tab buttons (Life Drawing / WhiteBoard / Market) on the left, grid controls (Shuffle, Sort, Columns, Display) on the right -- controls hidden when not on the Life Drawing tab
+  - Content: QStackedWidget with 3 pages; page 0 = existing image browser (grid + tag panel + session button), pages 1-2 = placeholder coming-soon panels
+  - Drag and double-click for window move/maximize now work on both chrome bar and tab bar backgrounds
+  - QSS: TabBarRow + TabButton rules added to all 5 theme files (dark, light, midnight_ocean, sunset_glass, neon_night) with per-theme accent colors for the active-tab underline
+  - Tests: `tests/test_tab_layout.py`
+→ Result: The app is structured for multiple tools; the first tab is the existing Life Drawing workflow, two more are ready for future features.
+---
+
+## 2026-04-13 (Image grid: ghost thumbnails after tag filtering)
+### ✅ Tasks:
+- Fix stale non-interactive image fragments in the grid gutters
+
+  - Root cause: non-virtualized thumbnails use `QGridLayout`; virtualized mode uses a fixed pool with absolute geometry on `content`. When `thumbnail_pool` was non-empty, `clear()` returned early without removing grid layout items, so after switching between large (virtual) and small (grid) result sets, orphan cells kept painting old pixmaps.
+  - Added `_drain_thumbnail_grid_layout()` and call it from `clear()` always, and from `_update_virtualized_view()` before pool assignment.
+  - Tests: `tests/test_image_grid_ghost_widgets.py`
+→ Result: Tag and filter changes no longer leave ghost thumbnails behind the live grid.
+---
+
+## 2026-04-13 (Image viewer: theme letterboxing)
+### ✅ Tasks:
+- Remove default gray background behind the image in the grid double-click viewer
+
+  - `ImageViewerWindow`: `QGraphicsScene.setBackgroundBrush(Qt.transparent)`, `QGraphicsView` stylesheet with `background: transparent`, `viewport().setAutoFillBackground(False)` so the global `QMainWindow` gradient shows around `fitInView` letterboxing
+  - Tests: `tests/test_image_viewer_window.py` (transparent setup, clear edge case, unknown id failure path)
+→ Result: The large image viewer matches the active theme instead of a flat gray panel around the picture.
+---
+
+## 2026-04-12 (Planning: market study, pricing, startup costs)
+### ✅ Tasks:
+- Add market, subscription pricing, and non-dev cost planning document
+
+  - New file `docs/Plans/sketchbook-260412_marche-prix-couts.md`: market segments and competitive landscape, subscription pricing reflection (tiers, freemium, marketplace commission), estimated year-1 non-development costs (legal, accounting, cloud, payments, distribution, marketing ranges) with EUR bands and scenarios
+→ Result: A working commercial baseline for pricing decisions and bootstrap budgeting outside engineering effort.
+---
+
+## 2026-04-12 (Planning: commercial & technical roadmap)
+### ✅ Tasks:
+- Add commercial/technical planning document aligned with product vision
+
+  - New file `docs/Plans/sketchbook-260412_commercial-technique.md`: target architecture (desktop client + backend services), online DB/catalog, auth & payments, packaging & distribution, legal/marketing checklist, phased rollout and risks
+  - Grounded in current codebase state (local JSON metadata, no network layer)
+→ Result: Shared reference for what a commercial, cloud-augmented SketchBook implies without changing application code.
+---
+
 ## 2026-04-12 (Startup: empty window first, background sort)
 ### ✅ Tasks:
 - Deferred heavy work until after the first paint

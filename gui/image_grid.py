@@ -495,6 +495,9 @@ class ImageGrid(QScrollArea):
         """
         if not self._is_virtualized() or not self.all_images:
             return
+        # Reason: leftover grid cells from a previous non-virtualized load would paint
+        # on top of absolute-positioned pool widgets (non-interactive ghost fragments).
+        self._drain_thumbnail_grid_layout()
         self._ensure_virtualized_pool()
         thumbnail_width, row_height = self._calculate_optimal_dimensions()
         spacing = self.grid.spacing()
@@ -815,6 +818,24 @@ class ImageGrid(QScrollArea):
             )
             thumbnail.show()
 
+    def _drain_thumbnail_grid_layout(self) -> None:
+        """
+        Remove every widget from ``self.grid`` and schedule deletion.
+
+        Virtualized thumbnails are parented to ``content`` with absolute geometry only;
+        they never use this layout. Non-virtualized thumbnails are placed in the grid.
+        When switching between modes, ``clear()`` used to skip this step if
+        ``thumbnail_pool`` was non-empty, leaving orphan cells that painted as ghost images.
+
+        Returns:
+            None
+        """
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            w = item.widget()
+            if w is not None:
+                w.deleteLater()
+
     def clear(self):
         """Remove all thumbnails from the grid."""
         self.layout_timer.stop()
@@ -834,6 +855,10 @@ class ImageGrid(QScrollArea):
         self._extract_loading.clear()
         self.pending_load_queue.clear()
         self.loading_images.clear()
+        # Reason: always drain the layout so virtual ↔ non-virtual transitions never
+        # leave stale QGridLayout cells (visible as non-interactive fragments in gutters).
+        self._drain_thumbnail_grid_layout()
+
         if self.thumbnail_pool:
             self.thumbnails.clear()
             self.pixmap_cache.clear()
@@ -846,9 +871,7 @@ class ImageGrid(QScrollArea):
             self.content.setMinimumHeight(0)
             self.content.setFixedHeight(0)
             return
-        for thumbnail in self.thumbnails.values():
-            self.grid.removeWidget(thumbnail)
-            thumbnail.deleteLater()
+
         self.thumbnails.clear()
         self.pixmap_cache.clear()
         self.loaded_count = 0

@@ -38,6 +38,8 @@ from qtpy.QtWidgets import (
     QLayout,
     QGraphicsDropShadowEffect,
     QToolButton,
+    QStackedWidget,
+    QButtonGroup,
 )
 from qtpy.QtCore import (
     Qt,
@@ -359,9 +361,9 @@ class MainWindow(QMainWindow):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
 
-        # Thin top row (menus + grid controls); logo floats above (see `_setup_floating_logo`); Tags filters on grid
         self._setup_top_chrome_bar(layout)
-        self._setup_image_browser(layout)
+        self._setup_tab_bar(layout)
+        self._setup_content_stack(layout)
         self._setup_floating_logo()
 
         # Tag grid + image list load deferred to first show (see showEvent).
@@ -478,9 +480,10 @@ class MainWindow(QMainWindow):
 
     def _setup_top_chrome_bar(self, main_layout: QVBoxLayout) -> None:
         """
-        Build a thin full-width row: **File / View / Tools / Help** menus, then grid controls.
+        Build line 1: **File / View / Tools / Help** menus + window control buttons.
 
-        Logo is not in this row (see `_setup_floating_logo`). The tag panel toggle is on the grid viewport.
+        Grid controls (Shuffle, Sort, Columns, Display) live in line 2 (tab bar).
+        Logo is not in this row (see ``_setup_floating_logo``).
 
         Args:
             main_layout: Central widget vertical layout (receives this row as first item).
@@ -531,89 +534,6 @@ class MainWindow(QMainWindow):
             top_row.addWidget(mb, 0, Qt.AlignVCenter)
 
         top_row.addStretch(1)
-
-        # Shuffle, sort order, column count (same top row as logo)
-        self.shuffle_button = QPushButton("Shuffle", self._top_chrome_bar)
-        self.shuffle_button.setFixedWidth(70)
-        self.shuffle_button.setStyleSheet("""
-            QPushButton {
-                background-color: #3c3f41;
-                color: #ffffff;
-                border: 1px solid #4d4d4d;
-                border-radius: 4px;
-                padding: 4px 8px;
-                font-size: 11px;
-            }
-            QPushButton:hover {
-                background-color: #4b6eaf;
-            }
-            QPushButton:pressed {
-                background-color: #3d5a8c;
-            }
-        """)
-        self.shuffle_button.clicked.connect(self._on_shuffle_clicked)
-        self.shuffle_button.hide()
-
-        sort_label = QLabel("Sort:", self._top_chrome_bar)
-        sort_label.setStyleSheet("color: #ffffff; font-size: 11px;")
-        self.sort_combo = QComboBox(self._top_chrome_bar)
-        self.sort_combo.addItems(
-            [
-                "Most Recent First",
-                "Oldest First",
-                "Filename A→Z",
-                "Filename Z→A",
-                "Lightest First",
-                "Heaviest First",
-                "Session Course Random",
-            ]
-        )
-        default_sort_index = settings.get("ui.grid.sort_index", 6)
-        if not 0 <= default_sort_index < self.sort_combo.count():
-            default_sort_index = 6
-        self.sort_combo.setCurrentIndex(default_sort_index)
-        self.sort_combo.setFixedWidth(150)
-        self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
-        self.shuffle_button.setVisible(self.sort_combo.currentIndex() == 6)
-
-        columns_label = QLabel("Columns:", self._top_chrome_bar)
-        columns_label.setStyleSheet("color: #ffffff; font-size: 11px;")
-        self.columns_slider = QSlider(Qt.Horizontal, self._top_chrome_bar)
-        self.columns_slider.setMinimum(3)
-        self.columns_slider.setMaximum(10)
-        self.columns_slider.setValue(settings.get("ui.grid.columns", 4))
-        self.columns_slider.setTickPosition(QSlider.NoTicks)
-        self.columns_slider.setFixedWidth(100)
-        self.columns_slider.valueChanged.connect(self._on_columns_changed)
-        self.columns_count = QLabel(
-            str(self.columns_slider.value()), self._top_chrome_bar
-        )
-        self.columns_count.setStyleSheet("color: #ffffff; font-size: 11px;")
-
-        fit_label = QLabel("Display:", self._top_chrome_bar)
-        fit_label.setStyleSheet("color: #ffffff; font-size: 11px;")
-        self.fit_mode_combo = QComboBox(self._top_chrome_bar)
-        self.fit_mode_combo.addItems(FitMode.labels())
-        stored_fit = settings.get("ui.grid.fit_mode", None)
-        if stored_fit is None:
-            default_fit = FitMode.CROP_ALL.value
-        else:
-            default_fit = int(stored_fit)
-        if not 0 <= default_fit < self.fit_mode_combo.count():
-            default_fit = FitMode.CROP_ALL.value
-        self.fit_mode_combo.setCurrentIndex(default_fit)
-        self.fit_mode_combo.setFixedWidth(100)
-        self.fit_mode_combo.currentIndexChanged.connect(self._on_fit_mode_changed)
-
-        top_row.addWidget(self.shuffle_button, 0, Qt.AlignVCenter)
-        top_row.addWidget(sort_label, 0, Qt.AlignVCenter)
-        top_row.addWidget(self.sort_combo, 0, Qt.AlignVCenter)
-        top_row.addWidget(columns_label, 0, Qt.AlignVCenter)
-        top_row.addWidget(self.columns_slider, 0, Qt.AlignVCenter)
-        top_row.addWidget(self.columns_count, 0, Qt.AlignVCenter)
-        top_row.addWidget(fit_label, 0, Qt.AlignVCenter)
-        top_row.addWidget(self.fit_mode_combo, 0, Qt.AlignVCenter)
-        top_row.addSpacing(8)
 
         self._window_min_btn = QPushButton("-", self._top_chrome_bar)
         self._window_min_btn.setToolTip("Minimize")
@@ -674,6 +594,208 @@ class MainWindow(QMainWindow):
         self._top_chrome_bar.setFixedHeight(38)
         main_layout.addWidget(self._top_chrome_bar, 0)
 
+    # ------------------------------------------------------------------
+    # Line 2: tab buttons + per-tab tool controls
+    # ------------------------------------------------------------------
+
+    TAB_NAMES = ("Life Drawing", "WhiteBoard", "Market")
+
+    def _setup_tab_bar(self, main_layout: QVBoxLayout) -> None:
+        """
+        Build line 2: tab buttons on the left, grid controls on the right.
+
+        Grid controls are wrapped in ``_life_drawing_controls`` so they can be
+        hidden when the active tab is not Life Drawing.
+
+        Args:
+            main_layout: Central widget vertical layout.
+        """
+        self._tab_bar_widget = QWidget()
+        self._tab_bar_widget.setObjectName("TabBarRow")
+        row = QHBoxLayout(self._tab_bar_widget)
+        row.setContentsMargins(6, 0, 6, 0)
+        row.setSpacing(0)
+
+        # Reason: keep tab buttons out from under the floating logo.
+        tab_logo_reserve = QWidget(self._tab_bar_widget)
+        tab_logo_reserve.setFixedWidth(100)
+        tab_logo_reserve.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        row.addWidget(tab_logo_reserve, 0, Qt.AlignVCenter)
+
+        self._tab_button_group = QButtonGroup(self)
+        self._tab_button_group.setExclusive(True)
+
+        for idx, name in enumerate(self.TAB_NAMES):
+            btn = QPushButton(name, self._tab_bar_widget)
+            btn.setCheckable(True)
+            btn.setObjectName("TabButton")
+            if idx == 0:
+                btn.setChecked(True)
+            self._tab_button_group.addButton(btn, idx)
+            row.addWidget(btn, 0, Qt.AlignVCenter)
+
+        row.addStretch(1)
+
+        # Life Drawing controls (Shuffle, Sort, Columns, Display)
+        self._life_drawing_controls = QWidget(self._tab_bar_widget)
+        ctrl_layout = QHBoxLayout(self._life_drawing_controls)
+        ctrl_layout.setContentsMargins(0, 0, 0, 0)
+        ctrl_layout.setSpacing(6)
+
+        self.shuffle_button = QPushButton("Shuffle", self._life_drawing_controls)
+        self.shuffle_button.setFixedWidth(70)
+        self.shuffle_button.setStyleSheet("""
+            QPushButton {
+                background-color: #3c3f41;
+                color: #ffffff;
+                border: 1px solid #4d4d4d;
+                border-radius: 4px;
+                padding: 4px 8px;
+                font-size: 11px;
+            }
+            QPushButton:hover {
+                background-color: #4b6eaf;
+            }
+            QPushButton:pressed {
+                background-color: #3d5a8c;
+            }
+        """)
+        self.shuffle_button.clicked.connect(self._on_shuffle_clicked)
+        self.shuffle_button.hide()
+
+        sort_label = QLabel("Sort:", self._life_drawing_controls)
+        sort_label.setStyleSheet("color: #ffffff; font-size: 11px;")
+        self.sort_combo = QComboBox(self._life_drawing_controls)
+        self.sort_combo.addItems(
+            [
+                "Most Recent First",
+                "Oldest First",
+                "Filename A→Z",
+                "Filename Z→A",
+                "Lightest First",
+                "Heaviest First",
+                "Session Course Random",
+            ]
+        )
+        default_sort_index = settings.get("ui.grid.sort_index", 6)
+        if not 0 <= default_sort_index < self.sort_combo.count():
+            default_sort_index = 6
+        self.sort_combo.setCurrentIndex(default_sort_index)
+        self.sort_combo.setFixedWidth(150)
+        self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
+        self.shuffle_button.setVisible(self.sort_combo.currentIndex() == 6)
+
+        columns_label = QLabel("Columns:", self._life_drawing_controls)
+        columns_label.setStyleSheet("color: #ffffff; font-size: 11px;")
+        self.columns_slider = QSlider(Qt.Horizontal, self._life_drawing_controls)
+        self.columns_slider.setMinimum(3)
+        self.columns_slider.setMaximum(10)
+        self.columns_slider.setValue(settings.get("ui.grid.columns", 4))
+        self.columns_slider.setTickPosition(QSlider.NoTicks)
+        self.columns_slider.setFixedWidth(100)
+        self.columns_slider.valueChanged.connect(self._on_columns_changed)
+        self.columns_count = QLabel(
+            str(self.columns_slider.value()), self._life_drawing_controls
+        )
+        self.columns_count.setStyleSheet("color: #ffffff; font-size: 11px;")
+
+        fit_label = QLabel("Display:", self._life_drawing_controls)
+        fit_label.setStyleSheet("color: #ffffff; font-size: 11px;")
+        self.fit_mode_combo = QComboBox(self._life_drawing_controls)
+        self.fit_mode_combo.addItems(FitMode.labels())
+        stored_fit = settings.get("ui.grid.fit_mode", None)
+        if stored_fit is None:
+            default_fit = FitMode.CROP_ALL.value
+        else:
+            default_fit = int(stored_fit)
+        if not 0 <= default_fit < self.fit_mode_combo.count():
+            default_fit = FitMode.CROP_ALL.value
+        self.fit_mode_combo.setCurrentIndex(default_fit)
+        self.fit_mode_combo.setFixedWidth(100)
+        self.fit_mode_combo.currentIndexChanged.connect(self._on_fit_mode_changed)
+
+        ctrl_layout.addWidget(self.shuffle_button, 0, Qt.AlignVCenter)
+        ctrl_layout.addWidget(sort_label, 0, Qt.AlignVCenter)
+        ctrl_layout.addWidget(self.sort_combo, 0, Qt.AlignVCenter)
+        ctrl_layout.addWidget(columns_label, 0, Qt.AlignVCenter)
+        ctrl_layout.addWidget(self.columns_slider, 0, Qt.AlignVCenter)
+        ctrl_layout.addWidget(self.columns_count, 0, Qt.AlignVCenter)
+        ctrl_layout.addWidget(fit_label, 0, Qt.AlignVCenter)
+        ctrl_layout.addWidget(self.fit_mode_combo, 0, Qt.AlignVCenter)
+
+        row.addWidget(self._life_drawing_controls, 0, Qt.AlignVCenter)
+
+        self._tab_bar_widget.setFixedHeight(42)
+        main_layout.addWidget(self._tab_bar_widget, 0)
+
+        self._tab_button_group.idClicked.connect(self._on_tab_changed)
+
+    # ------------------------------------------------------------------
+    # Content stack (one page per tab)
+    # ------------------------------------------------------------------
+
+    def _setup_content_stack(self, main_layout: QVBoxLayout) -> None:
+        """
+        Create a QStackedWidget with one page per tab.
+
+        Page 0 = Life Drawing (image grid + overlays).
+        Pages 1-2 = placeholder coming-soon panels.
+
+        Args:
+            main_layout: Central widget vertical layout.
+        """
+        self._content_stack = QStackedWidget()
+
+        # Page 0: Life Drawing
+        life_drawing_page = self._setup_image_browser()
+        self._content_stack.addWidget(life_drawing_page)
+
+        # Page 1: WhiteBoard (placeholder)
+        wb_page = self._make_placeholder_page("WhiteBoard", "Coming soon")
+        self._content_stack.addWidget(wb_page)
+
+        # Page 2: Market (placeholder)
+        market_page = self._make_placeholder_page("Market", "Coming soon")
+        self._content_stack.addWidget(market_page)
+
+        self._content_stack.setCurrentIndex(0)
+        main_layout.addWidget(self._content_stack, 1)
+
+    @staticmethod
+    def _make_placeholder_page(title: str, subtitle: str) -> QWidget:
+        """
+        Create a placeholder page with centered text.
+
+        Args:
+            title: Large heading text.
+            subtitle: Smaller text below.
+
+        Returns:
+            QWidget: The placeholder page.
+        """
+        page = QWidget()
+        layout = QVBoxLayout(page)
+        layout.setAlignment(Qt.AlignCenter)
+        heading = QLabel(title)
+        heading.setAlignment(Qt.AlignCenter)
+        heading.setStyleSheet("font-size: 28px; font-weight: bold; color: #ffffff;")
+        sub = QLabel(subtitle)
+        sub.setAlignment(Qt.AlignCenter)
+        sub.setStyleSheet("font-size: 14px; color: rgba(255, 255, 255, 0.5);")
+        layout.addWidget(heading)
+        layout.addWidget(sub)
+        return page
+
+    def _on_tab_changed(self, index: int) -> None:
+        """
+        Switch the visible page and show/hide per-tab controls.
+
+        Args:
+            index: Tab index (0 = Life Drawing, 1 = WhiteBoard, 2 = Market).
+        """
+        self._content_stack.setCurrentIndex(index)
+        self._life_drawing_controls.setVisible(index == 0)
+
     def _toggle_maximize_restore(self) -> None:
         """Toggle between maximized and normal window states."""
         if self.isMaximized():
@@ -709,19 +831,23 @@ class MainWindow(QMainWindow):
                 if hasattr(event, "position")
                 else event.pos()
             )
-            top_bar = getattr(self, "_top_chrome_bar", None)
-            if top_bar and top_bar.geometry().contains(pos):
-                target = self.childAt(pos)
-                if target in (top_bar,):
-                    self._is_window_dragging = True
-                    self._window_drag_offset = (
-                        event.globalPosition().toPoint()
-                        - self.frameGeometry().topLeft()
-                        if hasattr(event, "globalPosition")
-                        else event.globalPos() - self.frameGeometry().topLeft()
-                    )
-                    event.accept()
-                    return
+            drag_bars = [
+                getattr(self, "_top_chrome_bar", None),
+                getattr(self, "_tab_bar_widget", None),
+            ]
+            for bar in drag_bars:
+                if bar and bar.geometry().contains(pos):
+                    target = self.childAt(pos)
+                    if target in (bar,):
+                        self._is_window_dragging = True
+                        self._window_drag_offset = (
+                            event.globalPosition().toPoint()
+                            - self.frameGeometry().topLeft()
+                            if hasattr(event, "globalPosition")
+                            else event.globalPos() - self.frameGeometry().topLeft()
+                        )
+                        event.accept()
+                        return
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event) -> None:
@@ -754,20 +880,24 @@ class MainWindow(QMainWindow):
         super().mouseReleaseEvent(event)
 
     def mouseDoubleClickEvent(self, event) -> None:
-        """Double-click top chrome background to maximize/restore."""
+        """Double-click top chrome or tab bar background to maximize/restore."""
         if event.button() == Qt.LeftButton:
             pos = (
                 event.position().toPoint()
                 if hasattr(event, "position")
                 else event.pos()
             )
-            top_bar = getattr(self, "_top_chrome_bar", None)
-            if top_bar and top_bar.geometry().contains(pos):
-                target = self.childAt(pos)
-                if target in (top_bar,):
-                    self._toggle_maximize_restore()
-                    event.accept()
-                    return
+            drag_bars = [
+                getattr(self, "_top_chrome_bar", None),
+                getattr(self, "_tab_bar_widget", None),
+            ]
+            for bar in drag_bars:
+                if bar and bar.geometry().contains(pos):
+                    target = self.childAt(pos)
+                    if target in (bar,):
+                        self._toggle_maximize_restore()
+                        event.accept()
+                        return
         super().mouseDoubleClickEvent(event)
 
     def changeEvent(self, event) -> None:
@@ -821,19 +951,30 @@ class MainWindow(QMainWindow):
             return False
         return bool(handle.startSystemResize(edges))
 
-    def _setup_image_browser(self, main_layout: QVBoxLayout) -> None:
-        """Set up the Image Browser with floating tag panel overlay."""
+    def _setup_image_browser(self) -> QWidget:
+        """
+        Set up the Image Browser with floating tag panel overlay.
+
+        Returns:
+            QWidget: The middle panel containing the image grid and overlays.
+        """
         # Space below the floating logo so tag rail / panel do not sit under it.
         # (_logo_float_height_px is set later in _setup_floating_logo; default matches it.)
-        self._grid_viewport_top_inset = int(getattr(self, "_logo_float_height_px", 84)) + 24
+        self._grid_viewport_top_inset = (
+            int(getattr(self, "_logo_float_height_px", 84)) + 24
+        )
 
         # === IMAGE GRID (takes full width, no splitter) ===
         middle_panel = QWidget()
         middle_layout = QVBoxLayout(middle_panel)
-        middle_layout.setContentsMargins(10, 10, 10, 10)
+        # Keep the left rail fully flush with the window edge.
+        middle_layout.setContentsMargins(0, 10, 10, 10)
         middle_layout.setSpacing(10)
 
         self.image_grid = ImageGrid(self.image_manager)
+        # Reason: keep floating tag rail at absolute left while leaving visual room
+        # before thumbnails so it does not overlap image content.
+        self.image_grid.grid.setContentsMargins(35, 8, 8, 8)
         self.image_grid.set_columns(self.columns_slider.value())
         self.image_grid.set_fit_mode(FitMode(self.fit_mode_combo.currentIndex()))
         self.image_grid.image_double_clicked.connect(self._on_image_clicked)
@@ -858,6 +999,11 @@ class MainWindow(QMainWindow):
         middle_layout.addWidget(self.image_grid)
 
         vp = self.image_grid.viewport()
+
+        # Bottom fade overlay (subtle 30px opacity gradient over the grid content).
+        self._grid_bottom_fade = QWidget(vp)
+        self._grid_bottom_fade.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._refresh_grid_bottom_fade_style()
 
         # Floating control: session button on image viewport.
         self.session_settings_btn = QPushButton("Start session", vp)
@@ -1049,7 +1195,7 @@ class MainWindow(QMainWindow):
 
         self._image_viewer_window = None
 
-        main_layout.addWidget(middle_panel, 1)
+        return middle_panel
 
     def _toggle_left_sidebar(self) -> None:
         """Toggle the floating tag panel overlay open or closed."""
@@ -1063,6 +1209,33 @@ class MainWindow(QMainWindow):
             self._left_panel_expanded = True
         QTimer.singleShot(0, self._position_floating_grid_overlays)
 
+    def _grid_fade_rgb(self) -> tuple[int, int, int]:
+        """Return a theme-aligned RGB color used for the bottom fade overlay."""
+        theme = settings.get("ui.theme", "dark")
+        by_theme: dict[str, tuple[int, int, int]] = {
+            "dark": (23, 18, 32),
+            "light": (248, 248, 248),
+            "midnight_ocean": (7, 24, 34),
+            "sunset_glass": (44, 24, 48),
+            "neon_night": (11, 16, 32),
+        }
+        return by_theme.get(theme, by_theme["dark"])
+
+    def _refresh_grid_bottom_fade_style(self) -> None:
+        """Apply a strong, theme-colored opacity fade at the bottom of the grid."""
+        if not hasattr(self, "_grid_bottom_fade"):
+            return
+        r, g, b = self._grid_fade_rgb()
+        self._grid_bottom_fade.setStyleSheet(f"""
+            QWidget {{
+                background: qlineargradient(
+                    x1: 0, y1: 0, x2: 0, y2: 1,
+                    stop: 0 rgba({r}, {g}, {b}, 0),
+                    stop: 1 rgba({r}, {g}, {b}, 220)
+                );
+            }}
+            """)
+
     def _position_floating_grid_overlays(self) -> None:
         """Place floating overlays (session button, tag trigger, tag panel) on image viewport."""
         if not hasattr(self, "image_grid"):
@@ -1073,8 +1246,7 @@ class MainWindow(QMainWindow):
         margin = 10
         top_inset = int(getattr(self, "_grid_viewport_top_inset", 100))
         panel_open = (
-            hasattr(self, "_tag_panel_overlay")
-            and self._tag_panel_overlay.isVisible()
+            hasattr(self, "_tag_panel_overlay") and self._tag_panel_overlay.isVisible()
         )
         if hasattr(self, "tag_filters_floating_btn"):
             btn = self.tag_filters_floating_btn
@@ -1088,6 +1260,16 @@ class MainWindow(QMainWindow):
                 btn.raise_()
         if hasattr(self, "_tag_panel_overlay"):
             self._tag_panel_overlay.reposition()
+        if hasattr(self, "_grid_bottom_fade"):
+            fade_h = 30
+            self._refresh_grid_bottom_fade_style()
+            self._grid_bottom_fade.setGeometry(
+                0,
+                max(0, viewport.height() - fade_h),
+                viewport.width(),
+                min(fade_h, viewport.height()),
+            )
+            self._grid_bottom_fade.raise_()
         # Start session stays above tag rail, overlay, and tag popover
         if hasattr(self, "session_settings_btn"):
             hint = self.session_settings_btn.sizeHint()

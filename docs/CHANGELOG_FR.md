@@ -1,5 +1,54 @@
 # Journal des modifications
 
+## 2026-04-13 (Système d'onglets)
+### ✅ Tâches :
+- Introduction d'un header à deux lignes avec navigation par onglets
+
+  - Ligne 1 (chrome) : réserve logo, menus File/View/Tools/Help, boutons de fenêtre (inchangé)
+  - Ligne 2 (tab bar) : boutons d'onglets (Life Drawing / WhiteBoard / Market) à gauche, contrôles de la grille (Shuffle, Sort, Columns, Display) à droite — contrôles masqués hors de l'onglet Life Drawing
+  - Contenu : `QStackedWidget` à 3 pages ; page 0 = navigateur d'images existant, pages 1-2 = placeholders « Coming soon »
+  - Le drag et double-clic pour déplacer/maximiser fonctionnent sur les deux barres
+  - QSS : règles `TabBarRow` + `TabButton` dans les 5 thèmes avec couleur d'accent par thème pour le soulignement de l'onglet actif
+  - Tests : `tests/test_tab_layout.py`
+→ Résultat : l'application est structurée pour plusieurs outils ; le premier onglet est le workflow Life Drawing existant, deux autres sont prêts pour de futurs ajouts.
+---
+
+## 2026-04-13 (Grille : images fantômes après filtres tags)
+### ✅ Tâches :
+- Corriger des fragments d’images non interactifs (restes visuels dans les gouttières)
+
+  - Cause : les vignettes hors mode virtualisé sont dans un `QGridLayout` ; le mode virtualisé utilise un pool avec géométrie absolue. La branche `clear()` liée au `thumbnail_pool` ne vidait pas la grille, d’où des cellules orphelines après bascule catalogue large / petit résultat.
+  - `_drain_thumbnail_grid_layout()` appelée depuis `clear()` systématiquement et au début de `_update_virtualized_view()`.
+  - Tests : `tests/test_image_grid_ghost_widgets.py`
+→ Résultat : les changements de tags / filtres ne laissent plus de vignettes fantômes.
+---
+
+## 2026-04-13 (Visionneuse : fond sur le thème)
+### ✅ Tâches :
+- Supprimer le fond gris par défaut derrière l’image dans la visionneuse (double-clic grille)
+
+  - `ImageViewerWindow` : scène avec fond transparent, style `QGraphicsView` transparent, `viewport().setAutoFillBackground(False)` pour laisser voir le dégradé global de la fenêtre autour du `fitInView`
+  - Tests : `tests/test_image_viewer_window.py`
+→ Résultat : la visionneuse plein écran reprend le thème de l’app au lieu d’un panneau gris autour de l’image.
+---
+
+## 2026-04-12 (Planification : marché, prix, coûts hors dev)
+### ✅ Tâches :
+- Document d’étude de marché, réflexion tarifaire et estimation des coûts
+
+  - Nouveau fichier `docs/Plans/sketchbook-260412_marche-prix-couts.md` : segments, concurrents, SWOT courte, paliers d’abonnement indicatifs, autres revenus (packs, marketplace), fourchettes de coûts année 1 hors développement (juridique, compta, infra, paiements, stores, marketing) en € et scénarios A/B/C
+→ Résultat : base de travail pour arbitrer prix, marges et budget bootstrap hors charge de développement.
+---
+
+## 2026-04-12 (Planification : feuille de route commerciale et technique)
+### ✅ Tâches :
+- Document de planification aligné sur la vision produit
+
+  - Nouveau fichier `docs/Plans/sketchbook-260412_commercial-technique.md` : architecture cible (client bureau + services), BDD/catalogue en ligne, comptes et paiements, packaging et distribution, points juridiques et marketing, phasage et risques
+  - Ancré dans l’état actuel du code (métadonnées JSON locales, pas de couche réseau)
+→ Résultat : référence commune sur ce qu’implique un SketchBook commercial enrichi par le cloud, sans modification du code applicatif.
+---
+
 ## 2026-04-12 (Démarrage : fenêtre vide puis chargement)
 ### ✅ Tâches :
 - Reporter le travail lourd après le premier affichage

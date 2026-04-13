@@ -1,6 +1,7 @@
 """
 Window for displaying a single image in large size with zoom.
 """
+
 from typing import Optional, List, Callable
 from qtpy.QtWidgets import (
     QMainWindow,
@@ -58,7 +59,9 @@ class CropHandleItem(QGraphicsEllipseItem):
         self.setBrush(QBrush(QColor(60, 60, 60, 200)))
         self.setZValue(10_002)
         self.setAcceptedMouseButtons(Qt.LeftButton)
-        self.setCursor(Qt.SizeFDiagCursor if handle_index in (0, 2) else Qt.SizeBDiagCursor)
+        self.setCursor(
+            Qt.SizeFDiagCursor if handle_index in (0, 2) else Qt.SizeBDiagCursor
+        )
 
     def mousePressEvent(self, event):
         if event.button() == Qt.LeftButton:
@@ -160,8 +163,18 @@ class ImageViewerWindow(QMainWindow):
         self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.graphics_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.graphics_view.setFrameShape(QFrame.NoFrame)
+        # Reason: default QGraphicsView paints gray letterboxing; transparent scene + stylesheet
+        # lets the window theme (global QMainWindow gradient) show around the image.
+        self.graphics_view.setStyleSheet("""
+            QGraphicsView {
+                background: transparent;
+                border: none;
+            }
+            """)
+        self.graphics_view.viewport().setAutoFillBackground(False)
 
         self.scene = QGraphicsScene()
+        self.scene.setBackgroundBrush(Qt.transparent)
         self.graphics_view.setScene(self.scene)
         self.pixmap_item: Optional[QGraphicsPixmapItem] = None
 
@@ -183,11 +196,15 @@ class ImageViewerWindow(QMainWindow):
         controls_layout.addStretch()
 
         self.rotate_ccw_button = QPushButton("Rotate ⟲")
-        self.rotate_ccw_button.clicked.connect(lambda: self._rotate_current(clockwise=False))
+        self.rotate_ccw_button.clicked.connect(
+            lambda: self._rotate_current(clockwise=False)
+        )
         controls_layout.addWidget(self.rotate_ccw_button)
 
         self.rotate_cw_button = QPushButton("Rotate ⟳")
-        self.rotate_cw_button.clicked.connect(lambda: self._rotate_current(clockwise=True))
+        self.rotate_cw_button.clicked.connect(
+            lambda: self._rotate_current(clockwise=True)
+        )
         controls_layout.addWidget(self.rotate_cw_button)
 
         self.crop_button = QPushButton("Crop")
@@ -308,9 +325,13 @@ class ImageViewerWindow(QMainWindow):
         """Rotate the current image 90° clockwise or counterclockwise and reload it."""
         if not self._current_image_id:
             return
-        success = self.image_manager.rotate_image(self._current_image_id, clockwise=clockwise)
+        success = self.image_manager.rotate_image(
+            self._current_image_id, clockwise=clockwise
+        )
         if not success:
-            QMessageBox.warning(self, "Rotate image", "Could not rotate the image on disk.")
+            QMessageBox.warning(
+                self, "Rotate image", "Could not rotate the image on disk."
+            )
             return
         # Reload image with updated orientation
         self._load_current_image()
@@ -492,7 +513,9 @@ class ImageViewerWindow(QMainWindow):
             left = min(x, right - CROP_MIN_SIZE)
             bottom = max(y, top + CROP_MIN_SIZE)
 
-        self._crop_rect = QRectF(QPointF(left, top), QPointF(right, bottom)).normalized()
+        self._crop_rect = QRectF(
+            QPointF(left, top), QPointF(right, bottom)
+        ).normalized()
         self._update_crop_overlay()
 
     def _apply_crop(self) -> None:
@@ -500,7 +523,10 @@ class ImageViewerWindow(QMainWindow):
         if not self._crop_mode or self._crop_rect is None or not self._current_image_id:
             return
         crop_rect_scene = self._crop_rect
-        if crop_rect_scene.width() < CROP_MIN_SIZE or crop_rect_scene.height() < CROP_MIN_SIZE:
+        if (
+            crop_rect_scene.width() < CROP_MIN_SIZE
+            or crop_rect_scene.height() < CROP_MIN_SIZE
+        ):
             QMessageBox.information(
                 self,
                 "Crop image",

@@ -40,12 +40,14 @@ Available themes:
 
 The tag library is a **floating panel** over the **left edge** of the image gallery (the gallery does not resize when you open it). A compact **Tags filters** vertical strip sits on the left edge of the gallery. **Hover** opens the full library; moving the pointer **away from the panel** closes it. While the panel is open, the **Tags filters** strip stays hidden so it does not sit on top of the library. The panel and strip are **shorter in height** than the viewport so they stay **below the floating logo** (top-left).
 
-**Top bar** (full width, thin strip, above the gallery):
+**Top bar** (full width, two lines above the gallery):
 
-- The **SketchBook** logo is **floating** on top of the window (top-left); it does not set the height of the bar. **File**, **View**, **Tools**, and **Help** start to the right of the logo area (import, settings, themes, dev tools, about).
-- On the **right** of the same row: **Shuffle** (when using Session Course Random sort), **Sort** order, and **Columns** (slider + count).
+- **Line 1** (chrome bar): The **SketchBook** logo is **floating** on top of the window (top-left); it does not set the height of the bar. **File**, **View**, **Tools**, and **Help** start to the right of the logo area (import, settings, themes, dev tools, about). Window controls (minimize, maximize, close) are on the far right.
+- **Line 2** (tab bar): **Life Drawing**, **WhiteBoard**, and **Market** tab buttons on the left. The active tab has a colored underline matching the current theme. **Shuffle** (when using Session Course Random sort), **Sort** order, **Columns** (slider + count), and **Display** mode are on the right of this line and are only visible when the **Life Drawing** tab is active.
 
-**Below** the top bar, the **image gallery** uses the full width. **Start session** stays **centered at the bottom** of the gallery viewport and remains **above** other floating controls in that area (tag panel, tag popover).
+Clicking a tab switches the content area. **WhiteBoard** and **Market** are placeholders for now.
+
+**Below** the tab bar, the **content** fills the remaining space. On the **Life Drawing** tab the **image gallery** uses the full width. **Start session** stays **centered at the bottom** of the gallery viewport and remains **above** other floating controls in that area (tag panel, tag popover).
 
 **Image count and selection size** (number of filtered images and total size of the current selection) appear on the **right side of the status bar**, next to the usual status messages (same band as quick / dev log feedback).
 
@@ -161,6 +163,7 @@ The choice is saved automatically and restored on relaunch.
 - When you scroll through the grid, a fast low-quality preview appears for each new thumbnail almost instantly. A moment later it is silently replaced by a crisp, high-quality version. This two-phase approach keeps the grid responsive even with thousands of images.
 - While you **drag a window edge** to resize the main window, previews may look slightly softer or blocky for a moment so the UI stays responsive; a moment after you **release** the mouse, thumbnails are refitted with full smooth scaling again.
 - Internally, SketchBook loads a 2x-resolution version of each image for thumbnails and lets Qt downscale it, which produces a sharp result, especially after window resizes or when using many columns.
+- When you change tag filters repeatedly, the grid discards the previous thumbnail widgets completely so old images cannot linger as non-interactive scraps in the margins.
 
 ## Single Image Viewer
 
@@ -169,6 +172,7 @@ When you double-click an image in the grid, SketchBook opens a dedicated viewer 
 ### Initial display and zoom
 
 - The viewer window opens maximized by default.
+- The area around the image (when the aspect ratio does not fill the view) uses the **same themed window background** as the rest of the app, not a flat gray panel.
 - The image is automatically **fit in view** the first time you open the viewer in a session, so it uses the full available space instead of appearing very small.
 - You can use the mouse wheel to zoom in and out (the cursor position is used as the zoom anchor).
 

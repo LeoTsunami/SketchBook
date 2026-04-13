@@ -8,6 +8,9 @@ Update this file via prompt:
 
 ## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
 
+- [x] Tab system: two-line header (chrome + tab bar) with QStackedWidget; tabs Life Drawing / WhiteBoard / Market; grid controls on tab bar; per-tab show/hide (2026-04-13)
+- [x] Image grid: drain `QGridLayout` on every `clear()` + start of `_update_virtualized_view` to fix non-interactive ghost thumbnails after tag/filter switches (virtual ↔ non-virtual) (2026-04-13)
+- [x] Image viewer (grid double-click): transparent `QGraphicsView` / scene so letterboxing uses app theme, not gray (2026-04-13)
 - [x] Startup: show empty window first; defer tag grid + image list; sort metadata in QThreadPool (`StartupSortRunnable`); `snapshot_metadata_values`; `run_startup_load_for_tests` for pytest (2026-04-12)
 - [x] Image grid: unified sidebar animation system (scrollbar signal blocking, _on_scroll guard, set_image respects anim flag, explicit content height at animation end) (2026-04-12)
 - [x] Image grid: ultra-fast sidebar resize with direct transform (remove crossfade, fix scroll anchor with cached row height, _sidebar_anim_active + _fast_scale_in_view on thumbnails, visible-only per-frame relayout) (2026-04-12)
@@ -188,6 +191,8 @@ Update this file via prompt:
 
 ## 🧠 DISCOVERIES / QUESTIONS
 
+- [x] **2026-04-12** : Document marché / prix / coûts hors dev : `docs/Plans/sketchbook-260412_marche-prix-couts.md` (étude de marché synthétique, réflexion abonnements, estimation charges année 1 hors développement).
+- [x] **2026-04-12** : Document de cadrage commercial/technique ajouté : `docs/Plans/sketchbook-260412_commercial-technique.md` (architecture, BDD en ligne, packaging, utilisateurs/paiements, légal/marketing) — complète la vision dans `docs/Plans/sketchbook-260412_1637.md`.
 - [x] **2026-04-10** : Si `No Python at 'C:\Users\OtherUser\...Python312\python.exe'` après copie de projet ou changement de PC, supprimer `.venv` et recréer avec `py -3.12 -m venv .venv` puis `pip install -r requirements.txt`.
 - [x] Research best practices for Qt application architecture
 - [x] Investigate efficient image processing methods with Pillow
