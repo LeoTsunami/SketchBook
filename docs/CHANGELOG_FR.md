@@ -1,5 +1,17 @@
 # Journal des modifications
 
+## 2026-04-13 (Polish UI : marge grille, rail tags, fade, CTA session)
+### ✅ Tâches :
+- Appliquer les ajustements visuels demandés sur les overlays du viewport Life Drawing
+
+  - Grille d'images : augmentation de la marge gauche de +15 px (`35 -> 50`) pour mieux respirer par rapport au bord gauche/rail.
+  - Bouton **Tags filters** : largeur augmentée de +10 px (`36 -> 46`) et hauteur effective augmentée de +25 px ; style recoloré en bleu clair en conservant l'opacité élevée actuelle.
+  - Fenêtre bibliothèque de tags : largeur augmentée de +10 px (`360 -> 370`) et budget de hauteur augmenté de +25 px.
+  - Fade bas de grille : couleur dérivée de la palette du viewport quand disponible (fallback thème) et dégradé adouci pour éviter un rendu trop sombre.
+  - Bouton **Start session** : remplacement du style vert par un style bleu "glass", ombre portée bleue plus marquée, et animation continue du contour pour attirer l'attention.
+→ Résultat : l'UI du viewport correspond à la direction demandée, avec un rail tags plus lisible, un fade moins "boueux" et un bouton Start session plus impactant.
+---
+
 ## 2026-04-13 (Système d'onglets)
 ### ✅ Tâches :
 - Introduction d'un header à deux lignes avec navigation par onglets

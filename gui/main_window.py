@@ -58,6 +58,8 @@ from qtpy.QtCore import (
     QObject,
     QRect,
     QPoint,
+    QVariantAnimation,
+    QEasingCurve,
 )
 from qtpy.QtGui import (
     QAction,
@@ -71,6 +73,9 @@ from qtpy.QtGui import (
     QImage,
     QCursor,
     QColor,
+    QPen,
+    QConicalGradient,
+    QBrush,
 )
 from core.settings import settings
 from core.image_manager import ImageManager
@@ -127,6 +132,89 @@ class DraggableTreeWidget(QTreeWidget):
 TAG_LIBRARY_MIME = "application/x-sketchbook-tag-library"
 # MIME for multi-tag drag (all selected tags when dropping on images)
 TAG_LIBRARY_MULTI_MIME = "application/x-sketchbook-tag-library-multi"
+
+
+class SessionTraceButton(QPushButton):
+    """Glass-like button with animated border trace around its contour."""
+
+    def __init__(self, text: str, parent: Optional[QWidget] = None) -> None:
+        super().__init__(text, parent)
+        self._trace_progress = 0.0
+        self.setCursor(Qt.PointingHandCursor)
+        self.setMinimumSize(208, 58)
+        self.setStyleSheet(
+            "QPushButton { background: transparent; border: none; color: transparent; }"
+        )
+        self._trace_anim = QVariantAnimation(self)
+        self._trace_anim.setDuration(2200)
+        self._trace_anim.setStartValue(0.0)
+        self._trace_anim.setEndValue(1.0)
+        self._trace_anim.setEasingCurve(QEasingCurve.Linear)
+        self._trace_anim.setLoopCount(-1)
+        self._trace_anim.valueChanged.connect(self._on_trace_value_changed)
+        self._trace_anim.start()
+
+    def sizeHint(self) -> QSize:
+        """Keep the same practical footprint as the previous Start session button."""
+        return QSize(208, 58)
+
+    def minimumSizeHint(self) -> QSize:
+        """Return minimum size for stable overlay placement."""
+        return QSize(208, 58)
+
+    def _on_trace_value_changed(self, value: object) -> None:
+        """Update trace progression and repaint.
+
+        Args:
+            value: Animated progress ratio in [0, 1].
+        """
+        self._trace_progress = float(value)
+        self.update()
+
+    def paintEvent(self, event) -> None:
+        """Custom paint: glass fill + moving border trace."""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing, True)
+
+        rect = self.rect().adjusted(3, 3, -3, -3)
+        radius = 14.0
+
+        if self.isDown():
+            bg = QColor(77, 125, 180, 152)
+        elif self.underMouse():
+            bg = QColor(110, 156, 210, 142)
+        else:
+            bg = QColor(96, 142, 194, 128)
+
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(bg)
+        painter.drawRoundedRect(rect, radius, radius)
+
+        base_pen = QPen(QColor(204, 222, 240, 122), 2.0)
+        painter.setPen(base_pen)
+        painter.setBrush(Qt.NoBrush)
+        painter.drawRoundedRect(rect, radius, radius)
+
+        # Reason: moving conical gradient gives a continuous perimeter trace with no pause.
+        trace_gradient = QConicalGradient(rect.center(), -self._trace_progress * 360.0)
+        trace_gradient.setColorAt(0.00, QColor(120, 188, 255, 70))
+        trace_gradient.setColorAt(0.10, QColor(178, 227, 255, 255))
+        trace_gradient.setColorAt(0.22, QColor(110, 180, 245, 85))
+        trace_gradient.setColorAt(0.45, QColor(120, 188, 255, 70))
+        trace_gradient.setColorAt(1.00, QColor(120, 188, 255, 70))
+        trace_pen = QPen(QBrush(trace_gradient), 2.5)
+        trace_pen.setCapStyle(Qt.RoundCap)
+        trace_pen.setJoinStyle(Qt.RoundJoin)
+        painter.setPen(trace_pen)
+        painter.drawRoundedRect(rect, radius, radius)
+
+        text_pen = QPen(QColor(245, 251, 255))
+        painter.setPen(text_pen)
+        font = painter.font()
+        font.setBold(True)
+        font.setPointSize(18)
+        painter.setFont(font)
+        painter.drawText(rect, Qt.AlignCenter, self.text())
 
 
 class TagGridDropFilter(QObject):
@@ -408,10 +496,9 @@ class MainWindow(QMainWindow):
         m = 8
         self._logo_label.move(m, m)
         self._logo_label.raise_()
-        if hasattr(self, "_logo_float_height_px"):
-            self._grid_viewport_top_inset = int(self._logo_float_height_px) + 24
-            if hasattr(self, "_tag_panel_overlay"):
-                self._tag_panel_overlay.set_top_inset(self._grid_viewport_top_inset)
+        self._grid_viewport_top_inset = 2
+        if hasattr(self, "_tag_panel_overlay"):
+            self._tag_panel_overlay.set_top_inset(self._grid_viewport_top_inset)
 
     def resizeEvent(self, event) -> None:
         """Re-anchor floating logo when the main window geometry changes."""
@@ -960,9 +1047,7 @@ class MainWindow(QMainWindow):
         """
         # Space below the floating logo so tag rail / panel do not sit under it.
         # (_logo_float_height_px is set later in _setup_floating_logo; default matches it.)
-        self._grid_viewport_top_inset = (
-            int(getattr(self, "_logo_float_height_px", 84)) + 24
-        )
+        self._grid_viewport_top_inset = 2
 
         # === IMAGE GRID (takes full width, no splitter) ===
         middle_panel = QWidget()
@@ -974,7 +1059,7 @@ class MainWindow(QMainWindow):
         self.image_grid = ImageGrid(self.image_manager)
         # Reason: keep floating tag rail at absolute left while leaving visual room
         # before thumbnails so it does not overlap image content.
-        self.image_grid.grid.setContentsMargins(35, 8, 8, 8)
+        self.image_grid.grid.setContentsMargins(50, 8, 8, 8)
         self.image_grid.set_columns(self.columns_slider.value())
         self.image_grid.set_fit_mode(FitMode(self.fit_mode_combo.currentIndex()))
         self.image_grid.image_double_clicked.connect(self._on_image_clicked)
@@ -1006,28 +1091,11 @@ class MainWindow(QMainWindow):
         self._refresh_grid_bottom_fade_style()
 
         # Floating control: session button on image viewport.
-        self.session_settings_btn = QPushButton("Start session", vp)
-        self.session_settings_btn.setStyleSheet("""
-            QPushButton {
-                background-color: #4CAF50;
-                color: white;
-                font-size: 18px;
-                font-weight: bold;
-                padding: 14px 22px;
-                border: none;
-                border-radius: 12px;
-            }
-            QPushButton:hover {
-                background-color: #45a049;
-            }
-            QPushButton:pressed {
-                background-color: #3d8b40;
-            }
-        """)
+        self.session_settings_btn = SessionTraceButton("Start session", vp)
         shadow = QGraphicsDropShadowEffect(self.session_settings_btn)
-        shadow.setBlurRadius(22)
-        shadow.setOffset(0, 6)
-        shadow.setColor(QColor(0, 0, 0, 170))
+        shadow.setBlurRadius(40)
+        shadow.setOffset(0, 10)
+        shadow.setColor(QColor(88, 162, 255, 160))
         self.session_settings_btn.setGraphicsEffect(shadow)
         self.session_settings_btn.clicked.connect(self._on_session_settings_clicked)
         self.session_settings_btn.raise_()
@@ -1146,12 +1214,12 @@ class MainWindow(QMainWindow):
         self.tag_filters_floating_btn.setToolTip("Hover to expand tags panel")
         self.tag_filters_floating_btn.setStyleSheet("""
             QPushButton#TagFiltersFloatingButton {
-                background-color: rgba(45, 48, 52, 0.92);
-                color: #e8e8e8;
-                font-size: 11px;
+                background-color: rgba(114, 132, 152, 0.72);
+                color: #eef5fc;
+                font-size: 12px;
                 font-weight: bold;
-                padding: 8px 4px;
-                border: 1px solid #555;
+                padding: 10px 4px;
+                border: 1px solid rgba(196, 211, 228, 0.55);
                 border-top-right-radius: 6px;
                 border-bottom-right-radius: 6px;
                 border-top-left-radius: 0px;
@@ -1159,11 +1227,11 @@ class MainWindow(QMainWindow):
                 text-align: center;
             }
             QPushButton#TagFiltersFloatingButton:hover {
-                background-color: rgba(60, 64, 70, 0.95);
-                border-color: #6b9bd1;
+                background-color: rgba(126, 146, 168, 0.82);
+                border-color: rgba(210, 223, 236, 0.76);
             }
             QPushButton#TagFiltersFloatingButton:pressed {
-                background-color: rgba(35, 38, 42, 0.95);
+                background-color: rgba(100, 118, 140, 0.82);
             }
         """)
         tf_shadow = QGraphicsDropShadowEffect(self.tag_filters_floating_btn)
@@ -1171,7 +1239,7 @@ class MainWindow(QMainWindow):
         tf_shadow.setOffset(0, 2)
         tf_shadow.setColor(QColor(0, 0, 0, 130))
         self.tag_filters_floating_btn.setGraphicsEffect(tf_shadow)
-        self.tag_filters_floating_btn.setFixedWidth(36)
+        self.tag_filters_floating_btn.setFixedWidth(46)
         self.tag_filters_floating_btn.installEventFilter(self)
 
         # Create AND/OR zones (filtering logic still uses them).
@@ -1211,6 +1279,12 @@ class MainWindow(QMainWindow):
 
     def _grid_fade_rgb(self) -> tuple[int, int, int]:
         """Return a theme-aligned RGB color used for the bottom fade overlay."""
+        if hasattr(self, "image_grid"):
+            viewport = self.image_grid.viewport()
+            if viewport is not None:
+                bg = viewport.palette().color(viewport.backgroundRole())
+                if bg.isValid() and bg.alpha() > 0:
+                    return (bg.red(), bg.green(), bg.blue())
         theme = settings.get("ui.theme", "dark")
         by_theme: dict[str, tuple[int, int, int]] = {
             "dark": (23, 18, 32),
@@ -1222,7 +1296,7 @@ class MainWindow(QMainWindow):
         return by_theme.get(theme, by_theme["dark"])
 
     def _refresh_grid_bottom_fade_style(self) -> None:
-        """Apply a strong, theme-colored opacity fade at the bottom of the grid."""
+        """Apply a theme-colored opacity fade at the bottom of the grid."""
         if not hasattr(self, "_grid_bottom_fade"):
             return
         r, g, b = self._grid_fade_rgb()
@@ -1231,7 +1305,8 @@ class MainWindow(QMainWindow):
                 background: qlineargradient(
                     x1: 0, y1: 0, x2: 0, y2: 1,
                     stop: 0 rgba({r}, {g}, {b}, 0),
-                    stop: 1 rgba({r}, {g}, {b}, 220)
+                    stop: 0.55 rgba({r}, {g}, {b}, 72),
+                    stop: 1 rgba({r}, {g}, {b}, 148)
                 );
             }}
             """)
@@ -1254,7 +1329,7 @@ class MainWindow(QMainWindow):
                 btn.hide()
             else:
                 btn.show()
-                h = max(1, viewport.height() - top_inset)
+                h = max(1, viewport.height() - top_inset + 55)
                 btn.setFixedHeight(h)
                 btn.move(0, top_inset)
                 btn.raise_()
@@ -1277,6 +1352,7 @@ class MainWindow(QMainWindow):
             y = max(margin, viewport.height() - hint.height() - margin)
             self.session_settings_btn.setGeometry(x, y, hint.width(), hint.height())
             self.session_settings_btn.raise_()
+
 
     def _get_default_tags_from_path(self, default_tags_path: Path) -> Set[str]:
         """

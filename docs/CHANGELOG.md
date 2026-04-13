@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-04-13 (UI polish: grid spacing, tags rail, fade, session CTA)
+### ✅ Tasks:
+- Apply requested UI tuning on the Life Drawing viewport overlays
+
+  - Image grid: increased left content margin by +15 px (`35 -> 50`) to add visual breathing room from the left edge/rail.
+  - Tags filters trigger: increased width by +10 px (`36 -> 46`) and effective height by +25 px; restyled to a lighter blue while preserving the current high-opacity look.
+  - Tag library overlay: increased panel width by +10 px (`360 -> 370`) and height budget by +25 px for a roomier open panel.
+  - Bottom grid fade: switched to viewport palette-derived color when available (fallback to theme map) and reduced darkness with a softer gradient stop profile.
+  - Start session CTA: replaced green style with a blue glass-like button, stronger blue drop shadow, and looping animated border glow to attract attention.
+→ Result: The viewport UI now matches the requested spacing and visual direction, with a lighter tags rail, less muddy bottom fade, and a more prominent Start session call-to-action.
+---
+
 ## 2026-04-13 (Tab system layout)
 ### ✅ Tasks:
 - Introduce a two-line header with tab navigation

@@ -35,7 +35,8 @@ class TagPanelOverlay(QFrame):
 
     panel_did_hide = Signal()
 
-    PANEL_WIDTH = 360
+    PANEL_WIDTH = 370
+    PANEL_EXTRA_HEIGHT = 55
     ANIM_DURATION_MS = 200
 
     def __init__(
@@ -176,7 +177,10 @@ class TagPanelOverlay(QFrame):
     def _update_height(self) -> None:
         """Match the panel height to the parent minus top inset (below logo)."""
         if self.parentWidget():
-            h = max(1, self.parentWidget().height() - self._top_inset)
+            h = max(
+                1,
+                self.parentWidget().height() - self._top_inset + self.PANEL_EXTRA_HEIGHT,
+            )
             self.setFixedHeight(h)
 
     def set_top_inset(self, inset: int) -> None:
