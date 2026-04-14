@@ -1,5 +1,15 @@
 # Journal des modifications
 
+## 2026-04-14 (Refresh visuel des vignettes Image Grid)
+### ✅ Tâches :
+- Suppression du fond gris opaque derrière les vignettes ; passage à des tuiles transparentes avec une ombre portée légère.
+- Ajout d’un feedback hover (image légèrement éclaircie) et d’un contour bleu clair pour les images sélectionnées.
+- Harmonisation des règles de bordure des vignettes dans tous les thèmes (`dark`, `light`, `neon_night`, `sunset_glass`, `midnight_ocean`) pour conserver le contraste sur fond transparent.
+
+  - Test ajouté : `tests/test_image_thumbnail.py`.
+→ Résultat : la grille est plus propre sur les fonds thème, le hover est plus lisible, et la sélection ressort mieux avec un contour bleu cohérent.
+---
+
 ## 2026-04-14 (Session polish : spinbox, resize, fond transparent des slides)
 ### ✅ Tâches :
 - Correction des flèches du `QSpinBox` de durée dans `SessionSettingsDialog` (incrément/décrément fiables via sous-contrôles explicites dans le thème).

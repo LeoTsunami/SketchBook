@@ -8,6 +8,7 @@ Update this file via prompt:
 
 ## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
 
+- [x] Image grid thumbnails visual refresh: transparent tile background, subtle drop shadow, hover brightening, and blue selection outline across themes (2026-04-14)
 - [x] Session UX fixes: Course duration spinbox arrows (up/down) in Session Settings; slideshow windowed resize for frameless mode; remove remaining gray block behind slides by enforcing transparent graphics view/viewport (2026-04-14)
 - [x] Unified secondary windows UI: shared frameless custom chrome module (`window_chrome`), theme-aligned background, and glass action buttons in session/viewer/settings windows (2026-04-14)
 - [x] Session slideshow: fix `ImageLoaderWorker.finished` (single pixmap) unpacking error; session window uses theme `QMainWindow` background + transparent view letterboxing (2026-04-14)

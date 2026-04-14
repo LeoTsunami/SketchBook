@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-14 (Image grid thumbnail visual refresh)
+### ✅ Tasks:
+- Remove opaque gray tile background behind image thumbnails and use transparent cards with subtle drop shadow.
+- Add hover feedback on thumbnails (slight image brightening) and enforce blue selection outline around selected images.
+- Align thumbnail border rules in all themes (`dark`, `light`, `neon_night`, `sunset_glass`, `midnight_ocean`) to preserve contrast on transparent cards.
+
+  - Added tests: `tests/test_image_thumbnail.py`.
+→ Result: The grid looks cleaner over themed backgrounds, hover feels more alive, and selection state is clearer with a consistent blue outline.
+---
+
 ## 2026-04-14 (Session polish: spinbox, resize, transparent slide background)
 ### ✅ Tasks:
 - Fix `SessionSettingsDialog` course-duration `QSpinBox` arrows so increment/decrement works reliably with explicit subcontrols in the themed stylesheet.
