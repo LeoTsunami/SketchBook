@@ -29,6 +29,11 @@ from qtpy.QtGui import (
     QBrush,
 )
 from core.image_manager import ImageManager
+from gui.window_chrome import (
+    WindowChromeBar,
+    apply_glass_button_style,
+    enable_frameless_window,
+)
 from PIL import Image
 
 # Minimum crop size in scene pixels
@@ -132,6 +137,7 @@ class ImageViewerWindow(QMainWindow):
         self.image_manager = image_manager
         self.setWindowTitle("Image")
         self.setMinimumSize(400, 300)
+        enable_frameless_window(self)
         # Start maximized so image is "screen size"
         self.showMaximized()
 
@@ -143,6 +149,9 @@ class ImageViewerWindow(QMainWindow):
         self.setCentralWidget(central)
         main_layout = QVBoxLayout(central)
         main_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.setSpacing(0)
+        self._chrome_bar = WindowChromeBar("Image Viewer", self)
+        main_layout.addWidget(self._chrome_bar, 0)
 
         # Center area: < button | image | > button
         center_row = QWidget()
@@ -153,6 +162,7 @@ class ImageViewerWindow(QMainWindow):
         self.prev_button = QPushButton("<")
         self.prev_button.setFixedWidth(40)
         self.prev_button.clicked.connect(self.show_previous_image)
+        apply_glass_button_style(self.prev_button)
         center_layout.addWidget(self.prev_button)
 
         self.graphics_view = ZoomGraphicsView(self)
@@ -183,6 +193,7 @@ class ImageViewerWindow(QMainWindow):
         self.next_button = QPushButton(">")
         self.next_button.setFixedWidth(40)
         self.next_button.clicked.connect(self.show_next_image)
+        apply_glass_button_style(self.next_button)
         center_layout.addWidget(self.next_button)
 
         main_layout.addWidget(center_row)
@@ -199,24 +210,29 @@ class ImageViewerWindow(QMainWindow):
         self.rotate_ccw_button.clicked.connect(
             lambda: self._rotate_current(clockwise=False)
         )
+        apply_glass_button_style(self.rotate_ccw_button)
         controls_layout.addWidget(self.rotate_ccw_button)
 
         self.rotate_cw_button = QPushButton("Rotate ⟳")
         self.rotate_cw_button.clicked.connect(
             lambda: self._rotate_current(clockwise=True)
         )
+        apply_glass_button_style(self.rotate_cw_button)
         controls_layout.addWidget(self.rotate_cw_button)
 
         self.crop_button = QPushButton("Crop")
         self.crop_button.clicked.connect(self._enter_crop_mode)
+        apply_glass_button_style(self.crop_button, primary=True)
         controls_layout.addWidget(self.crop_button)
 
         self.crop_validate_button = QPushButton("Valider")
         self.crop_validate_button.clicked.connect(self._apply_crop)
+        apply_glass_button_style(self.crop_validate_button, primary=True)
         self.crop_validate_button.hide()
 
         self.crop_cancel_button = QPushButton("Annuler")
         self.crop_cancel_button.clicked.connect(self._cancel_crop)
+        apply_glass_button_style(self.crop_cancel_button)
         self.crop_cancel_button.hide()
 
         controls_layout.addWidget(self.crop_validate_button)
@@ -235,6 +251,12 @@ class ImageViewerWindow(QMainWindow):
         self._prev_drag_mode = self.graphics_view.dragMode()
         # When dragging a handle, viewport event filter drives move; release clears this
         self._crop_drag_handle_index: Optional[int] = None
+
+    def changeEvent(self, event) -> None:
+        """Keep custom chrome controls synchronized with window state."""
+        super().changeEvent(event)
+        if hasattr(self, "_chrome_bar"):
+            self._chrome_bar.sync_window_state()
 
     def _ensure_sequence_from_grid(self, current_id: str) -> None:
         """

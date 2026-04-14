@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-04-14 (Session polish: spinbox, resize, transparent slide background)
+### ✅ Tasks:
+- Fix `SessionSettingsDialog` course-duration `QSpinBox` arrows so increment/decrement works reliably with explicit subcontrols in the themed stylesheet.
+- Make `SlideshowWindow` resizable in frameless windowed mode by delegating border drags to `startSystemResize`.
+- Remove remaining gray image-area artifact in session by enforcing transparent `QGraphicsView` frame/background/viewport.
+
+  - Added tests: `tests/test_session_settings_dialog.py`.
+→ Result: Session settings controls feel correct again, windowed slideshow can be resized, and slides render over the theme background without gray blocks.
+---
+
+## 2026-04-14 (Unified window chrome and glass controls)
+### ✅ Tasks:
+- Introduce shared UI module `gui/window_chrome.py` to centralize frameless custom window bar behavior and reusable glass button styling.
+- Apply shared chrome to secondary windows (`SlideshowWindow`, `ImageViewerWindow`, `SessionSettingsDialog`) so they match main UI direction (custom bar + theme background consistency).
+
+  - Added tests: `tests/test_window_chrome.py`.
+→ Result: Secondary windows now use a unified custom chrome and glass action style instead of mixed native title bars / per-window button styles.
+---
+
+## 2026-04-14 (Session: slideshow load + theme background)
+### ✅ Tasks:
+- Fix drawing session slideshow not showing images after `ImageLoaderWorker` API change (`finished` emits one HQ `QPixmap`, not a tuple).
+- Session window: reuse the active theme’s `QMainWindow` QSS rule (e.g. Dark gradient) plus transparent central stack / `QGraphicsView` so letterboxing matches the main app.
+
+  - Added `gui/theme_qss_utils.py` and tests `tests/test_theme_qss_utils.py`.
+→ Result: Session images display again; session chrome aligns with the selected global theme background.
+---
+
 ## 2026-04-13 (UI polish: grid spacing, tags rail, fade, session CTA)
 ### ✅ Tasks:
 - Apply requested UI tuning on the Life Drawing viewport overlays

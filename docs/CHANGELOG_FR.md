@@ -1,5 +1,33 @@
 # Journal des modifications
 
+## 2026-04-14 (Session polish : spinbox, resize, fond transparent des slides)
+### ✅ Tâches :
+- Correction des flèches du `QSpinBox` de durée dans `SessionSettingsDialog` (incrément/décrément fiables via sous-contrôles explicites dans le thème).
+- Fenêtre `SlideshowWindow` redimensionnable en mode fenêtré frameless via délégation du drag de bord à `startSystemResize`.
+- Suppression de l’artefact gris restant derrière l’image en session en forçant la transparence de la `QGraphicsView` (frame/background/viewport).
+
+  - Test ajouté : `tests/test_session_settings_dialog.py`.
+→ Résultat : les contrôles de session sont de nouveau fluides, la fenêtre session fenêtrée se redimensionne, et les slides s’affichent sur le fond thème sans bloc gris.
+---
+
+## 2026-04-14 (Chrome fenêtres unifié et boutons glass)
+### ✅ Tâches :
+- Ajout d’un module UI partagé `gui/window_chrome.py` pour centraliser la barre custom frameless et le style de boutons glass réutilisable.
+- Application de ce chrome partagé aux fenêtres secondaires (`SlideshowWindow`, `ImageViewerWindow`, `SessionSettingsDialog`) pour alignement avec la main UI (barre custom + cohérence du fond thème).
+
+  - Tests ajoutés : `tests/test_window_chrome.py`.
+→ Résultat : les fenêtres secondaires utilisent désormais un chrome unifié et des actions glass, au lieu d’un mélange de barres natives et styles locaux.
+---
+
+## 2026-04-14 (Session : affichage diapos + fond thème)
+### ✅ Tâches :
+- Correction de la session dessin : les images ne s’affichaient plus après changement d’API de `ImageLoaderWorker` (`finished` émet un seul pixmap HQ, pas un tuple).
+- Fenêtre session : réutilisation de la règle QSS `QMainWindow` du thème actif (ex. dégradé Dark) et empilement transparent (widget central + `QGraphicsView`) pour le letterboxing comme dans l’app principale.
+
+  - Ajout de `gui/theme_qss_utils.py` et tests `tests/test_theme_qss_utils.py`.
+→ Résultat : les images de session s’affichent à nouveau ; le fond de la fenêtre session est aligné sur le thème global.
+---
+
 ## 2026-04-13 (Polish UI : marge grille, rail tags, fade, CTA session)
 ### ✅ Tâches :
 - Appliquer les ajustements visuels demandés sur les overlays du viewport Life Drawing

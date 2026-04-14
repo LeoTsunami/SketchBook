@@ -8,6 +8,9 @@ Update this file via prompt:
 
 ## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
 
+- [x] Session UX fixes: Course duration spinbox arrows (up/down) in Session Settings; slideshow windowed resize for frameless mode; remove remaining gray block behind slides by enforcing transparent graphics view/viewport (2026-04-14)
+- [x] Unified secondary windows UI: shared frameless custom chrome module (`window_chrome`), theme-aligned background, and glass action buttons in session/viewer/settings windows (2026-04-14)
+- [x] Session slideshow: fix `ImageLoaderWorker.finished` (single pixmap) unpacking error; session window uses theme `QMainWindow` background + transparent view letterboxing (2026-04-14)
 - [x] UI polish: image-grid left margin +15px; Tag filters trigger and Tag library +10px width (+25px height); lighter blue Tag filters color; theme-matched bottom fade; glassy Start session button with stronger blue shadow and animated border glow (2026-04-13)
 - [x] Tab system: two-line header (chrome + tab bar) with QStackedWidget; tabs Life Drawing / WhiteBoard / Market; grid controls on tab bar; per-tab show/hide (2026-04-13)
 - [x] Image grid: drain `QGridLayout` on every `clear()` + start of `_update_virtualized_view` to fix non-interactive ghost thumbnails after tag/filter switches (virtual ↔ non-virtual) (2026-04-13)
