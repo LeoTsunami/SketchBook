@@ -1,5 +1,15 @@
 # Journal des modifications
 
+## 2026-04-13
+### ✅ Tâches :
+- Rendre la configuration Python du workspace agnostique entre machines
+
+  - Mise à jour de `.vscode/settings.json` pour ne plus imposer un chemin d'interpréteur `.venv` figé.
+  - Passage de `python.defaultInterpreterPath` à `python` et activation de l'environnement dans le terminal.
+  - Évite les échecs Play/Run sur les PC où `.venv` n'existe pas encore ou a été recréé avec une autre installation locale de Python.
+→ Résultat : le bouton Play de Cursor utilise un interpréteur disponible localement au lieu d'un chemin venv spécifique à une machine.
+---
+
 ## 2026-04-13 (Polish UI : marge grille, rail tags, fade, CTA session)
 ### ✅ Tâches :
 - Appliquer les ajustements visuels demandés sur les overlays du viewport Life Drawing

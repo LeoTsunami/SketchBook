@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-13
+### ✅ Tasks:
+- Make workspace Python run configuration machine-agnostic
+
+  - Updated `.vscode/settings.json` to stop pinning a hard `.venv` interpreter path.
+  - Switched `python.defaultInterpreterPath` to `python` and enabled terminal environment activation.
+  - Avoids Play/Run failures on PCs where `.venv` is absent or recreated with different local Python installs.
+→ Result: Running from Cursor Play now uses an available local interpreter instead of a machine-specific venv path.
+---
+
 ## 2026-04-13 (UI polish: grid spacing, tags rail, fade, session CTA)
 ### ✅ Tasks:
 - Apply requested UI tuning on the Life Drawing viewport overlays
