@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-04-15 (Image grid thumbnail centering and fill)
+### ✅ Tasks:
+- Fix off-center thumbnails and “hover nudges toward center” by removing the default `QGraphicsView` frame inset, resetting the view transform before each `fitInView`, and moving hover brightening off the `QGraphicsView` onto a transparent wrapper (graphics effects on the view could shift painting).
+- Remove inner thumbnail layout margins so images reach the card border in crop/fill modes.
+- Add env-gated debug logs (`SKETCHBOOK_DEBUG_THUMB_POSITION=1`) to trace thumbnail geometry and center deltas during grid placement, async load, viewport resize, and hover transitions.
+- After validation, disable debug logs by default and keep only hover brightening active (shadow effect remains disabled temporarily) to reintroduce visual effects progressively.
+
+  - Added tests: `tests/test_thumbnail_fitting.py` (`TestFitPixmapInView`).
+→ Result: Grid images stay centered and fill the thumbnail frame edge-to-edge; hover no longer changes apparent alignment. Also removed legacy -4/-8 inner sizing offsets in ImageGrid that still introduced visible gaps after the transparent-card refactor.
+---
+
 ## 2026-04-14 (Image grid thumbnail visual refresh)
 ### ✅ Tasks:
 - Remove opaque gray tile background behind image thumbnails and use transparent cards with subtle drop shadow.

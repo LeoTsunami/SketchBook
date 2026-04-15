@@ -3,12 +3,16 @@ Tests for gui.thumbnail_fitting – the unified image→cell fitting logic.
 """
 
 import pytest
-from gui.thumbnail_fitting import FitMode, compute_fitted_size
+from qtpy.QtCore import Qt
+from qtpy.QtGui import QColor, QPixmap
+from qtpy.QtWidgets import QFrame, QGraphicsScene, QGraphicsView
 
+from gui.thumbnail_fitting import FitMode, compute_fitted_size, fit_pixmap_in_view
 
 # ---------------------------------------------------------------------------
 # FitMode enum basics
 # ---------------------------------------------------------------------------
+
 
 class TestFitModeEnum:
     """Sanity checks on the FitMode enum."""
@@ -30,6 +34,7 @@ class TestFitModeEnum:
 # ---------------------------------------------------------------------------
 # FIT_ALL mode (default) — image always fits entirely, never exceeds cell
 # ---------------------------------------------------------------------------
+
 
 class TestComputeFittedSizeFitAll:
     """Tests for compute_fitted_size in FIT_ALL mode."""
@@ -83,6 +88,7 @@ class TestComputeFittedSizeFitAll:
 # CROP_ALL mode — result always equals cell dimensions
 # ---------------------------------------------------------------------------
 
+
 class TestComputeFittedSizeCropAll:
     """Tests for compute_fitted_size in CROP_ALL mode."""
 
@@ -105,6 +111,7 @@ class TestComputeFittedSizeCropAll:
 # ---------------------------------------------------------------------------
 # FIT_WIDTH mode — width matches cell, height ≤ cell (clamped)
 # ---------------------------------------------------------------------------
+
 
 class TestComputeFittedSizeFitWidth:
     """Tests for compute_fitted_size in FIT_WIDTH mode."""
@@ -130,6 +137,7 @@ class TestComputeFittedSizeFitWidth:
 # FIT_HEIGHT mode — height matches cell, width ≤ cell (clamped)
 # ---------------------------------------------------------------------------
 
+
 class TestComputeFittedSizeFitHeight:
     """Tests for compute_fitted_size in FIT_HEIGHT mode."""
 
@@ -148,3 +156,60 @@ class TestComputeFittedSizeFitHeight:
 
     def test_zero_returns_zero(self):
         assert compute_fitted_size(100, 0, 300, 300, FitMode.FIT_HEIGHT) == (0, 0)
+
+
+# ---------------------------------------------------------------------------
+# fit_pixmap_in_view (QGraphicsView integration)
+# ---------------------------------------------------------------------------
+
+
+class TestFitPixmapInView:
+    """Regression: scene center should map to viewport center after crop fit."""
+
+    def test_crop_all_centers_scene_in_viewport(self, qtbot):
+        """CROP_ALL must center the pixmap; avoids off-center thumbnails in the grid."""
+        view = QGraphicsView()
+        view.setFrameShape(QFrame.NoFrame)
+        scene = QGraphicsScene()
+        view.setScene(scene)
+        pm = QPixmap(160, 90)
+        pm.fill(QColor(Qt.GlobalColor.red))
+        item = scene.addPixmap(pm)
+        view.resize(200, 200)
+        qtbot.addWidget(view)
+        view.show()
+        qtbot.waitExposed(view)
+        fit_pixmap_in_view(view, scene, item, FitMode.CROP_ALL)
+        center = item.boundingRect().center()
+        vp_pt = view.mapFromScene(center)
+        vpc = view.viewport().rect().center()
+        assert abs(vp_pt.x() - vpc.x()) <= 2
+        assert abs(vp_pt.y() - vpc.y()) <= 2
+
+    def test_fit_all_centers_scene_in_viewport(self, qtbot):
+        """FIT_ALL keeps entire image visible and centered in the viewport."""
+        view = QGraphicsView()
+        view.setFrameShape(QFrame.NoFrame)
+        scene = QGraphicsScene()
+        view.setScene(scene)
+        pm = QPixmap(100, 100)
+        pm.fill(QColor(Qt.GlobalColor.blue))
+        item = scene.addPixmap(pm)
+        view.resize(200, 150)
+        qtbot.addWidget(view)
+        view.show()
+        qtbot.waitExposed(view)
+        fit_pixmap_in_view(view, scene, item, FitMode.FIT_ALL)
+        center = item.boundingRect().center()
+        vp_pt = view.mapFromScene(center)
+        vpc = view.viewport().rect().center()
+        assert abs(vp_pt.x() - vpc.x()) <= 2
+        assert abs(vp_pt.y() - vpc.y()) <= 2
+
+    def test_none_pixmap_item_no_crash(self, qtbot):
+        """Calling with no item must be a safe no-op."""
+        view = QGraphicsView()
+        scene = QGraphicsScene()
+        view.setScene(scene)
+        qtbot.addWidget(view)
+        fit_pixmap_in_view(view, scene, None, FitMode.CROP_ALL)

@@ -136,6 +136,7 @@ class ImageGrid(QScrollArea):
         self._overlay_hide_timer = QTimer(self)
         self._overlay_hide_timer.setSingleShot(True)
         self._overlay_hide_timer.setInterval(self.SCROLL_PREVIEW_HIDE_MS)
+        self._debug_thumb_position = False
         self._overlay_hide_timer.timeout.connect(self._hide_scroll_preview)
         # Extract strip for scroll preview: indices into all_images (1 every N), preloaded in background
         self._extract_indices: List[int] = []
@@ -482,8 +483,8 @@ class ImageGrid(QScrollArea):
             thumb._fit_mode = self._fit_mode
             thumb.setFixedWidth(thumbnail_width)
             thumb.setFixedHeight(row_height)
-            thumb.image_container.setFixedSize(thumbnail_width - 4, row_height - 4)
-            thumb.graphics_view.setFixedSize(thumbnail_width - 4, row_height - 4)
+            thumb.image_container.setFixedSize(thumbnail_width, row_height)
+            thumb.graphics_view.setFixedSize(thumbnail_width, row_height)
             thumb.clicked.connect(self.image_clicked.emit)
             self.thumbnail_pool.append(thumb)
 
@@ -527,9 +528,20 @@ class ImageGrid(QScrollArea):
         )
         start_index = first_row * self.columns
         end_index = min(total_images, (last_row + 1) * self.columns)
+        if self._debug_thumb_position:
+            print(
+                (
+                    "[thumb_debug] "
+                    f"grid_virtualized scroll={scroll_y} viewport_h={viewport_h} "
+                    f"thumb={thumbnail_width}x{row_height} "
+                    f"range=[{start_index},{end_index}) rows=[{first_row},{last_row}] "
+                    f"pool={len(self.thumbnail_pool)}"
+                ),
+                flush=True,
+            )
 
-        inner_w = thumbnail_width - 4
-        inner_h = row_height - 4
+        inner_w = thumbnail_width
+        inner_h = row_height
 
         self.thumbnails.clear()
         for i, thumb in enumerate(self.thumbnail_pool):
@@ -566,6 +578,16 @@ class ImageGrid(QScrollArea):
             if not thumb.isVisible():
                 thumb.show()
             self.thumbnails[meta.id] = thumb
+            if self._debug_thumb_position and i < 3:
+                print(
+                    (
+                        "[thumb_debug] "
+                        f"grid_place id={meta.id} idx={idx} row={row} col={col} "
+                        f"geom=({x},{y},{thumbnail_width},{row_height})"
+                    ),
+                    flush=True,
+                )
+                thumb._debug_position("grid_place")
 
         # Enqueue pixmap loads for visible range
         self.pending_load_queue.clear()
@@ -810,12 +832,8 @@ class ImageGrid(QScrollArea):
                 self.grid.addWidget(thumbnail, row, col)
 
             thumbnail.setFixedSize(thumbnail_width, thumbnail_height)
-            thumbnail.image_container.setFixedSize(
-                thumbnail_width - 4, thumbnail_height - 4
-            )
-            thumbnail.graphics_view.setFixedSize(
-                thumbnail_width - 4, thumbnail_height - 4
-            )
+            thumbnail.image_container.setFixedSize(thumbnail_width, thumbnail_height)
+            thumbnail.graphics_view.setFixedSize(thumbnail_width, thumbnail_height)
             thumbnail.show()
 
     def _drain_thumbnail_grid_layout(self) -> None:
@@ -954,12 +972,8 @@ class ImageGrid(QScrollArea):
             thumbnail._fit_mode = self._fit_mode
 
             thumbnail.setFixedSize(thumbnail_width, thumbnail_height)
-            thumbnail.image_container.setFixedSize(
-                thumbnail_width - 4, thumbnail_height - 4
-            )
-            thumbnail.graphics_view.setFixedSize(
-                thumbnail_width - 4, thumbnail_height - 4
-            )
+            thumbnail.image_container.setFixedSize(thumbnail_width, thumbnail_height)
+            thumbnail.graphics_view.setFixedSize(thumbnail_width, thumbnail_height)
 
             self.grid.addWidget(thumbnail, row, col)
             self.thumbnails[metadata.id] = thumbnail
@@ -994,10 +1008,8 @@ class ImageGrid(QScrollArea):
         )
         thumbnail._fit_mode = self._fit_mode
         thumbnail.setFixedSize(thumbnail_width, thumbnail_height)
-        thumbnail.image_container.setFixedSize(
-            thumbnail_width - 4, thumbnail_height - 4
-        )
-        thumbnail.graphics_view.setFixedSize(thumbnail_width - 4, thumbnail_height - 4)
+        thumbnail.image_container.setFixedSize(thumbnail_width, thumbnail_height)
+        thumbnail.graphics_view.setFixedSize(thumbnail_width, thumbnail_height)
         self.thumbnails[metadata.id] = thumbnail
         thumbnail.clicked.connect(self.image_clicked.emit)
         self.loaded_count += 1
@@ -1095,12 +1107,12 @@ class ImageGrid(QScrollArea):
         self.loading_images.add(image_id)
         if image_id in self.thumbnails:
             thumbnail = self.thumbnails[image_id]
-            target_width = thumbnail.graphics_view.width() or (thumbnail.width() - 8)
-            target_height = thumbnail.graphics_view.height() or (thumbnail.height() - 8)
+            target_width = thumbnail.graphics_view.width() or (thumbnail.width())
+            target_height = thumbnail.graphics_view.height() or (thumbnail.height())
         else:
             thumbnail_width, thumbnail_height = self._calculate_optimal_dimensions()
-            target_width = thumbnail_width - 4
-            target_height = thumbnail_height - 4
+            target_width = thumbnail_width
+            target_height = thumbnail_height
         image_path = self.image_manager.image_dir / metadata.path
         worker = ImageLoaderWorker(
             image_id,
@@ -1128,6 +1140,9 @@ class ImageGrid(QScrollArea):
         thumb = self.thumbnails.get(image_id)
         if thumb and thumb.image_id == image_id and thumb.pixmap_item is None:
             thumb.set_image(pixmap)
+            if self._debug_thumb_position:
+                print(f"[thumb_debug] grid_fast_ready id={image_id}", flush=True)
+                thumb._debug_position("grid_fast_ready")
 
     def _on_image_loaded(self, image_id: str, pixmap):
         """Handle loaded HQ image and update cache + display."""
@@ -1146,6 +1161,11 @@ class ImageGrid(QScrollArea):
                 and self.thumbnails[image_id].image_id == image_id
             ):
                 self.thumbnails[image_id].set_image(pixmap)
+                if self._debug_thumb_position:
+                    print(
+                        f"[thumb_debug] grid_loaded_extract id={image_id}", flush=True
+                    )
+                    self.thumbnails[image_id]._debug_position("grid_loaded_extract")
             return
         self.pixmap_cache[image_id] = pixmap
         if (
@@ -1153,6 +1173,9 @@ class ImageGrid(QScrollArea):
             and self.thumbnails[image_id].image_id == image_id
         ):
             self.thumbnails[image_id].set_image(pixmap)
+            if self._debug_thumb_position:
+                print(f"[thumb_debug] grid_loaded id={image_id}", flush=True)
+                self.thumbnails[image_id]._debug_position("grid_loaded")
 
     def _on_image_error(self, image_id: str, error_msg: str):
         """Handle image loading error."""

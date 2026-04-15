@@ -12,6 +12,12 @@ changes:  ``set_image()``, ``resizeEvent()``, relayout, etc.
 
 Call ``compute_fitted_size`` when you need the logical (w, h) of the
 image *as it will appear* inside a cell, without actually touching a view.
+
+Note
+----
+We do **not** use ``QGraphicsView.fitInView()`` because of QTBUG-11945:
+it silently adds a hardcoded 2 px inner margin that prevents the image
+from filling the viewport.  All transforms are computed manually.
 """
 
 from __future__ import annotations
@@ -19,17 +25,19 @@ from __future__ import annotations
 from enum import IntEnum
 
 from qtpy.QtCore import Qt, QRectF
-from qtpy.QtGui import QPixmap
+from qtpy.QtGui import QPixmap, QTransform
 from qtpy.QtWidgets import QGraphicsView, QGraphicsScene, QGraphicsPixmapItem
+
+DEBUG_THUMB_FIT_ALWAYS = False
 
 
 class FitMode(IntEnum):
     """Image-to-cell display strategy chosen by the user."""
 
-    FIT_ALL = 0      # Entire image visible, no crop (may have bars)
-    FIT_HEIGHT = 1   # Fill cell height, width may overflow/crop
-    FIT_WIDTH = 2    # Fill cell width, height may overflow/crop
-    CROP_ALL = 3     # Fill entire cell, crop excess on both axes
+    FIT_ALL = 0  # Entire image visible, no crop (may have bars)
+    FIT_HEIGHT = 1  # Fill cell height, width may overflow/crop
+    FIT_WIDTH = 2  # Fill cell width, height may overflow/crop
+    CROP_ALL = 3  # Fill entire cell, crop excess on both axes
 
     @classmethod
     def labels(cls) -> list[str]:
@@ -50,6 +58,9 @@ def fit_pixmap_in_view(
     """
     Scale and position a pixmap inside a QGraphicsView according to *mode*.
 
+    Bypasses ``QGraphicsView.fitInView()`` to avoid the 2 px internal
+    margin bug (QTBUG-11945).  Computes and applies the transform manually.
+
     Args:
         view: The target QGraphicsView.
         scene: The QGraphicsScene that owns *pixmap_item*.
@@ -63,52 +74,46 @@ def fit_pixmap_in_view(
     if rect.isEmpty():
         return
 
-    scene.setSceneRect(rect)
-
-    if mode == FitMode.FIT_ALL:
-        view.fitInView(rect, Qt.KeepAspectRatio)
-
-    elif mode == FitMode.CROP_ALL:
-        # Reason: KeepAspectRatioByExpanding scales so the *shorter* axis
-        # fills the view; the other axis overflows and gets clipped — this
-        # is the classic "cover / crop" behavior.
-        view.fitInView(rect, Qt.KeepAspectRatioByExpanding)
-
-    elif mode == FitMode.FIT_WIDTH:
-        _fit_one_axis(view, rect, match_width=True)
-
-    elif mode == FitMode.FIT_HEIGHT:
-        _fit_one_axis(view, rect, match_width=False)
-
-
-def _fit_one_axis(
-    view: QGraphicsView,
-    rect: QRectF,
-    *,
-    match_width: bool,
-) -> None:
-    """
-    Scale so one axis fills the view exactly; the other axis may overflow.
-
-    Args:
-        view: Target view.
-        rect: Scene rectangle of the pixmap item.
-        match_width: If True, match the view width (height may crop).
-                     If False, match the view height (width may crop).
-    """
     vw = view.viewport().width()
     vh = view.viewport().height()
-    if vw <= 0 or vh <= 0 or rect.width() <= 0 or rect.height() <= 0:
+    if vw <= 0 or vh <= 0:
         return
 
-    if match_width:
-        scale = vw / rect.width()
-    else:
-        scale = vh / rect.height()
+    scene.setSceneRect(rect)
 
-    view.resetTransform()
-    view.scale(scale, scale)
+    rw = rect.width()
+    rh = rect.height()
+
+    if mode == FitMode.FIT_ALL:
+        scale = min(vw / rw, vh / rh)
+    elif mode == FitMode.CROP_ALL:
+        # Reason: max() makes the *shorter* viewport axis match exactly;
+        # the longer axis overflows and is clipped — classic "cover" behavior.
+        scale = max(vw / rw, vh / rh)
+    elif mode == FitMode.FIT_WIDTH:
+        scale = vw / rw
+    elif mode == FitMode.FIT_HEIGHT:
+        scale = vh / rh
+    else:
+        scale = min(vw / rw, vh / rh)
+
+    view.setTransform(QTransform.fromScale(scale, scale))
     view.centerOn(rect.center())
+    if DEBUG_THUMB_FIT_ALWAYS:
+        center_scene = rect.center()
+        center_viewport = view.viewport().rect().center()
+        mapped_center = view.mapFromScene(center_scene)
+        print(
+            (
+                "[thumb_fit] "
+                f"mode={mode.name if hasattr(mode, 'name') else mode} "
+                f"viewport={vw}x{vh} scene={round(rw, 2)}x{round(rh, 2)} "
+                f"scale={scale:.4f} "
+                f"center_delta=({mapped_center.x() - center_viewport.x()},"
+                f"{mapped_center.y() - center_viewport.y()})"
+            ),
+            flush=True,
+        )
 
 
 def compute_fitted_size(

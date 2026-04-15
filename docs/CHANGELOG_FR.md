@@ -1,5 +1,16 @@
 # Journal des modifications
 
+## 2026-04-15 (Centrage et remplissage des vignettes grille)
+### ✅ Tâches :
+- Correction des vignettes décentrées et du léger recalage au survol : `QGraphicsView` sans cadre par défaut, `resetTransform` avant chaque `fitInView`, et effet de survol appliqué sur un conteneur autour de la vue (pas sur la vue elle-même — les effets graphiques pouvaient décaler le rendu).
+- Suppression des marges internes de la vignette pour que l’image arrive jusqu’au bord de la carte en modes remplissage/recadrage.
+- Ajout de logs de debug activables par variable d’environnement (`SKETCHBOOK_DEBUG_THUMB_POSITION=1`) pour tracer géométrie/centrage pendant placement grille, chargement asynchrone, resize viewport et hover.
+- Après validation, logs de debug désactivés par défaut et seul l’éclaircissement au survol est réactivé (ombre toujours désactivée temporairement) pour réintroduire les effets progressivement.
+
+  - Tests ajoutés : `tests/test_thumbnail_fitting.py` (`TestFitPixmapInView`).
+→ Résultat : l’image reste centrée et remplit la vignette jusqu’au contour ; le survol ne modifie plus l’alignement apparent.
+---
+
 ## 2026-04-14 (Refresh visuel des vignettes Image Grid)
 ### ✅ Tâches :
 - Suppression du fond gris opaque derrière les vignettes ; passage à des tuiles transparentes avec une ombre portée légère.
