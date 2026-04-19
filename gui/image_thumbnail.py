@@ -275,9 +275,14 @@ class ImageThumbnail(QFrame):
         self.image_container.setGraphicsEffect(None)
 
         # Hover brightening (white tint at low strength).
+        # Reason: the effect MUST start disabled; an active QGraphicsColorizeEffect
+        # (even at strength 0) caches the widget sub-tree rendering.  Inside a
+        # QScrollArea the cached pixmap is never invalidated by scroll, so every
+        # previously-hovered thumbnail's image appears frozen in place.
         self._hover_effect = QGraphicsColorizeEffect(self)
         self._hover_effect.setColor(QColor(255, 255, 255))
         self._hover_effect.setStrength(0.0)
+        self._hover_effect.setEnabled(False)
         self._hover_fx_wrapper.setGraphicsEffect(self._hover_effect)
 
         # Selection outline overlay (drawn above the image content).
@@ -547,7 +552,14 @@ class ImageThumbnail(QFrame):
             return
         self._hovered = hovered
         self.setProperty("hovered", hovered)
-        self._hover_effect.setStrength(0.10 if hovered else 0.0)
+        # Reason: enable the effect only while hovered; disabling it when idle
+        # avoids the stale-cache scroll bug (see __init__ comment).
+        if hovered:
+            self._hover_effect.setStrength(0.10)
+            self._hover_effect.setEnabled(True)
+        else:
+            self._hover_effect.setEnabled(False)
+            self._hover_effect.setStrength(0.0)
         if self.selected:
             border_color = "#8ab9ff" if hovered else "#5d9dff"
             self.selection_overlay.setStyleSheet(

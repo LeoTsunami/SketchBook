@@ -76,7 +76,7 @@ class ImageGrid(QScrollArea):
     VIRTUALIZED_POOL_EXTRA_ROWS = (
         10  # Rows above/below viewport so more images load ahead
     )
-    SCROLL_FAST_THRESHOLD = 104
+    SCROLL_FAST_THRESHOLD = 160
     SCROLL_PREVIEW_HIDE_MS = 650
     EXTRACT_STEP_FACTOR = 4
     EXTRACT_LOAD_SIZE = 240

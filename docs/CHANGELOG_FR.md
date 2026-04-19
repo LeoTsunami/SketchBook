@@ -1,5 +1,15 @@
 # Journal des modifications
 
+## 2026-04-19 (Correction du bug vignettes figées après survol)
+### ✅ Tâches :
+- Correction du bug où survoler une vignette puis en survoler une autre laissait la première image figée en place pendant le défilement.
+
+  - Cause racine : le `QGraphicsColorizeEffect` sur le conteneur de survol restait actif (même à strength 0.0 après le départ du curseur). Le pipeline de rendu des effets Qt met en cache le sous-arbre du widget ; le pixmap mis en cache n'était jamais invalidé par les événements de défilement, ce qui faisait apparaître les vignettes précédemment survolées comme « collées ».
+  - Solution : désactiver entièrement l'effet (`setEnabled(False)`) quand la vignette n'est pas survolée ; l'activer uniquement pendant le survol.
+  - Tests mis à jour : `tests/test_image_thumbnail.py` (3 nouvelles assertions + 2 nouveaux cas de test).
+→ Résultat : toutes les vignettes défilent correctement après avoir été survolées ; l'effet de luminosité au survol fonctionne toujours comme prévu.
+---
+
 ## 2026-04-15 (Centrage et remplissage des vignettes grille)
 ### ✅ Tâches :
 - Correction des vignettes décentrées et du léger recalage au survol : `QGraphicsView` sans cadre par défaut, `resetTransform` avant chaque `fitInView`, et effet de survol appliqué sur un conteneur autour de la vue (pas sur la vue elle-même — les effets graphiques pouvaient décaler le rendu).

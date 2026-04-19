@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-04-19 (Fix hover-then-scroll frozen thumbnails)
+### ✅ Tasks:
+- Fix bug where hovering an image thumbnail and then hovering another would leave the first image frozen in place during scrolling.
+
+  - Root cause: `QGraphicsColorizeEffect` on the hover wrapper was always active (even at strength 0.0 after leaving). Qt's effect rendering pipeline caches the widget sub-tree; the cached pixmap was never invalidated by scroll events, so previously-hovered thumbnails appeared stuck.
+  - Solution: disable the effect entirely (`setEnabled(False)`) when the thumbnail is not hovered; enable it only during hover.
+  - Updated tests: `tests/test_image_thumbnail.py` (3 new assertions + 2 new test cases).
+→ Result: All thumbnails scroll correctly after being hovered; hover brightness effect still works as expected.
+---
+
 ## 2026-04-15 (Image grid thumbnail centering and fill)
 ### ✅ Tasks:
 - Fix off-center thumbnails and “hover nudges toward center” by removing the default `QGraphicsView` frame inset, resetting the view transform before each `fitInView`, and moving hover brightening off the `QGraphicsView` onto a transparent wrapper (graphics effects on the view could shift painting).
