@@ -17,6 +17,8 @@ from qtpy.QtWidgets import (
     QPushButton,
     QApplication,
     QSizePolicy,
+    QGraphicsDropShadowEffect,
+    QGraphicsColorizeEffect,
 )
 from qtpy.QtCore import Qt, Signal, QTimer, QUrl
 from qtpy.QtGui import (
@@ -29,6 +31,7 @@ from qtpy.QtGui import (
     QDropEvent,
     QFontMetrics,
     QFont,
+    QColor,
 )
 from core.settings import settings
 from gui.icon_utils import find_tag_icon, invert_icon
@@ -201,7 +204,9 @@ class ImageThumbnail(QFrame):
         self.setFrameStyle(QFrame.NoFrame)
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.selected = False
+        self._hovered = False
         self.setProperty("selected", False)
+        self.setProperty("hovered", False)
 
         # Enable drag and drop for tags
         self.setAcceptDrops(True)
@@ -246,6 +251,19 @@ class ImageThumbnail(QFrame):
         container_layout = QVBoxLayout(self.image_container)
         container_layout.setContentsMargins(0, 0, 0, 0)
         container_layout.addWidget(self.graphics_view)
+
+        # Subtle depth on transparent thumbnails.
+        self._shadow_effect = QGraphicsDropShadowEffect(self)
+        self._shadow_effect.setBlurRadius(12)
+        self._shadow_effect.setOffset(0, 2)
+        self._shadow_effect.setColor(QColor(0, 0, 0, 85))
+        self.image_container.setGraphicsEffect(self._shadow_effect)
+
+        # Hover brightening (white tint at low strength).
+        self._hover_effect = QGraphicsColorizeEffect(self)
+        self._hover_effect.setColor(QColor(255, 255, 255))
+        self._hover_effect.setStrength(0.0)
+        self.graphics_view.setGraphicsEffect(self._hover_effect)
 
         layout.addWidget(self.image_container, 1)  # Give image container stretch factor
 
@@ -433,6 +451,16 @@ class ImageThumbnail(QFrame):
             self.style().unpolish(self)
             self.style().polish(self)
 
+    def _set_hovered(self, hovered: bool) -> None:
+        """Update hovered visual state (brightness + subtle border accent)."""
+        if self._hovered == hovered:
+            return
+        self._hovered = hovered
+        self.setProperty("hovered", hovered)
+        self._hover_effect.setStrength(0.10 if hovered else 0.0)
+        self.style().unpolish(self)
+        self.style().polish(self)
+
     def set_tags_visible(self, visible: bool) -> None:
         """
         Control whether tags are visible for this thumbnail.
@@ -616,6 +644,7 @@ class ImageThumbnail(QFrame):
 
     def enterEvent(self, event):
         """When mouse enters, ask parent grid to show this image's tags."""
+        self._set_hovered(True)
         parent = self.parent()
         while parent:
             if hasattr(parent, "set_active_image"):
@@ -628,6 +657,7 @@ class ImageThumbnail(QFrame):
         """When mouse leaves, let grid decide if tags should change."""
         # On ne force pas ici la désactivation des tags pour éviter les
         # effets de flicker si d'autres logiques décident de l'image active.
+        self._set_hovered(False)
         super().leaveEvent(event)
 
     def dragEnterEvent(self, event: QDragEnterEvent):

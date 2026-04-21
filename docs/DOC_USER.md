@@ -132,6 +132,9 @@ The main window is hidden and the session window opens. The image list is built 
 - When the session starts, SketchBook uses that image as the first step and keeps only the images after it in the current grid order; images before it are ignored for that session.
 
 ### Session Window
+- **Theme background**: The session window uses the same **QMainWindow** background as the main app for your current theme (for example the **Dark** theme’s purple gradient). Areas around the image (letterboxing) show that background; the image area uses the loaded slide.
+- **Windowed resize**: In **Window always on top** mode, the frameless session window can be resized by dragging its borders/corners.
+- **Custom window bar**: Session, image viewer, and session settings windows use the same custom top bar style (no default OS title bar), with integrated minimize/maximize/close controls where applicable.
 - **Screen awake**: While the session window is open, the screen and computer stay awake (no sleep or screen saver). Normal power behavior is restored when you close the session.
 - **Countdown**: Shown in the top-left for the current image; it decreases second by second and turns red as time approaches zero.
 - **Controls** (bottom bar): **Previous**, **Next**, and **Play/Pause** for the timer. The bar can auto-hide after a moment; move the mouse or press a key to show it again. **Next** and **Previous** move one step at a time: the first screen (Get ready), each phase title, and each image are steps you can move through and come back to like images.
@@ -164,6 +167,7 @@ The choice is saved automatically and restored on relaunch.
 - While you **drag a window edge** to resize the main window, previews may look slightly softer or blocky for a moment so the UI stays responsive; a moment after you **release** the mouse, thumbnails are refitted with full smooth scaling again.
 - Internally, SketchBook loads a 2x-resolution version of each image for thumbnails and lets Qt downscale it, which produces a sharp result, especially after window resizes or when using many columns.
 - When you change tag filters repeatedly, the grid discards the previous thumbnail widgets completely so old images cannot linger as non-interactive scraps in the margins.
+- Thumbnail tiles are transparent over the app theme background (no solid gray card). Each thumbnail has a subtle drop shadow, brightens slightly on hover, and shows a blue outline when selected.
 
 ## Single Image Viewer
 

@@ -31,6 +31,7 @@ from qtpy.QtCore import (
     QRectF,
     QEvent,
     QSize,
+    QPoint,
 )
 from qtpy.QtGui import (
     QPixmap,
@@ -43,6 +44,7 @@ from qtpy.QtGui import (
     QKeyEvent,
     QIcon,
     QImage,
+    QCursor,
 )
 from core.session_manager import SessionManager, load_course_config
 from core.image_manager import ImageManager
@@ -50,6 +52,11 @@ from gui.session_timer import SessionTimer
 from gui.image_loader_worker import ImageLoaderWorker
 from gui.icon_utils import invert_icon
 from gui.image_viewer_window import ImageViewerWindow
+from gui.window_chrome import (
+    WindowChromeBar,
+    apply_glass_button_style,
+    enable_frameless_window,
+)
 from utils.keep_awake import prevent_sleep, allow_sleep
 
 
@@ -147,6 +154,7 @@ class _OverlayContainer(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("sessionOverlayContainer")
         self._graphics_view = None
         self._countdown_frame = None
         self._fullscreen_btn = None
@@ -224,17 +232,28 @@ class SlideshowWindow(QMainWindow):
         super().__init__(parent)
         self.session_manager = session_manager
         self.image_manager = image_manager
+        # Initialize critical state before installing any event filters.
+        self._is_fullscreen = False
+        self._session_viewer_open: bool = False
+        self._session_image_viewer: Optional[_SessionImageViewerWindow] = None
+        self._last_play_pause_toggle_time: float = 0.0
+        self._resize_margin_px: int = 6
 
         self.setWindowTitle("SketchBook - Drawing Session")
+        enable_frameless_window(self)
+        self.setMouseTracking(True)
         self.setCursor(
             Qt.BlankCursor
         )  # Hide cursor during session; window state set in start_session
 
         central_widget = QWidget()
+        central_widget.setObjectName("slideshowCentralWidget")
         self.setCentralWidget(central_widget)
         layout = QVBoxLayout(central_widget)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
+        self._chrome_bar = WindowChromeBar("Drawing Session", self)
+        layout.addWidget(self._chrome_bar, 0)
 
         self._setup_image_display()
         self._setup_countdown_overlay()
@@ -267,12 +286,6 @@ class SlideshowWindow(QMainWindow):
         self._first_image = True
         self._fade_animation: Optional[QVariantAnimation] = None
         self._fade_in_progress: bool = False
-        self._is_fullscreen = False
-        self._session_viewer_open: bool = False
-        self._session_image_viewer: Optional[_SessionImageViewerWindow] = None
-        self._last_play_pause_toggle_time: float = (
-            0.0  # Debounce: avoid double toggle on one Space press
-        )
         # Title screen countdown (Get ready / phase): ticks every second, then calls done callback
         self._title_countdown_timer = QTimer(self)
         self._title_countdown_timer.setInterval(1000)
@@ -295,9 +308,17 @@ class SlideshowWindow(QMainWindow):
         self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.graphics_view.setRenderHint(QPainter.SmoothPixmapTransform)
         self.graphics_view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
-        self.graphics_view.setStyleSheet(
-            "background: black;"
-        )  # Letterbox color when ratio differs
+        self.graphics_view.setFrameShape(QFrame.NoFrame)
+        self.graphics_view.setBackgroundBrush(Qt.transparent)
+        self.graphics_view.setStyleSheet("""
+            QGraphicsView {
+                background: transparent;
+                border: none;
+            }
+            """)
+        # Letterboxing uses session window theme (see _apply_theme); viewport must not paint opaque gray.
+        self.graphics_view.viewport().setAutoFillBackground(False)
+        self.graphics_view.viewport().setStyleSheet("background: transparent;")
         self.graphics_view.setFocusPolicy(
             Qt.StrongFocus
         )  # Reason: so Space is received by view first
@@ -309,6 +330,7 @@ class SlideshowWindow(QMainWindow):
         )  # QGraphicsView forwards to viewport
 
         self.scene = QGraphicsScene()
+        self.scene.setBackgroundBrush(Qt.transparent)
         self.graphics_view.setScene(self.scene)
 
         self.pixmap_item = QGraphicsPixmapItem()
@@ -386,6 +408,7 @@ class SlideshowWindow(QMainWindow):
         self.fullscreen_btn.setFixedSize(100, 40)
         self.fullscreen_btn.setFocusPolicy(Qt.NoFocus)  # Reason: Space must go to view
         self.fullscreen_btn.clicked.connect(self._switch_to_fullscreen)
+        apply_glass_button_style(self.fullscreen_btn, primary=True)
         self.fullscreen_btn.setVisible(False)
 
     def _setup_controls(self):
@@ -405,6 +428,7 @@ class SlideshowWindow(QMainWindow):
             Qt.NoFocus
         )  # Reason: Space must go to view, not trigger button
         self.prev_button.clicked.connect(self._previous_image)
+        apply_glass_button_style(self.prev_button)
         bar.addWidget(self.prev_button)
 
         # Play/Pause only (timer logic runs in hidden SessionTimer; countdown stays top-left)
@@ -415,6 +439,7 @@ class SlideshowWindow(QMainWindow):
             Qt.NoFocus
         )  # Reason: Space must go to view, not trigger button
         self.play_pause_btn.clicked.connect(self._on_play_pause_clicked)
+        apply_glass_button_style(self.play_pause_btn, primary=True)
         bar.addWidget(self.play_pause_btn)
         self._icon_play, self._icon_pause = _get_media_icons()
 
@@ -424,6 +449,7 @@ class SlideshowWindow(QMainWindow):
             Qt.NoFocus
         )  # Reason: Space must go to view, not trigger button
         self.next_button.clicked.connect(self._next_image)
+        apply_glass_button_style(self.next_button)
         bar.addWidget(self.next_button)
 
         bar.addStretch()
@@ -435,6 +461,7 @@ class SlideshowWindow(QMainWindow):
             "Même visionneuse que le double-clic sur la grille (crop, rotation)"
         )
         self.edit_session_btn.clicked.connect(self._on_session_edit_clicked)
+        apply_glass_button_style(self.edit_session_btn)
         self.edit_session_btn.hide()
         bar.addWidget(self.edit_session_btn)
 
@@ -513,7 +540,11 @@ class SlideshowWindow(QMainWindow):
         self.countdown_frame.setVisible(True)  # Timer always visible
         self.fullscreen_btn.setVisible(not self._is_fullscreen)  # Only in windowed mode
         self.controls_frame.setVisible(True)
-        self.setCursor(Qt.ArrowCursor)
+        if self._is_fullscreen:
+            self.setCursor(Qt.ArrowCursor)
+        else:
+            # Reason: keep resize cursor feedback on window edges while overlays are shown.
+            self._update_resize_cursor(self.mapFromGlobal(QCursor.pos()))
         self._hide_ui_timer.start(_UI_HIDE_AFTER_MS)
 
     def _hide_ui(self):
@@ -538,13 +569,34 @@ class SlideshowWindow(QMainWindow):
     def _apply_theme(self):
         """Apply theme-aware styles."""
         from core.settings import settings
+        from gui.theme_qss_utils import extract_qmainwindow_rule_from_theme
 
-        if settings.get("ui.theme") == "dark":
-            # Dark theme (countdown frame uses same as controls for visibility)
-            self.setStyleSheet("""
+        theme_key = settings.get("ui.theme", "dark")
+        qmw_rule = extract_qmainwindow_rule_from_theme(theme_key)
+        if not qmw_rule:
+            qmw_rule = """
                 QMainWindow {
                     background-color: #1e1e1e;
+                    color: #ffffff;
                 }
+            """
+        # Match main window chrome; transparent stack so gradient/solid shows in letterbox.
+        session_chrome = qmw_rule + """
+                QWidget#slideshowCentralWidget {
+                    background: transparent;
+                }
+                QWidget#sessionOverlayContainer {
+                    background: transparent;
+                }
+                QGraphicsView {
+                    background: transparent;
+                    border: none;
+                }
+            """
+
+        if theme_key == "dark":
+            # Dark theme (countdown frame uses same as controls for visibility)
+            self.setStyleSheet(session_chrome + """
                 QFrame {
                     background-color: rgba(30, 30, 30, 0.9);
                     border: none;
@@ -592,10 +644,7 @@ class SlideshowWindow(QMainWindow):
             """)
         else:
             # Light theme
-            self.setStyleSheet("""
-                QMainWindow {
-                    background-color: #ffffff;
-                }
+            self.setStyleSheet(session_chrome + """
                 QFrame {
                     background-color: rgba(255, 255, 255, 0.9);
                     border: none;
@@ -697,6 +746,7 @@ class SlideshowWindow(QMainWindow):
 
         # Window mode: FullScreen or Window always on top
         self._is_fullscreen = window_mode != "Window always on top"
+        self._chrome_bar.setVisible(not self._is_fullscreen)
         if self._is_fullscreen:
             self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
             self.fullscreen_btn.setVisible(False)
@@ -859,14 +909,9 @@ class SlideshowWindow(QMainWindow):
 
         self.thread_pool.start(worker)
 
-    def _on_image_loaded(self, image_id: str, pixmaps: tuple):
-        """Handle loaded image."""
-        fast_pixmap, high_quality_pixmap = pixmaps
-
-        # Store the high quality pixmap
-        self.current_pixmap = high_quality_pixmap
-
-        # Update display
+    def _on_image_loaded(self, image_id: str, pixmap: QPixmap):
+        """Handle loaded image (HQ pixmap from ``ImageLoaderWorker.finished``)."""
+        self.current_pixmap = pixmap
         self._update_image_display()
 
     def _on_image_error(self, image_id: str, error_msg: str):
@@ -1174,14 +1219,8 @@ class SlideshowWindow(QMainWindow):
     def _switch_to_window(self):
         """Leave fullscreen: switch to window always on top, maximized (title bar + close X visible)."""
         self._is_fullscreen = False
-        # Keep existing flags and ensure close/minimize/maximize buttons are available
-        self.setWindowFlags(
-            self.windowFlags()
-            | Qt.WindowStaysOnTopHint
-            | Qt.WindowCloseButtonHint
-            | Qt.WindowMinimizeButtonHint
-            | Qt.WindowMaximizeButtonHint
-        )
+        self._chrome_bar.setVisible(True)
+        self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
         self.setWindowState(Qt.WindowMaximized)
         self.show()
         self.fullscreen_btn.setVisible(True)
@@ -1190,11 +1229,18 @@ class SlideshowWindow(QMainWindow):
     def _switch_to_fullscreen(self):
         """Switch to fullscreen from windowed mode."""
         self._is_fullscreen = True
+        self._chrome_bar.setVisible(False)
         self.fullscreen_btn.setVisible(False)
         self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
         self.setWindowState(Qt.WindowFullScreen)
         self.show()
         self._fit_scene_in_view()
+
+    def changeEvent(self, event) -> None:
+        """Keep custom chrome controls synchronized with window state."""
+        super().changeEvent(event)
+        if hasattr(self, "_chrome_bar"):
+            self._chrome_bar.sync_window_state()
 
     def _sync_play_pause_button(self):
         """Set button to 'Play' (with icon) when paused, 'Pause' (with icon) when playing; blue when paused."""
@@ -1292,8 +1338,30 @@ class SlideshowWindow(QMainWindow):
 
     def eventFilter(self, obj, event):
         """Catch Space on graphics view; show UI on any key, mouse move, or mouse click."""
+        if not self._is_fullscreen and event.type() == QEvent.MouseMove:
+            global_pos = (
+                event.globalPosition().toPoint()
+                if hasattr(event, "globalPosition")
+                else None
+            )
+            if global_pos is not None:
+                self._update_resize_cursor(self.mapFromGlobal(global_pos))
         # Viewport receives mouse events (QGraphicsView delegates to viewport())
         if obj == self.graphics_view.viewport():
+            if (
+                not self._is_fullscreen
+                and event.type() == QEvent.MouseButtonPress
+                and event.button() == Qt.LeftButton
+            ):
+                gp = (
+                    event.globalPosition().toPoint()
+                    if hasattr(event, "globalPosition")
+                    else None
+                )
+                if gp is not None:
+                    edges = self._get_resize_edges_at_pos(self.mapFromGlobal(gp))
+                    if self._try_start_system_resize(edges):
+                        return True
             if event.type() in (
                 QEvent.MouseMove,
                 QEvent.MouseButtonPress,
@@ -1302,6 +1370,20 @@ class SlideshowWindow(QMainWindow):
                 self._show_ui_and_restart_timer()
                 return False
         if obj == self.graphics_view:
+            if (
+                not self._is_fullscreen
+                and event.type() == QEvent.MouseButtonPress
+                and event.button() == Qt.LeftButton
+            ):
+                gp = (
+                    event.globalPosition().toPoint()
+                    if hasattr(event, "globalPosition")
+                    else None
+                )
+                if gp is not None:
+                    edges = self._get_resize_edges_at_pos(self.mapFromGlobal(gp))
+                    if self._try_start_system_resize(edges):
+                        return True
             if event.type() in (
                 QEvent.MouseMove,
                 QEvent.MouseButtonPress,
@@ -1322,6 +1404,20 @@ class SlideshowWindow(QMainWindow):
             QEvent.MouseButtonPress,
             QEvent.MouseButtonRelease,
         ):
+            if (
+                not self._is_fullscreen
+                and event.type() == QEvent.MouseButtonPress
+                and event.button() == Qt.LeftButton
+            ):
+                gp = (
+                    event.globalPosition().toPoint()
+                    if hasattr(event, "globalPosition")
+                    else None
+                )
+                if gp is not None:
+                    edges = self._get_resize_edges_at_pos(self.mapFromGlobal(gp))
+                    if self._try_start_system_resize(edges):
+                        return True
             self._show_ui_and_restart_timer()
             return False
         if obj in (
@@ -1333,9 +1429,65 @@ class SlideshowWindow(QMainWindow):
             QEvent.MouseButtonPress,
             QEvent.MouseButtonRelease,
         ):
+            if (
+                not self._is_fullscreen
+                and event.type() == QEvent.MouseButtonPress
+                and event.button() == Qt.LeftButton
+            ):
+                gp = (
+                    event.globalPosition().toPoint()
+                    if hasattr(event, "globalPosition")
+                    else None
+                )
+                if gp is not None:
+                    edges = self._get_resize_edges_at_pos(self.mapFromGlobal(gp))
+                    if self._try_start_system_resize(edges):
+                        return True
             self._show_ui_and_restart_timer()
             return False
         return super().eventFilter(obj, event)
+
+    def _get_resize_edges_at_pos(self, pos: QPoint) -> Qt.Edges:
+        """Return edge mask for frameless resize hit-test in windowed mode."""
+        if self._is_fullscreen or self.isMaximized():
+            return Qt.Edges()
+        rect = self.rect()
+        margin = self._resize_margin_px
+        edges = Qt.Edges()
+        if pos.x() <= margin:
+            edges |= Qt.LeftEdge
+        elif pos.x() >= rect.width() - margin:
+            edges |= Qt.RightEdge
+        if pos.y() <= margin:
+            edges |= Qt.TopEdge
+        elif pos.y() >= rect.height() - margin:
+            edges |= Qt.BottomEdge
+        return edges
+
+    def _update_resize_cursor(self, pos: QPoint) -> None:
+        """Show resize cursor when hovering window edges in windowed frameless mode."""
+        if self._is_fullscreen:
+            return
+        edges = self._get_resize_edges_at_pos(pos)
+        if edges in (Qt.LeftEdge, Qt.RightEdge):
+            self.setCursor(Qt.SizeHorCursor)
+        elif edges in (Qt.TopEdge, Qt.BottomEdge):
+            self.setCursor(Qt.SizeVerCursor)
+        elif edges in (Qt.TopEdge | Qt.LeftEdge, Qt.BottomEdge | Qt.RightEdge):
+            self.setCursor(Qt.SizeFDiagCursor)
+        elif edges in (Qt.TopEdge | Qt.RightEdge, Qt.BottomEdge | Qt.LeftEdge):
+            self.setCursor(Qt.SizeBDiagCursor)
+        else:
+            self.setCursor(Qt.ArrowCursor)
+
+    def _try_start_system_resize(self, edges: Qt.Edges) -> bool:
+        """Delegate frameless resize to native window system when possible."""
+        if not edges:
+            return False
+        handle = self.windowHandle()
+        if handle is None or not hasattr(handle, "startSystemResize"):
+            return False
+        return bool(handle.startSystemResize(edges))
 
     def keyPressEvent(self, event: QKeyEvent):
         """Catch Space at window level; show UI on any key."""
@@ -1346,6 +1498,31 @@ class SlideshowWindow(QMainWindow):
             event.accept()
             return
         super().keyPressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        """Ensure edge/corner resize cursor is shown consistently in windowed mode."""
+        if not self._is_fullscreen:
+            pos = (
+                event.position().toPoint()
+                if hasattr(event, "position")
+                else event.pos()
+            )
+            self._update_resize_cursor(pos)
+        super().mouseMoveEvent(event)
+
+    def mousePressEvent(self, event):
+        """Start native system resize when pressing window borders in windowed mode."""
+        if not self._is_fullscreen and event.button() == Qt.LeftButton:
+            pos = (
+                event.position().toPoint()
+                if hasattr(event, "position")
+                else event.pos()
+            )
+            edges = self._get_resize_edges_at_pos(pos)
+            if self._try_start_system_resize(edges):
+                event.accept()
+                return
+        super().mousePressEvent(event)
 
     def resizeEvent(self, event):
         """Handle resize events; container.resized will trigger re-scale and display."""

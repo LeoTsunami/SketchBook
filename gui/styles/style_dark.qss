@@ -122,21 +122,21 @@ QWidget#content {
     background-color: transparent;
 }
 QFrame#ImageThumbnail {
-    background-color: #2d2d2d;
+    background-color: transparent;
     border-radius: 4px;
-    border: 1px solid #3d3d3d;
+    border: 1px solid rgba(255, 255, 255, 0.12);
 }
 QFrame#ImageThumbnail:hover {
-    background-color: #353535;
-    border: 1px solid #4d4d4d;
+    background-color: transparent;
+    border: 1px solid rgba(255, 255, 255, 0.24);
 }
 QFrame#ImageThumbnail[selected="true"] {
-    background-color: #4b6eaf;
-    border: 2px solid #5d7bc0;
+    background-color: transparent;
+    border: 2px solid #5d9dff;
 }
 QFrame#ImageThumbnail[selected="true"]:hover {
-    background-color: #5d7bc0;
-    border: 2px solid #6d8bd0;
+    background-color: transparent;
+    border: 2px solid #8ab9ff;
 }
 QFrame#ImageThumbnail[dragOver="true"] {
     background-color: #5d7bc0;

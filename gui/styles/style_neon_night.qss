@@ -61,12 +61,16 @@ QScrollArea {
     border: none;
 }
 QFrame#ImageThumbnail {
-    background-color: #1a2242;
+    background-color: transparent;
     border-radius: 6px;
-    border: 1px solid #31427c;
+    border: 1px solid rgba(126, 156, 255, 0.34);
+}
+QFrame#ImageThumbnail:hover {
+    background-color: transparent;
+    border: 1px solid rgba(174, 201, 255, 0.55);
 }
 QFrame#ImageThumbnail[selected="true"] {
-    background-color: #2d56d1;
+    background-color: transparent;
     border: 2px solid #8eb5ff;
 }
 QFrame#TagDropZone {
