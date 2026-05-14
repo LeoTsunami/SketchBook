@@ -134,6 +134,26 @@ TAG_LIBRARY_MIME = "application/x-sketchbook-tag-library"
 TAG_LIBRARY_MULTI_MIME = "application/x-sketchbook-tag-library-multi"
 
 
+def mime_data_looks_like_tag_library_drag(mime: Any) -> bool:
+    """
+    Return True if mime data likely comes from a tag-library drag (assign or reparent).
+
+    Args:
+        mime: QMimeData from a drag event, or None.
+
+    Returns:
+        bool: True if the drag should reopen the collapsed tag rail when hovering it.
+    """
+    if mime is None:
+        return False
+    try:
+        if mime.hasFormat(TAG_LIBRARY_MIME) or mime.hasFormat(TAG_LIBRARY_MULTI_MIME):
+            return True
+        return bool(mime.hasText() and mime.text().strip())
+    except (AttributeError, TypeError):
+        return False
+
+
 class SessionTraceButton(QPushButton):
     """Glass-like button with animated border trace around its contour."""
 
@@ -310,7 +330,15 @@ class DraggableTagButton(QPushButton):
             painter.end()
             drag.setPixmap(pixmap)
 
-            drag.exec_(Qt.MoveAction)
+            host = self.window()
+            if hasattr(host, "_start_tag_panel_drag_outside_poll"):
+                host._start_tag_panel_drag_outside_poll()
+            try:
+                drag.exec_(Qt.MoveAction)
+            finally:
+                if hasattr(host, "_stop_tag_panel_drag_outside_poll"):
+                    host._stop_tag_panel_drag_outside_poll()
+
             return
 
         super().mouseMoveEvent(event)
@@ -405,6 +433,9 @@ class MainWindow(QMainWindow):
         self._tag_drag_in_progress: bool = False
         self._tag_drag_scroll_timer: Optional[QTimer] = (
             None  # auto-scroll tag library during drag
+        )
+        self._tag_panel_drag_outside_poll_timer: Optional[QTimer] = (
+            None  # cursor poll: QDrag often skips Leave on the overlay (Windows)
         )
         self._tag_grid_hover_expand_timer: Optional[QTimer] = (
             None  # expand category/tag after 0.5s hover during drag
@@ -1352,7 +1383,6 @@ class MainWindow(QMainWindow):
             y = max(margin, viewport.height() - hint.height() - margin)
             self.session_settings_btn.setGeometry(x, y, hint.width(), hint.height())
             self.session_settings_btn.raise_()
-
 
     def _get_default_tags_from_path(self, default_tags_path: Path) -> Set[str]:
         """
@@ -2387,6 +2417,45 @@ class MainWindow(QMainWindow):
         buttons = self._subcategory_buttons.get(category, {})
         return buttons.get(tag_name)
 
+    def _start_tag_panel_drag_outside_poll(self) -> None:
+        """
+        Poll the cursor while a tag-library QDrag runs.
+
+        Qt often omits Leave on the overlay during native DnD (especially on Windows),
+        so the deferred leave timer alone can miss a fold when the pointer is already
+        outside the panel.
+        """
+        if not hasattr(self, "_tag_panel_overlay"):
+            return
+        if self._tag_panel_drag_outside_poll_timer is None:
+            self._tag_panel_drag_outside_poll_timer = QTimer(self)
+            self._tag_panel_drag_outside_poll_timer.setInterval(35)
+            self._tag_panel_drag_outside_poll_timer.timeout.connect(
+                self._on_tag_panel_drag_outside_poll_tick
+            )
+        self._tag_panel_drag_outside_poll_timer.start()
+
+    def _stop_tag_panel_drag_outside_poll(self) -> None:
+        """Stop cursor polling after tag drag ends."""
+        if self._tag_panel_drag_outside_poll_timer is not None:
+            self._tag_panel_drag_outside_poll_timer.stop()
+
+    def _on_tag_panel_drag_outside_poll_tick(self) -> None:
+        """Hide the tag panel when the cursor is outside it during an active library drag."""
+        ov = getattr(self, "_tag_panel_overlay", None)
+        if ov is None:
+            self._stop_tag_panel_drag_outside_poll()
+            return
+        if not ov.is_panel_visible():
+            self._stop_tag_panel_drag_outside_poll()
+            return
+        if ov.is_dismiss_locked():
+            return
+        if ov.panel_global_rect().contains(QCursor.pos()):
+            return
+        ov.hide_animated()
+        self._stop_tag_panel_drag_outside_poll()
+
     def _on_tag_drag_scroll_tick(self) -> None:
         """During tag drag: scroll tag library when cursor is near top or bottom edge."""
         if not self._tag_drag_in_progress:
@@ -2494,6 +2563,7 @@ class MainWindow(QMainWindow):
         drag.setHotSpot(hot_spot)
         # Auto-scroll tag library when cursor near top/bottom during drag (timer runs in nested event loop)
         self._tag_drag_in_progress = True
+        self._start_tag_panel_drag_outside_poll()
         if self._tag_drag_scroll_timer is None:
             self._tag_drag_scroll_timer = QTimer(self)
             self._tag_drag_scroll_timer.timeout.connect(self._on_tag_drag_scroll_tick)
@@ -2502,6 +2572,7 @@ class MainWindow(QMainWindow):
             result = drag.exec_(Qt.MoveAction)
         finally:
             self._tag_drag_in_progress = False
+            self._stop_tag_panel_drag_outside_poll()
             if self._tag_drag_scroll_timer is not None:
                 self._tag_drag_scroll_timer.stop()
         # Restore all removed tags to their original place if drop was cancelled or on empty/image (grid not reloaded)
@@ -2629,11 +2700,40 @@ class MainWindow(QMainWindow):
             and obj == self.tag_filters_floating_btn
             and event.type() == _enter
             and hasattr(self, "_tag_panel_overlay")
-            and not self._tag_panel_overlay.isVisible()
+            and not self._tag_panel_overlay.is_panel_visible()
         ):
             self._tag_panel_overlay.show_animated()
             self._left_panel_expanded = True
             QTimer.singleShot(0, self._position_floating_grid_overlays)
+            return False
+
+        try:
+            _drag_enter = QEvent.Type.DragEnter
+            _drag_move = QEvent.Type.DragMove
+        except AttributeError:
+            _drag_enter = QEvent.DragEnter
+            _drag_move = QEvent.DragMove
+
+        if (
+            hasattr(self, "image_grid")
+            and obj == self.image_grid.viewport()
+            and event.type() in (_drag_enter, _drag_move)
+        ):
+            md = event.mimeData()
+            if mime_data_looks_like_tag_library_drag(md):
+                btn = getattr(self, "tag_filters_floating_btn", None)
+                ov = getattr(self, "_tag_panel_overlay", None)
+                if (
+                    btn is not None
+                    and ov is not None
+                    and btn.isVisible()
+                    and hasattr(event, "pos")
+                    and btn.geometry().contains(event.pos())
+                    and not ov.is_panel_visible()
+                ):
+                    ov.show_animated()
+                    self._left_panel_expanded = True
+                    QTimer.singleShot(0, self._position_floating_grid_overlays)
             return False
 
         # Keep floating grid overlays (Tags filters, Start session) anchored on viewport resize.
@@ -2748,82 +2848,96 @@ class MainWindow(QMainWindow):
         user_tags = self._get_user_tags()
         if tag_text not in user_tags:
             return
-        menu = QMenu(self)
-        rename_action = menu.addAction("Rename...")
-        change_icon_action = menu.addAction("Change icon...")
-        parent_to_tag_action = menu.addAction("Parent to tag...")
-        action = menu.exec_(QCursor.pos())
-        if action == parent_to_tag_action:
-            tags_to_parent = (
-                set(self._tag_library_selection)
-                if tag_text in self._tag_library_selection
-                else {tag_text}
-            )
-            tags_to_parent = {t for t in tags_to_parent if t in user_tags}
-            if tags_to_parent:
-                self._enter_parent_select_mode(tags_to_parent)
-            return
-        if action == change_icon_action:
-            cfg = self._user_tags_config
-            current = cfg.get("icons", {}).get(tag_text)
-            dialog = IconPickerDialog(
-                self,
-                current_icon=current,
-                on_icon_changed=lambda filename: self._on_icon_preview(
-                    tag_text, filename
-                ),
-            )
-            result = dialog.exec_()
-            # Clear preview override so _update_tag_button_icon uses config again
-            self._icon_preview_override.pop(tag_text, None)
-            if result == QDialog.DialogCode.Accepted:
-                icons = dict(cfg.get("icons", {}))
-                chosen = dialog.get_icon_filename()
-                if chosen:
-                    icons[tag_text] = chosen
-                else:
-                    icons.pop(tag_text, None)
-                user_tags_config.save_config(
-                    cfg.get("placements", {}),
-                    icons,
-                    cfg.get("registered_only"),
+        overlay = getattr(self, "_tag_panel_overlay", None)
+        if overlay is not None:
+            overlay.lock_dismiss(True)
+        try:
+            menu = QMenu(self)
+            rename_action = menu.addAction("Rename...")
+            change_icon_action = menu.addAction("Change icon...")
+            parent_to_tag_action = menu.addAction("Parent to tag...")
+            action = menu.exec_(QCursor.pos())
+            if action == parent_to_tag_action:
+                tags_to_parent = (
+                    set(self._tag_library_selection)
+                    if tag_text in self._tag_library_selection
+                    else {tag_text}
                 )
-                self._user_tags_config = user_tags_config.load_config()
-            # Restore or apply final icon from config (revert on Cancel, keep on OK)
-            self._update_tag_button_icon(tag_text)
-            return
-        if action == rename_action:
-            new_name, ok = QInputDialog.getText(
-                self, "Rename tag", "New name:", text=tag_text
-            )
-            if ok and new_name and new_name.strip() and new_name.strip() != tag_text:
-                new_name = new_name.strip()
-                if self._tag_name_already_used(new_name, exclude=tag_text):
-                    QMessageBox.warning(
+                tags_to_parent = {t for t in tags_to_parent if t in user_tags}
+                if tags_to_parent:
+                    self._enter_parent_select_mode(tags_to_parent)
+                return
+            if action == change_icon_action:
+                cfg = self._user_tags_config
+                current = cfg.get("icons", {}).get(tag_text)
+                dialog = IconPickerDialog(
+                    self,
+                    current_icon=current,
+                    on_icon_changed=lambda filename: self._on_icon_preview(
+                        tag_text, filename
+                    ),
+                )
+                result = dialog.exec_()
+                # Clear preview override so _update_tag_button_icon uses config again
+                self._icon_preview_override.pop(tag_text, None)
+                if result == QDialog.DialogCode.Accepted:
+                    icons = dict(cfg.get("icons", {}))
+                    chosen = dialog.get_icon_filename()
+                    if chosen:
+                        icons[tag_text] = chosen
+                    else:
+                        icons.pop(tag_text, None)
+                    user_tags_config.save_config(
+                        cfg.get("placements", {}),
+                        icons,
+                        cfg.get("registered_only"),
+                    )
+                    self._user_tags_config = user_tags_config.load_config()
+                # Restore or apply final icon from config (revert on Cancel, keep on OK)
+                self._update_tag_button_icon(tag_text)
+                return
+            if action == rename_action:
+                new_name, ok = QInputDialog.getText(
+                    self, "Rename tag", "New name:", text=tag_text
+                )
+                if (
+                    ok
+                    and new_name
+                    and new_name.strip()
+                    and new_name.strip() != tag_text
+                ):
+                    new_name = new_name.strip()
+                    if self._tag_name_already_used(new_name, exclude=tag_text):
+                        QMessageBox.warning(
+                            self,
+                            "Rename tag",
+                            "A tag with this name already exists. Tag names must be unique (case-insensitive).",
+                        )
+                        return
+                    n = self.image_manager.db.rename_tag(tag_text, new_name)
+                    cfg = self._user_tags_config
+                    placements = cfg.get("placements", {})
+                    icons = cfg.get("icons", {})
+                    user_tags_config.rename_in_config(
+                        placements, icons, tag_text, new_name
+                    )
+                    ro = cfg.get("registered_only", [])
+                    if tag_text in ro:
+                        ro = [new_name if t == tag_text else t for t in ro]
+                    user_tags_config.save_config(placements, icons, ro)
+                    self._user_tags_config = user_tags_config.load_config()
+                    self._load_tags_into_grid()
+                    self._update_tag_search_completer()
+                    self._apply_category_filters()
+                    self._sync_tag_grid_state()
+                    QMessageBox.information(
                         self,
                         "Rename tag",
-                        "A tag with this name already exists. Tag names must be unique (case-insensitive).",
+                        f"Tag renamed on {n} image(s).",
                     )
-                    return
-                n = self.image_manager.db.rename_tag(tag_text, new_name)
-                cfg = self._user_tags_config
-                placements = cfg.get("placements", {})
-                icons = cfg.get("icons", {})
-                user_tags_config.rename_in_config(placements, icons, tag_text, new_name)
-                ro = cfg.get("registered_only", [])
-                if tag_text in ro:
-                    ro = [new_name if t == tag_text else t for t in ro]
-                user_tags_config.save_config(placements, icons, ro)
-                self._user_tags_config = user_tags_config.load_config()
-                self._load_tags_into_grid()
-                self._update_tag_search_completer()
-                self._apply_category_filters()
-                self._sync_tag_grid_state()
-                QMessageBox.information(
-                    self,
-                    "Rename tag",
-                    f"Tag renamed on {n} image(s).",
-                )
+        finally:
+            if overlay is not None:
+                overlay.lock_dismiss(False)
 
     def _enter_parent_select_mode(self, tags_to_parent: Set[str]) -> None:
         """Enter 'Parent to tag...' mode: gray given tags, show bar to select parent, OK/Cancel."""
@@ -3112,6 +3226,18 @@ class MainWindow(QMainWindow):
         if tag_name not in registered:
             registered.append(tag_name)
         user_tags_config.save_config(placements, icons, registered)
+        self._user_tags_config = user_tags_config.load_config()
+        self._load_tags_into_grid()
+        self._update_tag_search_completer()
+        self._sync_tag_grid_state()
+
+    def _update_available_tags(self) -> None:
+        """
+        Rebuild the tag library from the database and user tag config.
+
+        Call after imports or other bulk tag changes so new tags appear in the
+        library and the search completer stays in sync.
+        """
         self._user_tags_config = user_tags_config.load_config()
         self._load_tags_into_grid()
         self._update_tag_search_completer()
@@ -3804,6 +3930,9 @@ class MainWindow(QMainWindow):
             )
             return
 
+        # Detect root directories for the subfolder-as-tags option
+        import_root_dirs = [p for p in paths if p.is_dir()]
+
         # Show import dialog
         from gui.import_dialog import ImportDialog
 
@@ -3812,6 +3941,7 @@ class MainWindow(QMainWindow):
             image_manager=self.image_manager,
             image_paths=image_paths,
             first_image_path=first_image_path,
+            import_root_dirs=import_root_dirs if import_root_dirs else None,
         )
 
         if dialog.exec_() != QDialog.Accepted:
@@ -3819,6 +3949,8 @@ class MainWindow(QMainWindow):
 
         # Get selected tags
         selected_tags = dialog.get_selected_tags()
+        use_subfolder_tags = dialog.get_use_subfolder_tags()
+        subfolder_split_separator = dialog.get_subfolder_split_separator()
 
         # Refresh tag library so any new tags added in the import dialog appear
         self._user_tags_config = user_tags_config.load_config()
@@ -3830,7 +3962,13 @@ class MainWindow(QMainWindow):
         progress_bar = self._create_status_progress_bar()
 
         # Create and configure worker with tags
-        worker = ImageImportWorker(self.image_manager, image_paths, selected_tags)
+        worker = ImageImportWorker(
+            self.image_manager,
+            image_paths,
+            selected_tags,
+            subfolder_tag_roots=import_root_dirs if use_subfolder_tags else None,
+            subfolder_split_separator=subfolder_split_separator,
+        )
 
         # Connect signals with queued connections to ensure thread safety
         worker.signals.progress.connect(
@@ -4064,7 +4202,9 @@ class MainWindow(QMainWindow):
             self._cleanup_progress_bars()
             # Refresh grid once at end of import
             self._apply_category_filters()
-            self._update_available_tags()
+            if successful > 0:
+                # New tags (manual, subfolder, etc.) are on DB rows — rebuild tag library + completer
+                self._update_available_tags()
 
         except Exception as e:
             print(f"Error in import finished handler: {e}")

@@ -1,6 +1,7 @@
 """
 Dialog for selecting tags before importing images.
 """
+
 from pathlib import Path
 from typing import List, Set, Dict, Optional, Any
 from qtpy.QtWidgets import (
@@ -15,6 +16,9 @@ from qtpy.QtWidgets import (
     QGridLayout,
     QFrame,
     QSizePolicy,
+    QCheckBox,
+    QButtonGroup,
+    QRadioButton,
 )
 from qtpy.QtCore import Qt, QSize, QPoint, QEvent, QObject
 from qtpy.QtGui import QPixmap, QIcon, QImage, QDrag, QPainter
@@ -93,7 +97,12 @@ class ImportTagGridDropFilter(QObject):
         if event.type() == _drag_move:
             if event.mimeData().hasFormat(TAG_LIBRARY_MIME):
                 event.acceptProposedAction()
-                pos = event.position().toPoint() if hasattr(event, "position") and hasattr(event.position(), "toPoint") else event.pos()
+                pos = (
+                    event.position().toPoint()
+                    if hasattr(event, "position")
+                    and hasattr(event.position(), "toPoint")
+                    else event.pos()
+                )
                 target = self._dialog._get_import_drop_target_at(pos)
                 self._dialog._set_import_drop_highlight(target)
             return True
@@ -108,30 +117,36 @@ class ImportTagGridDropFilter(QObject):
 
 class ImportDialog(QDialog):
     """Dialog for selecting tags before importing images."""
-    
-    def __init__(self, parent=None, image_manager: ImageManager = None, image_paths: List[Path] = None, first_image_path: Optional[Path] = None):
+
+    def __init__(
+        self,
+        parent=None,
+        image_manager: ImageManager = None,
+        image_paths: List[Path] = None,
+        first_image_path: Optional[Path] = None,
+        import_root_dirs: Optional[List[Path]] = None,
+    ):
         """
         Initialize the import dialog.
-        
+
         Args:
             parent: Parent widget
             image_manager: ImageManager instance
             image_paths: List of image paths that will be imported
             first_image_path: Path to the first image for preview
+            import_root_dirs: Root directories of the import (enables subfolder-as-tags option)
         """
         super().__init__(parent)
         self.setWindowTitle("Import Images")
         self.setMinimumWidth(800)
         self.setMinimumHeight(600)
-        
-        # Apply global stylesheet (inherited from parent application)
-        # The dialog will automatically inherit the global QSS applied to QApplication
-        
+
         self.image_manager = image_manager
         self.image_paths = image_paths or []
         self.first_image_path = first_image_path
+        self.import_root_dirs = import_root_dirs or []
         self.selected_tags: Set[str] = set()
-        
+
         # Tag buttons storage (same structure as main window tag library)
         self._category_buttons: Dict[str, QPushButton] = {}
         self._subcategory_buttons: Dict[str, Dict[str, QPushButton]] = {}
@@ -145,35 +160,97 @@ class ImportDialog(QDialog):
         self._import_drop_highlight_widget: Optional[QWidget] = None
 
         self._setup_ui()
-    
+
     def _setup_ui(self):
         """Set up the UI layout."""
         layout = QVBoxLayout(self)
         layout.setSpacing(15)
         layout.setContentsMargins(20, 20, 20, 20)
-        
+
         # Header message
-        header_label = QLabel(f"You're about to import {len(self.image_paths)} image{'s' if len(self.image_paths) != 1 else ''}.")
-        header_label.setStyleSheet("font-size: 16px; font-weight: bold; padding: 10px 0px;")
+        header_label = QLabel(
+            f"You're about to import {len(self.image_paths)} image{'s' if len(self.image_paths) != 1 else ''}."
+        )
+        header_label.setStyleSheet(
+            "font-size: 16px; font-weight: bold; padding: 10px 0px;"
+        )
         layout.addWidget(header_label)
-        
+
         subtitle_label = QLabel("Choose associated tags in the library")
-        subtitle_label.setStyleSheet("font-size: 12px; color: #888; padding-bottom: 10px;")
+        subtitle_label.setStyleSheet(
+            "font-size: 12px; color: #888; padding-bottom: 10px;"
+        )
         layout.addWidget(subtitle_label)
-        
+
+        # Subfolder-as-tags option (only when importing from a directory)
+        self._subfolder_tags_checkbox = QCheckBox("Use subfolder names as tags")
+        self._subfolder_tags_checkbox.setToolTip(
+            "Automatically tag each image with the name of its parent subfolder(s)."
+        )
+        self._subfolder_tags_checkbox.setStyleSheet("font-size: 12px; padding: 4px 0;")
+        if self.import_root_dirs:
+            layout.addWidget(self._subfolder_tags_checkbox)
+            self._subfolder_options_widget = QWidget()
+            sub_opts = QVBoxLayout(self._subfolder_options_widget)
+            sub_opts.setContentsMargins(24, 0, 0, 0)
+            sub_opts.setSpacing(6)
+            self._subfolder_split_checkbox = QCheckBox(
+                "Split each folder name into several tags using:"
+            )
+            self._subfolder_split_checkbox.setStyleSheet(
+                "font-size: 12px; color: #aaa;"
+            )
+            self._subfolder_split_checkbox.setToolTip(
+                "Each path segment (folder name) is split on the chosen character; "
+                "each piece becomes one tag (capitalized)."
+            )
+            self._subfolder_split_checkbox.toggled.connect(
+                self._on_subfolder_split_toggled
+            )
+            sub_opts.addWidget(self._subfolder_split_checkbox)
+            sep_row = QHBoxLayout()
+            sep_row.setSpacing(10)
+            sep_label = QLabel("Separator:")
+            sep_label.setStyleSheet("font-size: 12px; color: #888;")
+            sep_row.addWidget(sep_label)
+            self._subfolder_sep_group = QButtonGroup(self)
+            sep_specs = [
+                ("- (hyphen)", "-"),
+                ("_ (underscore)", "_"),
+                ("Space", " "),
+                (". (dot)", "."),
+            ]
+            for i, (label, value) in enumerate(sep_specs):
+                rb = QRadioButton(label)
+                rb.setProperty("sep_value", value)
+                rb.setStyleSheet("font-size: 12px;")
+                self._subfolder_sep_group.addButton(rb, i)
+                sep_row.addWidget(rb)
+            sep_row.addStretch()
+            self._subfolder_sep_group.button(1).setChecked(True)
+            sub_opts.addLayout(sep_row)
+            layout.addWidget(self._subfolder_options_widget)
+            self._subfolder_options_widget.hide()
+            self._subfolder_tags_checkbox.toggled.connect(
+                self._on_subfolder_main_toggled
+            )
+            self._on_subfolder_split_toggled(False)
+
         # Main content area with splitter-like layout
         content_layout = QHBoxLayout()
         content_layout.setSpacing(15)
-        
+
         # Left side: Image preview
         preview_panel = QWidget()
         preview_layout = QVBoxLayout(preview_panel)
         preview_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         preview_label = QLabel("Preview")
-        preview_label.setStyleSheet("font-size: 12px; font-weight: bold; padding-bottom: 5px;")
+        preview_label.setStyleSheet(
+            "font-size: 12px; font-weight: bold; padding-bottom: 5px;"
+        )
         preview_layout.addWidget(preview_label)
-        
+
         self.preview_label = QLabel()
         self.preview_label.setMinimumSize(200, 200)
         self.preview_label.setMaximumSize(300, 300)
@@ -188,25 +265,29 @@ class ImportDialog(QDialog):
         self._load_preview_image()
         preview_layout.addWidget(self.preview_label)
         preview_layout.addStretch()
-        
+
         content_layout.addWidget(preview_panel)
-        
+
         # Right side: Tags library
         tags_panel = QWidget()
         tags_layout = QVBoxLayout(tags_panel)
         tags_layout.setContentsMargins(0, 0, 0, 0)
-        
+
         tags_title = QLabel("Tags Library")
-        tags_title.setStyleSheet("font-size: 12px; font-weight: bold; padding-bottom: 5px;")
+        tags_title.setStyleSheet(
+            "font-size: 12px; font-weight: bold; padding-bottom: 5px;"
+        )
         tags_layout.addWidget(tags_title)
-        
+
         # Add user tag (Miscellaneous) - for this import only; can later be moved to default categories
         add_user_tag_row = QHBoxLayout()
         add_user_tag_row.setSpacing(8)
         add_user_tag_label = QLabel("Add user tag (Miscellaneous):")
         add_user_tag_label.setStyleSheet("font-size: 11px; color: #888;")
         self._add_user_tag_input = QLineEdit()
-        self._add_user_tag_input.setPlaceholderText("Type a tag name and press Add or Enter")
+        self._add_user_tag_input.setPlaceholderText(
+            "Type a tag name and press Add or Enter"
+        )
         self._add_user_tag_input.setMaximumWidth(280)
         self._add_user_tag_input.returnPressed.connect(self._on_add_user_tag_clicked)
         add_user_tag_btn = QPushButton("Add")
@@ -222,37 +303,37 @@ class ImportDialog(QDialog):
         self._added_user_tags_layout.setContentsMargins(0, 4, 0, 4)
         self._added_user_tags_layout.setSpacing(6)
         tags_layout.addWidget(self._added_user_tags_widget)
-        
+
         # Scrollable tags grid
         self.tags_scroll_area = QScrollArea()
         self.tags_scroll_area.setWidgetResizable(True)
         self.tags_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.tags_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.tags_scroll_area.setFrameShape(QFrame.NoFrame)
-        
+
         self.tags_container = QWidget()
         self.tags_grid_layout = QGridLayout(self.tags_container)
         self.tags_grid_layout.setContentsMargins(0, 0, 0, 0)
         self.tags_grid_layout.setSpacing(10)
         self.tags_grid_layout.setAlignment(Qt.AlignTop)
-        
+
         self._load_tags_into_grid()
 
         self.tags_scroll_area.setWidget(self.tags_container)
         self.tags_container.installEventFilter(ImportTagGridDropFilter(self))
         tags_layout.addWidget(self.tags_scroll_area)
-        
+
         content_layout.addWidget(tags_panel, 2)  # Give tags panel more space
-        
+
         layout.addLayout(content_layout)
-        
+
         # Buttons
         button_layout = QHBoxLayout()
         button_layout.addStretch()
-        
+
         cancel_button = QPushButton("Cancel")
         cancel_button.clicked.connect(self.reject)
-        
+
         import_button = QPushButton("Import")
         import_button.clicked.connect(self._on_import_clicked)
         import_button.setStyleSheet("""
@@ -266,12 +347,36 @@ class ImportDialog(QDialog):
                 background-color: #45a049;
             }
         """)
-        
+
         button_layout.addWidget(cancel_button)
         button_layout.addWidget(import_button)
-        
+
         layout.addLayout(button_layout)
-    
+
+    def _on_subfolder_main_toggled(self, checked: bool) -> None:
+        """
+        Show or hide split/separator options when 'Use subfolder names as tags' toggles.
+
+        Args:
+            checked: New state of the subfolder-as-tags checkbox.
+        """
+        w = getattr(self, "_subfolder_options_widget", None)
+        if w is not None:
+            w.setVisible(bool(checked))
+
+    def _on_subfolder_split_toggled(self, checked: bool) -> None:
+        """
+        Enable separator radio buttons only when split is enabled.
+
+        Args:
+            checked: New state of the split checkbox.
+        """
+        group = getattr(self, "_subfolder_sep_group", None)
+        if group is None:
+            return
+        for btn in group.buttons():
+            btn.setEnabled(bool(checked))
+
     def _build_subtags_for_category(
         self,
         category: str,
@@ -312,7 +417,8 @@ class ImportDialog(QDialog):
         """Return list of tags whose placement has parent_tag = tag (sub-category children)."""
         placements = self._user_tags_config.get("placements", {})
         return [
-            t for t, pl in placements.items()
+            t
+            for t, pl in placements.items()
             if isinstance(pl, dict) and pl.get("parent_tag") == tag
         ]
 
@@ -321,27 +427,27 @@ class ImportDialog(QDialog):
         if not self.first_image_path or not self.first_image_path.exists():
             self.preview_label.setText("No preview available")
             return
-        
+
         try:
             # Load image with PIL
             with Image.open(self.first_image_path) as img:
                 # Convert to RGB if necessary
                 if img.mode != "RGB":
                     img = img.convert("RGB")
-                
+
                 # Resize to fit preview (max 300x300)
                 max_size = 300
                 img.thumbnail((max_size, max_size), Image.Resampling.LANCZOS)
-                
+
                 # Convert PIL Image to QPixmap
                 img_bytes = img.tobytes("raw", "RGB")
                 q_image = QImage(img_bytes, img.width, img.height, QImage.Format_RGB888)
                 pixmap = QPixmap.fromImage(q_image)
-                
+
                 self.preview_label.setPixmap(pixmap)
         except Exception as e:
             self.preview_label.setText(f"Preview error:\n{str(e)}")
-    
+
     def _load_tags_into_grid(self):
         """Load tags from JSON and user config into the grid, same structure as main tag library."""
         max_cols = 3
@@ -358,7 +464,9 @@ class ImportDialog(QDialog):
             default_set = self._get_default_tags()
             user_tags_list = sorted(all_tags - default_set)
         user_tags_list = list(
-            dict.fromkeys(user_tags_list + self._user_tags_config.get("registered_only", []))
+            dict.fromkeys(
+                user_tags_list + self._user_tags_config.get("registered_only", [])
+            )
         )
 
         default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
@@ -366,6 +474,7 @@ class ImportDialog(QDialog):
             return
         try:
             import json
+
             with open(default_tags_path, "r", encoding="utf-8") as f:
                 default_tags = json.load(f)
 
@@ -403,7 +512,9 @@ class ImportDialog(QDialog):
                 for tag in unique_subtags:
                     tag_button = self._build_tag_button(tag, is_user_tag=False)
                     tag_button.setCheckable(True)
-                    tag_button.clicked.connect(lambda _=False, name=tag: self._on_tag_button_clicked(name))
+                    tag_button.clicked.connect(
+                        lambda _=False, name=tag: self._on_tag_button_clicked(name)
+                    )
                     tag_button.setProperty("tagGridRole", "tag")
                     tag_button.setProperty("tagGridKey", tag)
                     subtag_buttons[tag] = tag_button
@@ -422,13 +533,21 @@ class ImportDialog(QDialog):
                     category_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
                     self.tags_grid_layout.addWidget(category_label, row, 0, 1, max_cols)
                 else:
-                    category_button = self._build_tag_button(category, is_user_tag=False)
+                    category_button = self._build_tag_button(
+                        category, is_user_tag=False
+                    )
                     category_button.setCheckable(True)
-                    category_button.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-                    category_button.clicked.connect(lambda _=False, name=category: self._on_tag_button_clicked(name))
+                    category_button.setSizePolicy(
+                        QSizePolicy.Preferred, QSizePolicy.Maximum
+                    )
+                    category_button.clicked.connect(
+                        lambda _=False, name=category: self._on_tag_button_clicked(name)
+                    )
                     category_button.setProperty("tagGridRole", "category")
                     category_button.setProperty("tagGridKey", category)
-                    self.tags_grid_layout.addWidget(category_button, row, 0, 1, max_cols)
+                    self.tags_grid_layout.addWidget(
+                        category_button, row, 0, 1, max_cols
+                    )
                     self._category_buttons[category] = category_button
 
                 current_row = row + 2
@@ -437,7 +556,9 @@ class ImportDialog(QDialog):
                     separator.setFrameShape(QFrame.Shape.HLine)
                     separator.setFrameShadow(QFrame.Shadow.Sunken)
                     separator.setStyleSheet("QFrame { color: #666; }")
-                    self.tags_grid_layout.addWidget(separator, current_row, 0, 1, max_cols)
+                    self.tags_grid_layout.addWidget(
+                        separator, current_row, 0, 1, max_cols
+                    )
                     current_row += 1
             max_row = current_row - 1
             if max_row >= 0:
@@ -445,7 +566,7 @@ class ImportDialog(QDialog):
             self._sync_import_subtags_visibility()
         except Exception as e:
             print(f"Error loading default tags: {str(e)}")
-        
+
         # Load user tags (only those not already placed in a category)
         if self.image_manager:
             all_tags = set()
@@ -462,37 +583,42 @@ class ImportDialog(QDialog):
                 separator.setStyleSheet("QFrame { color: #666; }")
                 current_row = self.tags_grid_layout.rowCount()
                 self.tags_grid_layout.addWidget(separator, current_row, 0, 1, 3)
-                
+
                 # Add user tags
                 user_label = QLabel("User Tags")
-                user_label.setStyleSheet("font-weight: bold; font-size: 12px; padding: 4px;")
+                user_label.setStyleSheet(
+                    "font-weight: bold; font-size: 12px; padding: 4px;"
+                )
                 self.tags_grid_layout.addWidget(user_label, current_row + 1, 0, 1, 3)
-                
+
                 for idx, tag in enumerate(user_tags):
                     tag_row = current_row + 2 + (idx // max_cols)
                     tag_col = idx % max_cols
                     tag_button = self._build_tag_button(tag, is_user_tag=True)
                     tag_button.setCheckable(True)
-                    tag_button.clicked.connect(lambda _, name=tag: self._on_tag_button_clicked(name))
+                    tag_button.clicked.connect(
+                        lambda _, name=tag: self._on_tag_button_clicked(name)
+                    )
                     self.tags_grid_layout.addWidget(tag_button, tag_row, tag_col)
                     self._user_tag_buttons[tag] = tag_button
-    
+
     def _get_default_tags(self) -> Set[str]:
         """Get default tags from JSON."""
         default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
-        
+
         if not default_tags_path.exists():
             return set()
-        
+
         try:
             import json
+
             with open(default_tags_path, "r", encoding="utf-8") as f:
                 default_tags_data = json.load(f)
         except Exception:
             return set()
-        
+
         tag_set: Set[str] = set()
-        
+
         def extract_tags(data) -> None:
             if isinstance(data, list):
                 for item in data:
@@ -503,11 +629,10 @@ class ImportDialog(QDialog):
                     extract_tags(value)
             elif isinstance(data, str):
                 tag_set.add(data)
-        
+
         extract_tags(default_tags_data)
         return tag_set
-    
-    
+
     def _build_tag_button(self, tag: str, is_user_tag: bool = False) -> QPushButton:
         """Build a tag button with icon. If is_user_tag, use draggable button for reparenting in grid."""
         if is_user_tag:
@@ -521,7 +646,7 @@ class ImportDialog(QDialog):
             button.setIconSize(QSize(28, 28))
         button.setStyleSheet("QPushButton { text-align: left; padding: 2px 4px; }")
         return button
-    
+
     def _on_add_user_tag_clicked(self) -> None:
         """Add a new user tag (Miscellaneous) for this import."""
         text = self._add_user_tag_input.text().strip()
@@ -543,7 +668,9 @@ class ImportDialog(QDialog):
         tag_button = self._build_tag_button(tag, is_user_tag=True)
         tag_button.setCheckable(True)
         tag_button.setChecked(True)
-        tag_button.clicked.connect(lambda _, name=tag: self._on_tag_button_clicked(name))
+        tag_button.clicked.connect(
+            lambda _, name=tag: self._on_tag_button_clicked(name)
+        )
         self._user_tag_buttons[tag] = tag_button
         self._added_row_buttons[tag] = tag_button
         self._added_user_tags_layout.addWidget(tag_button)
@@ -554,7 +681,7 @@ class ImportDialog(QDialog):
         button = self._get_tag_button(tag)
         if not button:
             return
-        
+
         if tag in self.selected_tags:
             self.selected_tags.remove(tag)
             button.setChecked(False)
@@ -565,7 +692,7 @@ class ImportDialog(QDialog):
             self._update_button_style(button, True)
         # Sync subtag visibility: show subtags only when their category is selected (expanded)
         self._sync_import_subtags_visibility()
-    
+
     def _update_button_style(self, button: QPushButton, checked: bool):
         """Update button style based on checked state."""
         base_style = "QPushButton { text-align: left; padding: 2px 4px; }"
@@ -575,7 +702,7 @@ class ImportDialog(QDialog):
             )
         else:
             button.setStyleSheet(base_style)
-    
+
     def _get_import_drop_target_at(self, pos: QPoint) -> Optional[QWidget]:
         """Return the category or tag button (widget with tagGridRole) at pos in container coords."""
         container = getattr(self, "tags_container", None)
@@ -610,7 +737,11 @@ class ImportDialog(QDialog):
             return
         raw = event.mimeData().data(TAG_LIBRARY_MIME)
         dropped_tag = bytes(raw).decode("utf-8") if raw else ""
-        pos = event.position().toPoint() if hasattr(event, "position") and hasattr(event.position(), "toPoint") else event.pos()
+        pos = (
+            event.position().toPoint()
+            if hasattr(event, "position") and hasattr(event.position(), "toPoint")
+            else event.pos()
+        )
         child = self._get_import_drop_target_at(pos)
         if not child or not child.property("tagGridRole"):
             return
@@ -641,18 +772,18 @@ class ImportDialog(QDialog):
         # Check category buttons
         if tag in self._category_buttons:
             return self._category_buttons[tag]
-        
+
         # Check subcategory buttons
         for buttons in self._subcategory_buttons.values():
             if tag in buttons:
                 return buttons[tag]
-        
+
         # Check user tag buttons
         if tag in self._user_tag_buttons:
             return self._user_tag_buttons[tag]
-        
+
         return None
-    
+
     def _sync_import_subtags_visibility(self) -> None:
         """
         Sync subtag visibility and layout with selection. When category is expanded, show only
@@ -695,8 +826,12 @@ class ImportDialog(QDialog):
             if expanded_parent is not None and expanded_parent in tag_order:
                 idx_t = tag_order.index(expanded_parent)
                 before = tag_order[:idx_t]
-                after = tag_order[idx_t + 1:]
-                children = [c for c in self._get_children_of_tag(expanded_parent) if c in tag_order]
+                after = tag_order[idx_t + 1 :]
+                children = [
+                    c
+                    for c in self._get_children_of_tag(expanded_parent)
+                    if c in tag_order
+                ]
                 rest = [x for x in after if x not in children]
                 idx = 0
                 for tag in before + [expanded_parent]:
@@ -750,3 +885,38 @@ class ImportDialog(QDialog):
             Set of selected tag names
         """
         return self.selected_tags.copy()
+
+    def get_use_subfolder_tags(self) -> bool:
+        """
+        Whether the user wants subfolder names applied as tags.
+
+        Returns:
+            True if the checkbox is checked and root dirs are available.
+        """
+        return bool(self.import_root_dirs and self._subfolder_tags_checkbox.isChecked())
+
+    def get_subfolder_split_separator(self) -> Optional[str]:
+        """
+        Separator used to split each folder name into several tags.
+
+        Returns:
+            One of ``-``, ``_``, `` `` (space), or ``.`` when split is enabled;
+            ``None`` when split is off or subfolder tags are off.
+        """
+        if not self.get_use_subfolder_tags():
+            return None
+        if not getattr(self, "_subfolder_split_checkbox", None):
+            return None
+        if not self._subfolder_split_checkbox.isChecked():
+            return None
+        group = getattr(self, "_subfolder_sep_group", None)
+        if group is None:
+            return None
+        btn = group.checkedButton()
+        if btn is None:
+            return None
+        val = btn.property("sep_value")
+        allowed = frozenset({"-", "_", " ", "."})
+        if val not in allowed:
+            return None
+        return str(val)
