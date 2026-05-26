@@ -1,4 +1,8 @@
 {
+  "_shelf_filters": {
+    "Miscellaneous:": "and",
+    "Camera-Angle:": "or"
+  },
   "Human": [
     "Male",
     "Female",
@@ -36,6 +40,5 @@
     "Hands",
     "Feet"
   ],
-  "Miscellaneous:": 
-  []
+  "Miscellaneous:": []
 }

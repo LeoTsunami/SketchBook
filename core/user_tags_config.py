@@ -20,7 +20,7 @@ def load_config() -> Dict[str, Any]:
     """
     path = get_config_path()
     if not path.exists():
-        return {"placements": {}, "icons": {}, "registered_only": []}
+        return {"placements": {}, "icons": {}, "registered_only": [], "custom_shelves": []}
     try:
         with open(path, "r", encoding="utf-8") as f:
             import json
@@ -28,20 +28,23 @@ def load_config() -> Dict[str, Any]:
         placements = data.get("placements", {})
         icons = data.get("icons", {})
         registered_only = data.get("registered_only", [])
+        custom_shelves = data.get("custom_shelves", [])
         return {
             "placements": dict(placements),
             "icons": dict(icons),
             "registered_only": list(registered_only),
+            "custom_shelves": list(custom_shelves) if isinstance(custom_shelves, list) else [],
         }
     except (OSError, ValueError) as e:
         print(f"Error loading user tags config: {e}")
-        return {"placements": {}, "icons": {}, "registered_only": []}
+        return {"placements": {}, "icons": {}, "registered_only": [], "custom_shelves": []}
 
 
 def save_config(
     placements: Dict[str, Any],
     icons: Dict[str, str],
     registered_only: Optional[List[str]] = None,
+    custom_shelves: Optional[List[Dict[str, Any]]] = None,
 ) -> bool:
     """
     Save user tags config.
@@ -50,15 +53,23 @@ def save_config(
         placements: Map tag name -> {"category": "Human"} or {"parent_tag": "Portrait"}.
         icons: Map tag name -> icon filename e.g. "Hand.png".
         registered_only: Tags added via UI but not yet on any image (optional).
+        custom_shelves: User-defined tag library shelves (optional; keeps existing if None).
 
     Returns:
         True if saved successfully.
     """
     path = get_config_path()
     path.parent.mkdir(parents=True, exist_ok=True)
+    existing = load_config() if path.exists() else {}
     payload = {"placements": placements, "icons": icons}
     if registered_only is not None:
         payload["registered_only"] = registered_only
+    else:
+        payload["registered_only"] = existing.get("registered_only", [])
+    if custom_shelves is not None:
+        payload["custom_shelves"] = custom_shelves
+    else:
+        payload["custom_shelves"] = existing.get("custom_shelves", [])
     try:
         with open(path, "w", encoding="utf-8") as f:
             import json

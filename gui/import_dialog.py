@@ -27,6 +27,12 @@ from PIL import Image
 from core.image_manager import ImageManager
 from core import user_tags_config
 from gui.icon_utils import find_tag_icon, invert_icon
+from gui.tag_shelves import (
+    MISCELLANEOUS_SHELF,
+    is_tag_shelf,
+    load_default_tags_taxonomy,
+    parse_category_tags,
+)
 
 # MIME type for drag from tag library (reparent in grid); must match main window
 TAG_LIBRARY_MIME = "application/x-sketchbook-tag-library"
@@ -393,7 +399,7 @@ class ImportDialog(QDialog):
         for ut in user_tags:
             pl = placements.get(ut)
             if pl is None:
-                if category == "Miscellaneous:":
+                if category == MISCELLANEOUS_SHELF:
                     result.append(ut)
                 continue
             if pl.get("category") == category:
@@ -452,8 +458,6 @@ class ImportDialog(QDialog):
         """Load tags from JSON and user config into the grid, same structure as main tag library."""
         max_cols = 3
         max_tags_per_row = 3
-        label_categories_set = {"Miscellaneous:", "Camera-Angle:"}
-
         self._user_tags_config = user_tags_config.load_config()
         placements = self._user_tags_config.get("placements", {})
         user_tags_list: List[str] = []
@@ -475,8 +479,7 @@ class ImportDialog(QDialog):
         try:
             import json
 
-            with open(default_tags_path, "r", encoding="utf-8") as f:
-                default_tags = json.load(f)
+            default_tags, _shelf_modes = load_default_tags_taxonomy(default_tags_path)
 
             def collect_subtags(data, collected: List[str]) -> None:
                 if isinstance(data, list):
@@ -491,10 +494,11 @@ class ImportDialog(QDialog):
 
             categories_list = list(default_tags.items())
             current_row = 0
-            for category_idx, (category, tags) in enumerate(categories_list):
-                is_label_category = category in label_categories_set
+            for category_idx, (category, tags_value) in enumerate(categories_list):
+                is_label_category = is_tag_shelf(category)
+                tags_data, _ = parse_category_tags(tags_value)
                 default_st: List[str] = []
-                collect_subtags(tags, default_st)
+                collect_subtags(tags_data, default_st)
                 default_st = list(dict.fromkeys(default_st))
                 unique_subtags = self._build_subtags_for_category(
                     category, default_st, user_tags_list, placements
@@ -605,21 +609,16 @@ class ImportDialog(QDialog):
     def _get_default_tags(self) -> Set[str]:
         """Get default tags from JSON."""
         default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
-
         if not default_tags_path.exists():
             return set()
-
         try:
-            import json
-
-            with open(default_tags_path, "r", encoding="utf-8") as f:
-                default_tags_data = json.load(f)
-        except Exception:
+            categories, _ = load_default_tags_taxonomy(default_tags_path)
+        except (OSError, ValueError):
             return set()
 
         tag_set: Set[str] = set()
 
-        def extract_tags(data) -> None:
+        def extract_tags(data: Any) -> None:
             if isinstance(data, list):
                 for item in data:
                     extract_tags(item)
@@ -630,7 +629,11 @@ class ImportDialog(QDialog):
             elif isinstance(data, str):
                 tag_set.add(data)
 
-        extract_tags(default_tags_data)
+        for category, value in categories.items():
+            if not is_tag_shelf(category):
+                tag_set.add(category)
+            tags_data, _ = parse_category_tags(value)
+            extract_tags(tags_data)
         return tag_set
 
     def _build_tag_button(self, tag: str, is_user_tag: bool = False) -> QPushButton:
@@ -791,13 +794,12 @@ class ImportDialog(QDialog):
         their parent is selected. Rebuild layout with grouping when a sub-category is expanded.
         """
         max_cols = 3
-        label_categories = {"Miscellaneous:", "Camera-Angle:"}
         placements = self._user_tags_config.get("placements", {})
         for category in self._subcategory_tag_order:
             container = self._subcategory_containers.get(category)
             if not container:
                 continue
-            is_label = category in label_categories
+            is_label = is_tag_shelf(category)
             expanded = is_label or (category in self.selected_tags)
             container.setVisible(expanded)
             if not expanded:
@@ -871,7 +873,7 @@ class ImportDialog(QDialog):
             ro = list(cfg.get("registered_only", []))
             for tag in self._tags_added_during_session:
                 if tag not in placements:
-                    placements[tag] = {"category": "Miscellaneous:"}
+                    placements[tag] = {"category": MISCELLANEOUS_SHELF}
                 if tag not in ro:
                     ro.append(tag)
             user_tags_config.save_config(placements, cfg.get("icons", {}), ro)
