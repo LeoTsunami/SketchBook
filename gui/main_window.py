@@ -1939,17 +1939,8 @@ class MainWindow(QMainWindow):
         if session_type == "Course":
             course_duration_minutes = settings_dict["course_duration_minutes"]
         else:
-            # Map "30 seconds" -> 30, "1 minute" -> 60, etc.
-            interval_text = settings_dict.get("interval_duration", "1 minute")
-            _interval_map = {
-                "30 seconds": 30,
-                "1 minute": 60,
-                "3 minutes": 180,
-                "5 minutes": 300,
-                "10 minutes": 600,
-                "20 minutes": 1200,
-            }
-            interval_seconds = _interval_map.get(interval_text, 60)
+            # Constant interval now comes from split spinboxes (minutes + tens of seconds).
+            interval_seconds = settings_dict.get("interval_seconds", 450)
 
         if self._slideshow_window is None:
             from gui.slideshow_window import SlideshowWindow

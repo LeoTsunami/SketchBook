@@ -18,6 +18,7 @@ from qtpy.QtWidgets import (
 from qtpy.QtCore import Qt
 from core.image_manager import ImageManager
 from core.session_manager import load_course_config
+from core.settings import settings
 from gui.window_chrome import (
     WindowChromeBar,
     apply_glass_button_style,
@@ -48,7 +49,61 @@ class SessionSettingsDialog(QDialog):
         enable_frameless_window(self)
 
         self._setup_ui()
+        self._load_last_session_settings()
         self._apply_theme()
+
+    def _load_last_session_settings(self) -> None:
+        """
+        Prefill dialog fields from the last saved user session settings.
+
+        The dialog persists the most recently used session type, duration, and window mode
+        so the next time the user opens "Session Settings" they start from the same values.
+        """
+        last = settings.get("session.last_session_settings", {}) or {}
+
+        session_type = last.get("session_type", "Course")
+        if session_type in ("Course", "Constant interval"):
+            self.session_type_combo.setCurrentText(session_type)
+
+        window_mode = last.get("window_mode", "FullScreen")
+        if window_mode in ("FullScreen", "Window always on top"):
+            self.window_mode_combo.setCurrentText(window_mode)
+
+        # Course: 10..60 with step 10.
+        course_duration_minutes = last.get("course_duration_minutes")
+        if (
+            session_type == "Course"
+            and isinstance(course_duration_minutes, int)
+            and course_duration_minutes in (10, 20, 30, 40, 50, 60)
+        ):
+            self.course_duration_spin.setValue(course_duration_minutes)
+
+        # Constant interval: split controls (minutes + tens of seconds).
+        interval_minutes = last.get("interval_minutes")
+        interval_tens_seconds = last.get("interval_tens_seconds")
+        legacy_interval = last.get("interval_duration")
+        if isinstance(interval_minutes, int):
+            self.interval_minutes_spin.setValue(max(0, min(60, interval_minutes)))
+        if isinstance(interval_tens_seconds, int):
+            self.interval_tens_seconds_spin.setValue(
+                max(0, min(5, interval_tens_seconds))
+            )
+        elif isinstance(legacy_interval, str):
+            legacy_map = {
+                "30 seconds": (0, 3),
+                "1 minute": (1, 0),
+                "3 minutes": (3, 0),
+                "5 minutes": (5, 0),
+                "10 minutes": (10, 0),
+                "20 minutes": (20, 0),
+            }
+            if legacy_interval in legacy_map:
+                minutes, tens = legacy_map[legacy_interval]
+                self.interval_minutes_spin.setValue(minutes)
+                self.interval_tens_seconds_spin.setValue(tens)
+
+        # Ensure visibility is correct for current session_type.
+        self._on_session_type_changed(self.session_type_combo.currentText())
 
     def _setup_ui(self):
         """Set up the dialog UI."""
@@ -126,19 +181,19 @@ class SessionSettingsDialog(QDialog):
         self.interval_duration_label.setVisible(False)
         interval_duration_layout.addWidget(self.interval_duration_label)
 
-        self.interval_duration_combo = QComboBox()
-        self.interval_duration_combo.addItems(
-            [
-                "30 seconds",
-                "1 minute",
-                "3 minutes",
-                "5 minutes",
-                "10 minutes",
-                "20 minutes",
-            ]
-        )
-        self.interval_duration_combo.setVisible(False)
-        interval_duration_layout.addWidget(self.interval_duration_combo)
+        self.interval_minutes_spin = QSpinBox()
+        self.interval_minutes_spin.setRange(0, 60)
+        self.interval_minutes_spin.setSuffix(" min")
+        self.interval_minutes_spin.setValue(7)
+        self.interval_minutes_spin.setVisible(False)
+        interval_duration_layout.addWidget(self.interval_minutes_spin)
+
+        self.interval_tens_seconds_spin = QSpinBox()
+        self.interval_tens_seconds_spin.setRange(0, 5)
+        self.interval_tens_seconds_spin.setSuffix("0 sec")
+        self.interval_tens_seconds_spin.setValue(3)
+        self.interval_tens_seconds_spin.setVisible(False)
+        interval_duration_layout.addWidget(self.interval_tens_seconds_spin)
         layout.addLayout(interval_duration_layout)
 
         # Window Mode combobox (horizontal layout)
@@ -220,7 +275,8 @@ class SessionSettingsDialog(QDialog):
             self.course_duration_spin.setVisible(True)
             # Hide interval duration controls
             self.interval_duration_label.setVisible(False)
-            self.interval_duration_combo.setVisible(False)
+            self.interval_minutes_spin.setVisible(False)
+            self.interval_tens_seconds_spin.setVisible(False)
             self._update_course_loop_message()
         else:  # Constant interval
             # Hide course duration controls and loop message
@@ -229,7 +285,8 @@ class SessionSettingsDialog(QDialog):
             self.course_loop_label.setVisible(False)
             # Show interval duration controls
             self.interval_duration_label.setVisible(True)
-            self.interval_duration_combo.setVisible(True)
+            self.interval_minutes_spin.setVisible(True)
+            self.interval_tens_seconds_spin.setVisible(True)
 
     def _on_start_session_clicked(self):
         """Handle Start Session button click."""
@@ -242,7 +299,17 @@ class SessionSettingsDialog(QDialog):
             return
 
         self.session_started = True
+        self._save_last_session_settings()
         self.accept()
+
+    def _save_last_session_settings(self) -> None:
+        """
+        Persist the session settings chosen by the user for the next dialog opening.
+        """
+        payload = self.get_session_settings()
+        # Store under core.settings.json so it persists across app restarts.
+        settings.set("session.last_session_settings", payload)
+        settings.save()
 
     def get_session_settings(self) -> Dict:
         """
@@ -259,7 +326,11 @@ class SessionSettingsDialog(QDialog):
         if settings["session_type"] == "Course":
             settings["course_duration_minutes"] = self.course_duration_spin.value()
         else:  # Constant interval
-            settings["interval_duration"] = self.interval_duration_combo.currentText()
+            interval_minutes = self.interval_minutes_spin.value()
+            interval_tens_seconds = self.interval_tens_seconds_spin.value()
+            settings["interval_minutes"] = interval_minutes
+            settings["interval_tens_seconds"] = interval_tens_seconds
+            settings["interval_seconds"] = interval_minutes * 60 + interval_tens_seconds * 10
 
         return settings
 
