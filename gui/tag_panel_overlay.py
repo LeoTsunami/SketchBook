@@ -39,7 +39,7 @@ class TagPanelOverlay(QFrame):
 
     panel_did_hide = Signal()
 
-    PANEL_WIDTH = 420
+    PANEL_WIDTH = 504  # 420px + 20% for roomier tag grid (3 columns)
     PANEL_EXTRA_HEIGHT = 55
     ANIM_DURATION_MS = 200
 

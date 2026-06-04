@@ -142,16 +142,46 @@ class DraggableTreeWidget(QTreeWidget):
 TAG_LIBRARY_MIME = "application/x-sketchbook-tag-library"
 # MIME for multi-tag drag (all selected tags when dropping on images)
 TAG_LIBRARY_MULTI_MIME = "application/x-sketchbook-tag-library-multi"
-# Subtag cells in tag library (3 columns); width tracks TagPanelOverlay.PANEL_WIDTH.
+# Subtag cells: fit 3 columns inside scroll viewport (no horizontal scroll).
 TAG_LIBRARY_TAG_GRID_COLUMNS = 3
-TAG_LIBRARY_TAG_CELL_SPACING_PX = 8
-# Scrollbar clearance (kept small on the right; a bit more at the bottom).
-TAG_LIBRARY_SCROLLBAR_INSET_RIGHT_PX = 6
-TAG_LIBRARY_SCROLLBAR_INSET_BOTTOM_PX = 12
-# Compact tag chips in the library grid.
-TAG_LIBRARY_TAG_ICON_PX = 22
+TAG_LIBRARY_TAG_GRID_SPACING_PX = 3
+TAG_LIBRARY_TAG_CELL_WIDTH_TRIM_PX = 6
+TAG_LIBRARY_CATEGORY_WIDTH_TRIM_PX = 14
+TAG_LIBRARY_SHELF_GRID_PADDING_PX = 3
+# QFrame#TagDropZone uses 2px dashed border on each side (style_*.qss).
+TAG_LIBRARY_DROP_ZONE_BORDER_PX = 4
+TAG_LIBRARY_TAG_CELL_INSET_PX = 1
+TAG_LIBRARY_TAG_CELL_ALIGN = Qt.AlignHCenter | Qt.AlignVCenter
+TAG_LIBRARY_TAG_BORDER_LIGHTER_PCT = 112
+TAG_LIBRARY_OVERLAY_HORIZONTAL_MARGIN_PX = 20  # TagPanelOverlay layout left+right (10+10)
+# Vertical scrollbar gutter only (do not also shrink grid width or we get h-scroll).
+TAG_LIBRARY_SCROLLBAR_INSET_RIGHT_PX = 0
+TAG_LIBRARY_SCROLLBAR_INSET_BOTTOM_PX = 10
+TAG_LIBRARY_VIEWPORT_RIGHT_GUTTER_PX = 8
+TAG_LIBRARY_GRID_TOP_MARGIN_PX = 6
+# Typography (px) for tag library buttons.
+TAG_LIBRARY_FONT_SUBTAG_PX = 14
+TAG_LIBRARY_FONT_CATEGORY_PX = 14
+TAG_LIBRARY_FONT_SHELF_TITLE_PX = 13
+# Compact tag chips in the library grid (width computed from panel viewport).
+TAG_LIBRARY_TAG_ICON_PX = 20
+TAG_LIBRARY_CATEGORY_ICON_PX = 22
 TAG_LIBRARY_TAG_MIN_HEIGHT_PX = 28
-TAG_LIBRARY_TAG_CELL_WIDTH_PX = 88
+TAG_LIBRARY_CATEGORY_MIN_HEIGHT_PX = 32
+TAG_LIBRARY_TAG_CELL_MIN_WIDTH_PX = 48
+
+
+def tag_library_subtle_border_color(bg: QColor) -> str:
+    """
+    Return a 1px outline color slightly lighter than the tag fill.
+
+    Args:
+        bg: Tag background color.
+
+    Returns:
+        str: CSS color name.
+    """
+    return bg.lighter(TAG_LIBRARY_TAG_BORDER_LIGHTER_PCT).name()
 
 
 def mime_data_looks_like_tag_library_drag(mime: Any) -> bool:
@@ -255,6 +285,23 @@ class SessionTraceButton(QPushButton):
         font.setPointSize(18)
         painter.setFont(font)
         painter.drawText(rect, Qt.AlignCenter, self.text())
+
+
+class TagLibraryResizeFilter(QObject):
+    """Resize tag-library cells when the scroll viewport width changes."""
+
+    def __init__(self, main_window: "MainWindow"):
+        super().__init__(main_window)
+        self._main = main_window
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        try:
+            resize_type = QEvent.Type.Resize
+        except AttributeError:
+            resize_type = QEvent.Resize
+        if event.type() == resize_type:
+            QTimer.singleShot(0, self._main._apply_tag_library_cell_widths)
+        return False
 
 
 class TagGridDropFilter(QObject):
@@ -373,17 +420,52 @@ class WrappingDraggableTagButton(DraggableTagButton):
         self._icon_label: Optional[QLabel] = None
         self._text_label = QLabel(text)
         self._text_label.setWordWrap(True)
-        self._text_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        self._text_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        self._text_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
+        self._text_label.setSizePolicy(
+            QSizePolicy.Expanding, QSizePolicy.Preferred
+        )
         self._text_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        label_font = self.font()
+        label_font.setPixelSize(TAG_LIBRARY_FONT_SUBTAG_PX)
+        self._text_label.setFont(label_font)
+        self._content_row = QWidget(self)
+        self._content_row.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._content_row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        self._row_layout = QHBoxLayout(self._content_row)
+        self._row_layout.setContentsMargins(0, 0, 0, 0)
+        self._row_layout.setSpacing(2)
+        self._row_layout.setAlignment(TAG_LIBRARY_TAG_CELL_ALIGN)
+        self._row_layout.addWidget(self._text_label, 1, TAG_LIBRARY_TAG_CELL_ALIGN)
+        inset = TAG_LIBRARY_TAG_CELL_INSET_PX
         self._inner_layout = QHBoxLayout(self)
-        self._inner_layout.setContentsMargins(3, 2, 3, 2)
-        self._inner_layout.setSpacing(4)
-        self._inner_layout.addWidget(self._text_label, 1)
-        self.setFixedWidth(cell_width)
+        self._inner_layout.setContentsMargins(inset, 2, inset, 2)
+        self._inner_layout.setSpacing(0)
+        self._inner_layout.addWidget(self._content_row, 1)
+        self.set_cell_width(cell_width)
+
+    def set_cell_width(self, width: int) -> None:
+        """Set fixed cell width (called when the tag panel is resized)."""
+        self._cell_width = max(TAG_LIBRARY_TAG_CELL_MIN_WIDTH_PX, width)
+        self.setFixedWidth(self._cell_width)
         self.setMinimumHeight(TAG_LIBRARY_TAG_MIN_HEIGHT_PX)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Minimum)
         self.setProperty("tagLibraryCell", True)
+        self._apply_text_layout_width()
+
+    def _apply_text_layout_width(self) -> None:
+        """Give the label nearly the full chip width so wrapping is not premature."""
+        margins = self._inner_layout.contentsMargins()
+        h_pad = margins.left() + margins.right()
+        style = self.styleSheet() or ""
+        extra = 2
+        if "padding:" in style:
+            extra = 4
+        inner_w = max(24, self._cell_width - h_pad - extra)
+        self._content_row.setFixedWidth(inner_w)
+        icon_w = 0
+        if self._icon_label is not None and self._icon_label.isVisible():
+            icon_w = TAG_LIBRARY_TAG_ICON_PX + self._row_layout.spacing()
+        self._text_label.setMaximumWidth(max(20, inner_w - icon_w))
 
     def setText(self, text: str) -> None:
         self._text_label.setText(text)
@@ -395,15 +477,17 @@ class WrappingDraggableTagButton(DraggableTagButton):
         if icon.isNull():
             if self._icon_label is not None:
                 self._icon_label.hide()
+            self._apply_text_layout_width()
             return
         if self._icon_label is None:
-            self._icon_label = QLabel(self)
+            self._icon_label = QLabel(self._content_row)
             self._icon_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-            self._inner_layout.insertWidget(0, self._icon_label)
+            self._row_layout.insertWidget(0, self._icon_label, 0, TAG_LIBRARY_TAG_CELL_ALIGN)
         self._icon_label.setPixmap(
             icon.pixmap(TAG_LIBRARY_TAG_ICON_PX, TAG_LIBRARY_TAG_ICON_PX)
         )
         self._icon_label.show()
+        self._apply_text_layout_width()
 
     def setIconSize(self, size: QSize) -> None:
         if self._icon_label is None or size.width() <= 0:
@@ -1291,9 +1375,9 @@ class MainWindow(QMainWindow):
         self.tags_grid_container = QWidget()
         self.tags_grid_layout = QGridLayout(self.tags_grid_container)
         self.tags_grid_layout.setContentsMargins(
-            2,
-            2,
-            TAG_LIBRARY_SCROLLBAR_INSET_RIGHT_PX,
+            3,
+            TAG_LIBRARY_GRID_TOP_MARGIN_PX,
+            0,
             TAG_LIBRARY_SCROLLBAR_INSET_BOTTOM_PX,
         )
         self.tags_grid_layout.setSpacing(8)
@@ -1303,7 +1387,7 @@ class MainWindow(QMainWindow):
         self.tags_scroll_area = QScrollArea()
         self.tags_scroll_area.setObjectName("TagLibraryScrollArea")
         self.tags_scroll_area.setWidgetResizable(False)
-        self.tags_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        self.tags_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.tags_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self.tags_scroll_area.setFrameShape(QFrame.NoFrame)
         self.tags_scroll_area.setStyleSheet(
@@ -1314,7 +1398,7 @@ class MainWindow(QMainWindow):
         self.tags_scroll_area.setViewportMargins(
             0,
             0,
-            TAG_LIBRARY_SCROLLBAR_INSET_RIGHT_PX,
+            TAG_LIBRARY_VIEWPORT_RIGHT_GUTTER_PX,
             TAG_LIBRARY_SCROLLBAR_INSET_BOTTOM_PX,
         )
         self.tags_scroll_area.setSizePolicy(
@@ -1325,6 +1409,8 @@ class MainWindow(QMainWindow):
         self._tag_grid_drop_filter = TagGridDropFilter(self)
         self.tags_grid_container.installEventFilter(self._tag_grid_drop_filter)
         tag_viewport = self.tags_scroll_area.viewport()
+        self._tag_library_resize_filter = TagLibraryResizeFilter(self)
+        tag_viewport.installEventFilter(self._tag_library_resize_filter)
         try:
             rb_shape = QRubberBand.Shape.Rectangle
         except AttributeError:
@@ -2085,14 +2171,18 @@ class MainWindow(QMainWindow):
                     if is_label_category:
                         shelf_header = self._build_shelf_header(category)
                         self.tags_grid_layout.addWidget(
-                            shelf_header, row, 0, 1, max_cols
+                            shelf_header,
+                            row,
+                            0,
+                            1,
+                            max_cols,
+                            TAG_LIBRARY_TAG_CELL_ALIGN,
                         )
                     else:
                         category_button = self._build_tag_button(
-                            category, is_user_tag=False
-                        )
-                        category_button.setSizePolicy(
-                            QSizePolicy.Preferred, QSizePolicy.Maximum
+                            category,
+                            is_user_tag=False,
+                            library_category_row=True,
                         )
                         category_button.clicked.connect(
                             lambda _, name=category: self._on_tag_button_clicked(name)
@@ -2100,7 +2190,12 @@ class MainWindow(QMainWindow):
                         category_button.setProperty("tagGridRole", "category")
                         category_button.setProperty("tagGridKey", category)
                         self.tags_grid_layout.addWidget(
-                            category_button, row, 0, 1, max_cols
+                            category_button,
+                            row,
+                            0,
+                            1,
+                            max_cols,
+                            TAG_LIBRARY_TAG_CELL_ALIGN,
                         )
                         self._category_buttons[category] = category_button
 
@@ -2120,11 +2215,16 @@ class MainWindow(QMainWindow):
                         )
                         tag_container.setMinimumHeight(36)
                     tag_container_layout = QGridLayout(tag_container)
-                    shelf_inset = 4 if is_label_category else 0
                     tag_container_layout.setContentsMargins(
-                        0, 0, shelf_inset, shelf_inset
+                        TAG_LIBRARY_SHELF_GRID_PADDING_PX,
+                        TAG_LIBRARY_SHELF_GRID_PADDING_PX,
+                        TAG_LIBRARY_SHELF_GRID_PADDING_PX,
+                        TAG_LIBRARY_SHELF_GRID_PADDING_PX,
                     )
-                    tag_container_layout.setSpacing(6)
+                    tag_container_layout.setHorizontalSpacing(
+                        TAG_LIBRARY_TAG_GRID_SPACING_PX
+                    )
+                    tag_container_layout.setVerticalSpacing(6)
                     tag_container_layout.setSizeConstraint(QLayout.SetMinimumSize)
                     subtag_buttons: Dict[str, QPushButton] = {}
                     for idx, tag in enumerate(unique_subtags):
@@ -2148,7 +2248,9 @@ class MainWindow(QMainWindow):
                         if is_user_tag:
                             self._user_tag_display_order.append(tag)
                         tr, tc = idx // max_tags_per_row, idx % max_tags_per_row
-                        tag_container_layout.addWidget(tag_button, tr, tc)
+                        tag_container_layout.addWidget(
+                            tag_button, tr, tc, TAG_LIBRARY_TAG_CELL_ALIGN
+                        )
                         subtag_buttons[tag] = tag_button
                         self._subtag_to_category[tag] = category
                         tag_button.setVisible(is_label_category)
@@ -2186,6 +2288,72 @@ class MainWindow(QMainWindow):
             self.tags_grid_layout.setRowStretch(max_row + 1, 1)
         if not skip_sync:
             self._sync_tag_grid_state()
+        QTimer.singleShot(0, self._apply_tag_library_cell_widths)
+
+    def _tag_library_content_width(self) -> int:
+        """
+        Width available for tag grid content (scroll viewport, not full app window).
+
+        Returns:
+            int: Pixel width that must not be exceeded to avoid horizontal scrolling.
+        """
+        scroll = getattr(self, "tags_scroll_area", None)
+        if scroll is not None and scroll.viewport() is not None:
+            vp_w = scroll.viewport().width()
+            if vp_w > 0:
+                return vp_w
+        from gui.tag_panel_overlay import TagPanelOverlay
+
+        grid_m = self.tags_grid_layout.contentsMargins()
+        return (
+            TagPanelOverlay.PANEL_WIDTH
+            - TAG_LIBRARY_OVERLAY_HORIZONTAL_MARGIN_PX
+            - TAG_LIBRARY_VIEWPORT_RIGHT_GUTTER_PX
+            - grid_m.left()
+            - grid_m.right()
+        )
+
+    def _tag_library_cell_width(self) -> int:
+        """Subtag width: 3 columns + gaps inside shelf padding, with small trim."""
+        content_w = self._tag_library_content_width()
+        row_w = (
+            content_w
+            - 2 * TAG_LIBRARY_SHELF_GRID_PADDING_PX
+            - TAG_LIBRARY_DROP_ZONE_BORDER_PX
+        )
+        gaps = TAG_LIBRARY_TAG_GRID_SPACING_PX * (TAG_LIBRARY_TAG_GRID_COLUMNS - 1)
+        per_column = (row_w - gaps) // TAG_LIBRARY_TAG_GRID_COLUMNS
+        return max(
+            TAG_LIBRARY_TAG_CELL_MIN_WIDTH_PX,
+            per_column - TAG_LIBRARY_TAG_CELL_WIDTH_TRIM_PX,
+        )
+
+    def _tag_library_category_row_width(self) -> int:
+        """Main category row (Human, Animal, …) slightly narrower than full content."""
+        content_w = self._tag_library_content_width()
+        return max(
+            TAG_LIBRARY_TAG_CELL_MIN_WIDTH_PX,
+            content_w - TAG_LIBRARY_CATEGORY_WIDTH_TRIM_PX,
+        )
+
+    def _apply_tag_library_cell_widths(self) -> None:
+        """Apply panel-based widths to category rows and subtag cells."""
+        content_w = self._tag_library_content_width()
+        self.tags_grid_container.setFixedWidth(content_w)
+        self.tags_grid_container.setMaximumWidth(content_w)
+        category_w = self._tag_library_category_row_width()
+        for btn in getattr(self, "_category_buttons", {}).values():
+            btn.setFixedWidth(category_w)
+            btn.setMinimumHeight(TAG_LIBRARY_CATEGORY_MIN_HEIGHT_PX)
+            btn.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        cell_w = self._tag_library_cell_width()
+        for btn in self.tags_grid_container.findChildren(WrappingDraggableTagButton):
+            btn.set_cell_width(cell_w)
+        for header in self.tags_grid_container.findChildren(QPushButton):
+            if header.property("tagGridRole") == "category" and header.isFlat():
+                header.setFixedWidth(category_w)
+        self.tags_grid_container.updateGeometry()
+        self.tags_grid_container.adjustSize()
 
     def _build_tag_button(
         self,
@@ -2193,6 +2361,7 @@ class MainWindow(QMainWindow):
         is_user_tag: bool = False,
         *,
         library_subtag_cell: bool = False,
+        library_category_row: bool = False,
     ) -> QPushButton:
         """
         Build a tag button with icon and label.
@@ -2201,29 +2370,42 @@ class MainWindow(QMainWindow):
             tag: Tag name.
             is_user_tag: If True, tag can be renamed and repositioned (drag onto category/tag).
             library_subtag_cell: If True, fixed width and word wrap for tag-library grid cells.
+            library_category_row: If True, full-width main category button (Human, Animal, …).
 
         Returns:
             QPushButton: Configured tag button.
         """
         if library_subtag_cell:
-            button = WrappingDraggableTagButton(tag, TAG_LIBRARY_TAG_CELL_WIDTH_PX)
+            button = WrappingDraggableTagButton(tag, self._tag_library_cell_width())
         else:
             button = DraggableTagButton(tag)
         button.setObjectName("TagGridButton")
         button.setProperty("userTag", is_user_tag)
         button.setProperty("baseLabel", tag)
+        if library_category_row:
+            button.setProperty("tagGridCategory", True)
         overrides = getattr(self, "_icon_preview_override", {})
         user_config = getattr(self, "_user_tags_config", {})
         icon = find_tag_icon(
             tag, user_config=user_config, icon_preview_override=overrides
         )
+        icon_px = (
+            TAG_LIBRARY_CATEGORY_ICON_PX
+            if library_category_row
+            else TAG_LIBRARY_TAG_ICON_PX
+        )
         if not icon.isNull():
-            button.setIcon(invert_icon(icon, TAG_LIBRARY_TAG_ICON_PX))
-            button.setIconSize(QSize(TAG_LIBRARY_TAG_ICON_PX, TAG_LIBRARY_TAG_ICON_PX))
+            button.setIcon(invert_icon(icon, icon_px))
+            button.setIconSize(QSize(icon_px, icon_px))
         button.setCheckable(False)
-        if library_subtag_cell:
+        if library_category_row:
+            button.setFixedWidth(self._tag_library_category_row_width())
+            button.setMinimumHeight(TAG_LIBRARY_CATEGORY_MIN_HEIGHT_PX)
+            button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        elif library_subtag_cell:
             button.setStyleSheet(
-                "QPushButton { text-align: left; padding: 2px 6px; font-size: 11px; }"
+                f"QPushButton {{ text-align: center; padding: 2px 1px; "
+                f"font-size: {TAG_LIBRARY_FONT_SUBTAG_PX}px; }}"
             )
         else:
             button.setStyleSheet("QPushButton { text-align: left; padding: 2px 4px; }")
@@ -2302,13 +2484,34 @@ class MainWindow(QMainWindow):
             border = "#8ef58e" if dark_theme else "#2fa84f"
             border_css = f"2px solid {border}"
         else:
-            border_css = "0px solid transparent"
+            border_css = (
+                f"1px solid {tag_library_subtle_border_color(bg)}"
+            )
+        is_category = bool(button.property("tagGridCategory"))
+        is_subtag_cell = bool(button.property("tagLibraryCell"))
+        if is_category:
+            text_align = "center"
+            padding = "3px 4px"
+            font_css = (
+                f"font-size: {TAG_LIBRARY_FONT_CATEGORY_PX}px; font-weight: bold;"
+            )
+        elif is_subtag_cell:
+            text_align = "center"
+            padding = "2px 1px"
+            font_css = f"font-size: {TAG_LIBRARY_FONT_SUBTAG_PX}px;"
+        else:
+            text_align = "left"
+            padding = "2px 2px"
+            font_css = f"font-size: {TAG_LIBRARY_FONT_SUBTAG_PX}px;"
         button.setStyleSheet(
             "QPushButton { "
-            f"text-align: left; padding: 2px 4px; color: {text}; "
+            f"text-align: {text_align}; padding: {padding}; color: {text}; "
+            f"{font_css} "
             f"background-color: {bg.name()}; border: {border_css}; border-radius: 4px; "
             "}"
         )
+        if isinstance(button, WrappingDraggableTagButton):
+            button._apply_text_layout_width()
 
     def _on_icon_preview(self, tag: str, icon_filename: Optional[str]) -> None:
         """Live preview: show the chosen icon on the tag button while the icon picker dialog is open."""
@@ -3270,9 +3473,11 @@ class MainWindow(QMainWindow):
         header.setFlat(True)
         header.setCursor(Qt.ArrowCursor)
         header.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
+        header.setFixedWidth(self._tag_library_category_row_width())
         header.setStyleSheet(
-            "QPushButton { font-weight: bold; font-size: 12px; padding: 4px 6px; "
-            "background-color: transparent; border: none; text-align: left; color: #ffffff; }"
+            f"QPushButton {{ font-weight: bold; font-size: {TAG_LIBRARY_FONT_SHELF_TITLE_PX}px; "
+            "padding: 4px 6px; background-color: transparent; border: none; "
+            "text-align: left; color: #ffffff; }}"
             "QPushButton:hover { background-color: rgba(255, 255, 255, 0.06); }"
         )
         self._configure_tag_grid_drop_target(header, "category", category)
@@ -3752,18 +3957,18 @@ class MainWindow(QMainWindow):
                     "QFrame#TagHierarchyFrame { "
                     f"border: {min(depth, 3)}px solid rgba(255,255,255,0.45); "
                     "border-radius: 6px; "
-                    "padding: 6px; "
+                    "padding: 0; "
                     "background: transparent; "
                     "}"
                 )
                 frame_layout = QVBoxLayout(frame)
-                frame_layout.setContentsMargins(6, 6, 6, 6)
+                frame_layout.setContentsMargins(3, 4, 3, 4)
                 frame_layout.setSpacing(6)
 
                 def _new_children_grid() -> QGridLayout:
                     grid = QGridLayout()
                     grid.setContentsMargins(0, 0, 0, 0)
-                    grid.setHorizontalSpacing(10)
+                    grid.setHorizontalSpacing(TAG_LIBRARY_TAG_GRID_SPACING_PX)
                     grid.setVerticalSpacing(6)
                     return grid
 
@@ -3785,7 +3990,9 @@ class MainWindow(QMainWindow):
                             idx_child // max_cols,
                             idx_child % max_cols,
                         )
-                        children_grid.addWidget(child_btn, row_child, col_child)
+                        children_grid.addWidget(
+                            child_btn, row_child, col_child, TAG_LIBRARY_TAG_CELL_ALIGN
+                        )
                         child_btn.setVisible(True)
                         idx_child += 1
                     if child in category_subtags:
@@ -3803,7 +4010,7 @@ class MainWindow(QMainWindow):
                 if not btn:
                     continue
                 row, col = idx // max_cols, idx % max_cols
-                layout.addWidget(btn, row, col)
+                layout.addWidget(btn, row, col, TAG_LIBRARY_TAG_CELL_ALIGN)
                 btn.setVisible(True)
                 idx += 1
 
@@ -3834,6 +4041,7 @@ class MainWindow(QMainWindow):
         self.tags_grid_container.update()
         if hasattr(self, "tags_scroll_area") and self.tags_scroll_area.viewport():
             self.tags_scroll_area.viewport().update()
+        QTimer.singleShot(0, self._apply_tag_library_cell_widths)
 
     @staticmethod
     def _normalize_tag_for_match(tag: str) -> str:
