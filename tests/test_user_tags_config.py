@@ -25,6 +25,7 @@ def test_load_config_missing_returns_defaults(config_path):
     assert cfg["placements"] == {}
     assert cfg["icons"] == {}
     assert cfg["registered_only"] == []
+    assert cfg["custom_shelves"] == []
 
 
 def test_save_and_load_config(config_path):
@@ -45,6 +46,16 @@ def test_get_placement(config_path):
     cfg = user_tags_config.load_config()
     assert user_tags_config.get_placement(cfg, "TagA") == {"category": "Animal"}
     assert user_tags_config.get_placement(cfg, "Missing") is None
+
+
+def test_save_preserves_custom_shelves_when_not_passed(config_path):
+    """Saving tags without custom_shelves keeps existing shelves."""
+    shelves = [{"name": "Lighting:", "filter": "or", "tags": []}]
+    user_tags_config.save_config({}, {}, [], custom_shelves=shelves)
+    user_tags_config.save_config({"T": {"category": "Human"}}, {}, ["T"])
+    cfg = user_tags_config.load_config()
+    assert cfg["custom_shelves"] == shelves
+    assert cfg["placements"] == {"T": {"category": "Human"}}
 
 
 def test_rename_in_config():

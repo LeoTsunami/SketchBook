@@ -2,8 +2,10 @@
 Floating tag panel overlay that slides over the image grid.
 
 Appears on hover over a trigger button at the left edge of the viewport,
-and hides when the mouse leaves the panel. Uses a semi-transparent dark
-background with rounded right corners for a glass-like effect.
+and hides when the mouse leaves the panel (after verifying the cursor is
+really outside, so in-panel drags and context menus do not collapse it).
+Uses a semi-transparent dark background with rounded right corners for a
+glass-like effect.
 """
 
 from qtpy.QtWidgets import (
@@ -17,9 +19,11 @@ from qtpy.QtCore import (
     QPropertyAnimation,
     QEasingCurve,
     QPoint,
+    QRect,
+    QTimer,
     Signal,
 )
-from qtpy.QtGui import QColor
+from qtpy.QtGui import QColor, QCursor
 
 
 class TagPanelOverlay(QFrame):
@@ -35,7 +39,7 @@ class TagPanelOverlay(QFrame):
 
     panel_did_hide = Signal()
 
-    PANEL_WIDTH = 370
+    PANEL_WIDTH = 504  # 420px + 20% for roomier tag grid (3 columns)
     PANEL_EXTRA_HEIGHT = 55
     ANIM_DURATION_MS = 200
 
@@ -48,6 +52,9 @@ class TagPanelOverlay(QFrame):
         self._is_showing = False
         self._anim: QPropertyAnimation | None = None
         self._dismiss_locked = False
+        self._leave_hide_timer = QTimer(self)
+        self._leave_hide_timer.setSingleShot(True)
+        self._leave_hide_timer.timeout.connect(self._deferred_leave_hide_check)
 
         self.setObjectName("TagPanelOverlay")
         self.setFixedWidth(self._panel_width)
@@ -86,6 +93,7 @@ class TagPanelOverlay(QFrame):
 
     def show_animated(self) -> None:
         """Slide the panel into view from the left edge."""
+        self._leave_hide_timer.stop()
         if self._is_showing:
             return
         self._is_showing = True
@@ -110,6 +118,7 @@ class TagPanelOverlay(QFrame):
 
     def hide_animated(self) -> None:
         """Slide the panel out of view to the left."""
+        self._leave_hide_timer.stop()
         if not self._is_showing:
             return
         if self._dismiss_locked:
@@ -134,6 +143,26 @@ class TagPanelOverlay(QFrame):
         """
         return self._is_showing
 
+    def panel_global_rect(self) -> QRect:
+        """
+        Return the panel bounds in screen coordinates.
+
+        Used for hit-testing during native drags, where Leave events are unreliable.
+
+        Returns:
+            QRect: Global geometry of the panel.
+        """
+        return self._global_panel_rect()
+
+    def is_dismiss_locked(self) -> bool:
+        """
+        Return True while auto-dismiss is blocked (e.g. context menu or dialog).
+
+        Returns:
+            bool: Current lock state.
+        """
+        return self._dismiss_locked
+
     def lock_dismiss(self, locked: bool) -> None:
         """Prevent automatic dismiss (e.g. while a dialog is open above the panel).
 
@@ -141,16 +170,15 @@ class TagPanelOverlay(QFrame):
             locked: True to prevent dismiss, False to re-enable it.
         """
         self._dismiss_locked = locked
+        if locked:
+            self._leave_hide_timer.stop()
 
     def reposition(self) -> None:
         """Reposition the panel after the parent viewport resizes."""
         self._update_height()
         # Reason: never snap position while a slide anim runs (show or hide); otherwise
         # reposition() fights QPropertyAnimation and the rail looks like it replays.
-        if (
-            self._anim is not None
-            and self._anim.state() == QAbstractAnimation.Running
-        ):
+        if self._anim is not None and self._anim.state() == QAbstractAnimation.Running:
             return
         if self._is_showing:
             self.move(0, self._top_inset)
@@ -161,14 +189,41 @@ class TagPanelOverlay(QFrame):
     # Qt overrides
     # ------------------------------------------------------------------
 
+    def mousePressEvent(self, event) -> None:
+        """Consume all mouse presses so clicks don't fall through to the image grid."""
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:
+        """Consume mouse releases for the same reason."""
+        event.accept()
+
+    def enterEvent(self, event) -> None:
+        """Cancel a pending auto-hide (e.g. after a spurious Leave during drag)."""
+        self._leave_hide_timer.stop()
+        super().enterEvent(event)
+
     def leaveEvent(self, event) -> None:
-        """Auto-hide when the mouse leaves the panel."""
+        """Schedule auto-hide only after verifying the cursor really left the panel."""
         super().leaveEvent(event)
-        self.hide_animated()
+        if self._dismiss_locked:
+            return
+        self._leave_hide_timer.start(50)
 
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
+
+    def _global_panel_rect(self) -> QRect:
+        """Return the panel bounds in screen coordinates."""
+        return QRect(self.mapToGlobal(QPoint(0, 0)), self.size())
+
+    def _deferred_leave_hide_check(self) -> None:
+        """Hide only if the cursor is outside the panel (avoids drag/context-menu glitches)."""
+        if self._dismiss_locked or not self._is_showing:
+            return
+        if self._global_panel_rect().contains(QCursor.pos()):
+            return
+        self.hide_animated()
 
     def _place_offscreen(self) -> None:
         """Move the panel just outside the visible area."""
@@ -179,7 +234,9 @@ class TagPanelOverlay(QFrame):
         if self.parentWidget():
             h = max(
                 1,
-                self.parentWidget().height() - self._top_inset + self.PANEL_EXTRA_HEIGHT,
+                self.parentWidget().height()
+                - self._top_inset
+                + self.PANEL_EXTRA_HEIGHT,
             )
             self.setFixedHeight(h)
 

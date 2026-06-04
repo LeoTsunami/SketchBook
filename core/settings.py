@@ -74,7 +74,16 @@ class Settings:
                 "auto_save": True,
                 "save_path": str(user_data.get_sessions_dir()),
                 "default_duration": 300,
-                "intervals": [30, 60, 120, 300]
+                "intervals": [30, 60, 120, 300],
+                # UI memory for the next SessionSettingsDialog.
+                # Used to prefill the last chosen session type, duration, and window mode.
+                "last_session_settings": {
+                    "session_type": "Course",
+                    "course_duration_minutes": 30,
+                    "interval_minutes": 7,
+                    "interval_tens_seconds": 3,
+                    "window_mode": "FullScreen",
+                },
             },
             "database": {
                 "type": "json",
