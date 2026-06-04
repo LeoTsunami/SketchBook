@@ -189,6 +189,14 @@ class TagPanelOverlay(QFrame):
     # Qt overrides
     # ------------------------------------------------------------------
 
+    def mousePressEvent(self, event) -> None:
+        """Consume all mouse presses so clicks don't fall through to the image grid."""
+        event.accept()
+
+    def mouseReleaseEvent(self, event) -> None:
+        """Consume mouse releases for the same reason."""
+        event.accept()
+
     def enterEvent(self, event) -> None:
         """Cancel a pending auto-hide (e.g. after a spurious Leave during drag)."""
         self._leave_hide_timer.stop()
