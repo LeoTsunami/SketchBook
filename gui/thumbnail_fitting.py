@@ -73,6 +73,7 @@ def fit_pixmap_in_view(
         # fills the view; the other axis overflows and gets clipped — this
         # is the classic "cover / crop" behavior.
         view.fitInView(rect, Qt.KeepAspectRatioByExpanding)
+        view.centerOn(rect.center())
 
     elif mode == FitMode.FIT_WIDTH:
         _fit_one_axis(view, rect, match_width=True)

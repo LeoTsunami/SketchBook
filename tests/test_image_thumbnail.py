@@ -13,13 +13,11 @@ def test_thumbnail_selection_property_updates(qtbot):
     assert thumb.property("selected") is False
 
 
-def test_thumbnail_hover_updates_brightness(qtbot):
-    """Hover enter/leave should toggle subtle brightness effect."""
+def test_thumbnail_hover_updates_property(qtbot):
+    """Hover enter/leave should toggle the hovered dynamic property."""
     thumb = ImageThumbnail("img_1", "label")
     qtbot.addWidget(thumb)
     thumb._set_hovered(True)
     assert thumb.property("hovered") is True
-    assert thumb._hover_effect.strength() > 0.0
     thumb._set_hovered(False)
     assert thumb.property("hovered") is False
-    assert thumb._hover_effect.strength() == 0.0

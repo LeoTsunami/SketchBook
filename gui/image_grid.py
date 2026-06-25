@@ -480,10 +480,7 @@ class ImageGrid(QScrollArea):
                 import_drop_callback=self._import_drop_callback,
             )
             thumb._fit_mode = self._fit_mode
-            thumb.setFixedWidth(thumbnail_width)
-            thumb.setFixedHeight(row_height)
-            thumb.image_container.setFixedSize(thumbnail_width - 4, row_height - 4)
-            thumb.graphics_view.setFixedSize(thumbnail_width - 4, row_height - 4)
+            thumb.apply_outer_geometry(thumbnail_width, row_height)
             thumb.clicked.connect(self.image_clicked.emit)
             self.thumbnail_pool.append(thumb)
 
@@ -500,6 +497,10 @@ class ImageGrid(QScrollArea):
         self._drain_thumbnail_grid_layout()
         self._ensure_virtualized_pool()
         thumbnail_width, row_height = self._calculate_optimal_dimensions()
+        layout_key = (thumbnail_width, row_height)
+        if getattr(self, "_layout_cell_size", None) != layout_key:
+            self._layout_cell_size = layout_key
+            self.pixmap_cache.clear()
         spacing = self.grid.spacing()
         margins = self.grid.contentsMargins()
         total_images = len(self.all_images)
@@ -528,8 +529,9 @@ class ImageGrid(QScrollArea):
         start_index = first_row * self.columns
         end_index = min(total_images, (last_row + 1) * self.columns)
 
-        inner_w = thumbnail_width - 4
-        inner_h = row_height - 4
+        inner_w, inner_h = ImageThumbnail.content_dimensions(
+            thumbnail_width, row_height
+        )
 
         self.thumbnails.clear()
         for i, thumb in enumerate(self.thumbnail_pool):
@@ -555,7 +557,11 @@ class ImageGrid(QScrollArea):
             # Reason: only push geometry when it actually changed to avoid
             # cascading relayout and repaint on every scroll tick.
             if thumb.width() != thumbnail_width or thumb.height() != row_height:
-                thumb.setFixedSize(thumbnail_width, row_height)
+                thumb.apply_outer_geometry(thumbnail_width, row_height)
+            elif (
+                thumb.graphics_view.width() != inner_w
+                or thumb.graphics_view.height() != inner_h
+            ):
                 thumb.image_container.setFixedSize(inner_w, inner_h)
                 thumb.graphics_view.setFixedSize(inner_w, inner_h)
 
@@ -788,6 +794,10 @@ class ImageGrid(QScrollArea):
             return
 
         thumbnail_width, thumbnail_height = self._calculate_optimal_dimensions()
+        layout_key = (thumbnail_width, thumbnail_height)
+        if getattr(self, "_layout_cell_size", None) != layout_key:
+            self._layout_cell_size = layout_key
+            self.pixmap_cache.clear()
 
         for idx, metadata in enumerate(self.all_images):
             if idx >= self.loaded_count:
@@ -809,13 +819,7 @@ class ImageGrid(QScrollArea):
             if cell_w is not thumbnail:
                 self.grid.addWidget(thumbnail, row, col)
 
-            thumbnail.setFixedSize(thumbnail_width, thumbnail_height)
-            thumbnail.image_container.setFixedSize(
-                thumbnail_width - 4, thumbnail_height - 4
-            )
-            thumbnail.graphics_view.setFixedSize(
-                thumbnail_width - 4, thumbnail_height - 4
-            )
+            thumbnail.apply_outer_geometry(thumbnail_width, thumbnail_height)
             thumbnail.show()
 
     def _drain_thumbnail_grid_layout(self) -> None:
@@ -953,13 +957,7 @@ class ImageGrid(QScrollArea):
             )
             thumbnail._fit_mode = self._fit_mode
 
-            thumbnail.setFixedSize(thumbnail_width, thumbnail_height)
-            thumbnail.image_container.setFixedSize(
-                thumbnail_width - 4, thumbnail_height - 4
-            )
-            thumbnail.graphics_view.setFixedSize(
-                thumbnail_width - 4, thumbnail_height - 4
-            )
+            thumbnail.apply_outer_geometry(thumbnail_width, thumbnail_height)
 
             self.grid.addWidget(thumbnail, row, col)
             self.thumbnails[metadata.id] = thumbnail
@@ -993,11 +991,7 @@ class ImageGrid(QScrollArea):
             import_drop_callback=self._import_drop_callback,
         )
         thumbnail._fit_mode = self._fit_mode
-        thumbnail.setFixedSize(thumbnail_width, thumbnail_height)
-        thumbnail.image_container.setFixedSize(
-            thumbnail_width - 4, thumbnail_height - 4
-        )
-        thumbnail.graphics_view.setFixedSize(thumbnail_width - 4, thumbnail_height - 4)
+        thumbnail.apply_outer_geometry(thumbnail_width, thumbnail_height)
         self.thumbnails[metadata.id] = thumbnail
         thumbnail.clicked.connect(self.image_clicked.emit)
         self.loaded_count += 1
@@ -1095,12 +1089,16 @@ class ImageGrid(QScrollArea):
         self.loading_images.add(image_id)
         if image_id in self.thumbnails:
             thumbnail = self.thumbnails[image_id]
-            target_width = thumbnail.graphics_view.width() or (thumbnail.width() - 8)
-            target_height = thumbnail.graphics_view.height() or (thumbnail.height() - 8)
+            fallback_w, fallback_h = ImageThumbnail.content_dimensions(
+                thumbnail.width(), thumbnail.height()
+            )
+            target_width = thumbnail.graphics_view.width() or fallback_w
+            target_height = thumbnail.graphics_view.height() or fallback_h
         else:
             thumbnail_width, thumbnail_height = self._calculate_optimal_dimensions()
-            target_width = thumbnail_width - 4
-            target_height = thumbnail_height - 4
+            target_width, target_height = ImageThumbnail.content_dimensions(
+                thumbnail_width, thumbnail_height
+            )
         image_path = self.image_manager.image_dir / metadata.path
         worker = ImageLoaderWorker(
             image_id,

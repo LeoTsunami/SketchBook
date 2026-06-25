@@ -183,3 +183,12 @@ class HoverFlyoutMixin:
             self._expand()
         elif event.type() == hide_type:
             self._schedule_collapse_check()
+
+    def force_collapse(self) -> None:
+        """Collapse immediately, cancelling any pending hover timers."""
+        self._expand_timer.stop()
+        self._leave_timer.stop()
+        if self._expanded:
+            self._collapse()
+        else:
+            self._apply_collapsed_geometry()

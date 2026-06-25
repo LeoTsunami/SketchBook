@@ -18,7 +18,6 @@ from qtpy.QtWidgets import (
     QApplication,
     QSizePolicy,
     QGraphicsDropShadowEffect,
-    QGraphicsColorizeEffect,
 )
 from qtpy.QtCore import Qt, Signal, QTimer, QUrl
 from qtpy.QtGui import (
@@ -162,6 +161,8 @@ class TagChip(QFrame):
 class ImageThumbnail(QFrame):
     """Widget representing a single image thumbnail."""
 
+    CONTENT_INSET = 8  # layout margins: 4 px on each side
+
     clicked = Signal(str)  # Emits image ID when clicked
     tag_removed = Signal(str, str)  # Emits (image_id, tag) when a tag is removed
 
@@ -255,15 +256,9 @@ class ImageThumbnail(QFrame):
         # Subtle depth on transparent thumbnails.
         self._shadow_effect = QGraphicsDropShadowEffect(self)
         self._shadow_effect.setBlurRadius(12)
-        self._shadow_effect.setOffset(0, 2)
+        self._shadow_effect.setOffset(0, 0)
         self._shadow_effect.setColor(QColor(0, 0, 0, 85))
         self.image_container.setGraphicsEffect(self._shadow_effect)
-
-        # Hover brightening (white tint at low strength).
-        self._hover_effect = QGraphicsColorizeEffect(self)
-        self._hover_effect.setColor(QColor(255, 255, 255))
-        self._hover_effect.setStrength(0.0)
-        self.graphics_view.setGraphicsEffect(self._hover_effect)
 
         layout.addWidget(self.image_container, 1)  # Give image container stretch factor
 
@@ -289,6 +284,38 @@ class ImageThumbnail(QFrame):
         # Reason: set directly by ImageGrid during interactive resize to avoid
         # expensive parent-chain walk (_ancestor_grid_resize_interactive) on every resizeEvent.
         self._fast_resize_active: bool = False
+
+    @classmethod
+    def content_dimensions(
+        cls, outer_width: int, outer_height: int
+    ) -> tuple[int, int]:
+        """
+        Return the drawable area inside thumbnail chrome margins.
+
+        Args:
+            outer_width: Outer thumbnail width in pixels.
+            outer_height: Outer thumbnail height in pixels.
+
+        Returns:
+            Inner (width, height) for the image view.
+        """
+        return (
+            max(1, outer_width - cls.CONTENT_INSET),
+            max(1, outer_height - cls.CONTENT_INSET),
+        )
+
+    def apply_outer_geometry(self, outer_width: int, outer_height: int) -> None:
+        """
+        Size the thumbnail and its image view to a consistent outer box.
+
+        Args:
+            outer_width: Outer thumbnail width in pixels.
+            outer_height: Outer thumbnail height in pixels.
+        """
+        self.setFixedSize(outer_width, outer_height)
+        inner_w, inner_h = self.content_dimensions(outer_width, outer_height)
+        self.image_container.setFixedSize(inner_w, inner_h)
+        self.graphics_view.setFixedSize(inner_w, inner_h)
 
     def set_fit_mode(self, mode: FitMode) -> None:
         """
@@ -452,12 +479,11 @@ class ImageThumbnail(QFrame):
             self.style().polish(self)
 
     def _set_hovered(self, hovered: bool) -> None:
-        """Update hovered visual state (brightness + subtle border accent)."""
+        """Update hovered visual state (handled by theme QSS)."""
         if self._hovered == hovered:
             return
         self._hovered = hovered
         self.setProperty("hovered", hovered)
-        self._hover_effect.setStrength(0.10 if hovered else 0.0)
         self.style().unpolish(self)
         self.style().polish(self)
 

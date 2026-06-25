@@ -103,6 +103,7 @@ from gui.tag_shelves import (
 from gui.startup_sort_worker import StartupSortRunnable, StartupSortSignals
 from core.session_manager import SessionManager
 from gui.grid_display_flyout import GridDisplayFlyout
+from gui.trace_icon_button import ORANGE_TRACE, TraceIconButton
 from gui.sort_flyout import SortFlyout
 from gui.icon_utils import find_tag_icon, invert_icon, load_white_icon
 import os
@@ -1048,27 +1049,16 @@ class MainWindow(QMainWindow):
         grid_icon_px = 18
         grid_ctrl_btn_px = 28
 
-        shuffle_icon = load_white_icon("shuffle.png", grid_icon_px)
-        self.shuffle_button = QPushButton(self._life_drawing_controls)
-        self.shuffle_button.setIcon(shuffle_icon)
-        self.shuffle_button.setIconSize(QSize(grid_icon_px, grid_icon_px))
+        shuffle_icon = load_white_icon("shuffle.png", 48)
+        self.shuffle_button = TraceIconButton(
+            shuffle_icon, size=grid_ctrl_btn_px, palette=ORANGE_TRACE, parent=self._life_drawing_controls
+        )
         self.shuffle_button.setToolTip("Shuffle random order")
-        self.shuffle_button.setFixedSize(grid_ctrl_btn_px, grid_ctrl_btn_px)
-        self.shuffle_button.setStyleSheet("""
-            QPushButton {
-                background-color: #3c3f41;
-                color: #ffffff;
-                border: 1px solid #4d4d4d;
-                border-radius: 4px;
-                padding: 4px;
-            }
-            QPushButton:hover {
-                background-color: #4b6eaf;
-            }
-            QPushButton:pressed {
-                background-color: #3d5a8c;
-            }
-        """)
+        shuffle_shadow = QGraphicsDropShadowEffect(self.shuffle_button)
+        shuffle_shadow.setBlurRadius(18)
+        shuffle_shadow.setOffset(0, 4)
+        shuffle_shadow.setColor(ORANGE_TRACE.shadow)
+        self.shuffle_button.setGraphicsEffect(shuffle_shadow)
         self.shuffle_button.clicked.connect(self._on_shuffle_clicked)
         self.shuffle_button.hide()
 
@@ -1116,6 +1106,12 @@ class MainWindow(QMainWindow):
         ctrl_layout.addWidget(self._sort_flyout, 0, Qt.AlignVCenter)
         ctrl_layout.addWidget(self._grid_display_flyout, 0, Qt.AlignVCenter)
 
+        self._life_drawing_flyout_collapse_timer = QTimer(self)
+        self._life_drawing_flyout_collapse_timer.setSingleShot(True)
+        self._life_drawing_flyout_collapse_timer.timeout.connect(
+            self._collapse_life_drawing_flyouts
+        )
+
         row.addWidget(self._life_drawing_controls, 0, Qt.AlignVCenter)
 
         self._tab_bar_widget.setFixedHeight(42)
@@ -1152,6 +1148,7 @@ class MainWindow(QMainWindow):
         self._content_stack.addWidget(market_page)
 
         self._content_stack.setCurrentIndex(0)
+        self._schedule_life_drawing_flyout_collapse()
         main_layout.addWidget(self._content_stack, 1)
 
     @staticmethod
@@ -1188,6 +1185,22 @@ class MainWindow(QMainWindow):
         """
         self._content_stack.setCurrentIndex(index)
         self._life_drawing_controls.setVisible(index == 0)
+        if index == 0:
+            self._schedule_life_drawing_flyout_collapse()
+        else:
+            self._life_drawing_flyout_collapse_timer.stop()
+            self._collapse_life_drawing_flyouts()
+
+    def _schedule_life_drawing_flyout_collapse(self) -> None:
+        """Collapse sort/grid flyouts shortly after the Life Drawing tab appears."""
+        self._life_drawing_flyout_collapse_timer.start(1000)
+
+    def _collapse_life_drawing_flyouts(self) -> None:
+        """Force both toolbar flyouts back to their icon-only state."""
+        if hasattr(self, "_sort_flyout"):
+            self._sort_flyout.force_collapse()
+        if hasattr(self, "_grid_display_flyout"):
+            self._grid_display_flyout.force_collapse()
 
     def _toggle_maximize_restore(self) -> None:
         """Toggle between maximized and normal window states."""
