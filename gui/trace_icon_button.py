@@ -58,7 +58,10 @@ class TraceIconButton(QPushButton):
         super().__init__(parent)
         self._palette = palette
         self._trace_progress = 0.0
-        self._icon_display_px = max(12, size - 10)
+        self._button_size = size
+        self._paint_inset = 3 if size >= 48 else 2
+        self._corner_radius = 14.0 if size >= 48 else 6.0
+        self._icon_display_px = max(16, int(size * 0.48))
         render_px = self._icon_display_px * 3
         self._icon_pixmap: QPixmap = icon.pixmap(
             QSize(render_px, render_px),
@@ -80,6 +83,10 @@ class TraceIconButton(QPushButton):
         self._trace_anim.valueChanged.connect(self._on_trace_value_changed)
         self._trace_anim.start()
 
+    def sizeHint(self) -> QSize:
+        """Return the fixed square footprint."""
+        return QSize(self._button_size, self._button_size)
+
     def _on_trace_value_changed(self, value: object) -> None:
         """
         Update trace progression and repaint.
@@ -96,8 +103,13 @@ class TraceIconButton(QPushButton):
         painter.setRenderHint(QPainter.Antialiasing, True)
         painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
 
-        rect = self.rect().adjusted(2, 2, -2, -2)
-        radius = 6.0
+        rect = self.rect().adjusted(
+            self._paint_inset,
+            self._paint_inset,
+            -self._paint_inset,
+            -self._paint_inset,
+        )
+        radius = self._corner_radius
         palette = self._palette
 
         if self.isDown():
@@ -111,7 +123,8 @@ class TraceIconButton(QPushButton):
         painter.setBrush(bg)
         painter.drawRoundedRect(rect, radius, radius)
 
-        base_pen = QPen(palette.base_border, 1.5)
+        border_w = 2.5 if self._button_size >= 48 else 1.5
+        base_pen = QPen(palette.base_border, border_w)
         painter.setPen(base_pen)
         painter.setBrush(Qt.NoBrush)
         painter.drawRoundedRect(rect, radius, radius)
@@ -124,7 +137,7 @@ class TraceIconButton(QPushButton):
         trace_gradient.setColorAt(0.22, palette.trace_mid)
         trace_gradient.setColorAt(0.45, palette.trace_lo)
         trace_gradient.setColorAt(1.00, palette.trace_lo)
-        trace_pen = QPen(QBrush(trace_gradient), 2.0)
+        trace_pen = QPen(QBrush(trace_gradient), border_w)
         trace_pen.setCapStyle(Qt.RoundCap)
         trace_pen.setJoinStyle(Qt.RoundJoin)
         painter.setPen(trace_pen)

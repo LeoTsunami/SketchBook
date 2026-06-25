@@ -830,6 +830,7 @@ class MainWindow(QMainWindow):
             return
         self._startup_scheduled = True
         QTimer.singleShot(0, self._deferred_startup_load)
+        QTimer.singleShot(0, self._update_shuffle_floating_visibility)
 
     def _deferred_startup_load(self) -> None:
         """
@@ -1047,20 +1048,6 @@ class MainWindow(QMainWindow):
         ctrl_layout.setSpacing(6)
 
         grid_icon_px = 18
-        grid_ctrl_btn_px = 28
-
-        shuffle_icon = load_white_icon("shuffle.png", 48)
-        self.shuffle_button = TraceIconButton(
-            shuffle_icon, size=grid_ctrl_btn_px, palette=ORANGE_TRACE, parent=self._life_drawing_controls
-        )
-        self.shuffle_button.setToolTip("Shuffle random order")
-        shuffle_shadow = QGraphicsDropShadowEffect(self.shuffle_button)
-        shuffle_shadow.setBlurRadius(18)
-        shuffle_shadow.setOffset(0, 4)
-        shuffle_shadow.setColor(ORANGE_TRACE.shadow)
-        self.shuffle_button.setGraphicsEffect(shuffle_shadow)
-        self.shuffle_button.clicked.connect(self._on_shuffle_clicked)
-        self.shuffle_button.hide()
 
         sort_icon = load_white_icon("sort.png", grid_icon_px)
         grid_display_icon = load_white_icon("imageGrid.png", grid_icon_px)
@@ -1078,7 +1065,6 @@ class MainWindow(QMainWindow):
             default_sort_index = 6
         self.sort_combo.setCurrentIndex(default_sort_index)
         self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
-        self.shuffle_button.setVisible(self.sort_combo.currentIndex() == 6)
         self.sort_combo.setToolTip(
             f"Sort by: {SORT_OPTIONS[self.sort_combo.currentIndex()][1]}"
         )
@@ -1102,7 +1088,6 @@ class MainWindow(QMainWindow):
         self.fit_mode_combo.setCurrentIndex(default_fit)
         self.fit_mode_combo.currentIndexChanged.connect(self._on_fit_mode_changed)
 
-        ctrl_layout.addWidget(self.shuffle_button, 0, Qt.AlignVCenter)
         ctrl_layout.addWidget(self._sort_flyout, 0, Qt.AlignVCenter)
         ctrl_layout.addWidget(self._grid_display_flyout, 0, Qt.AlignVCenter)
 
@@ -1149,6 +1134,7 @@ class MainWindow(QMainWindow):
 
         self._content_stack.setCurrentIndex(0)
         self._schedule_life_drawing_flyout_collapse()
+        self._update_shuffle_floating_visibility()
         main_layout.addWidget(self._content_stack, 1)
 
     @staticmethod
@@ -1190,6 +1176,21 @@ class MainWindow(QMainWindow):
         else:
             self._life_drawing_flyout_collapse_timer.stop()
             self._collapse_life_drawing_flyouts()
+        self._update_shuffle_floating_visibility()
+
+    def _update_shuffle_floating_visibility(self) -> None:
+        """Show the floating shuffle button only on Life Drawing + Random sort."""
+        if not hasattr(self, "shuffle_button"):
+            return
+        on_life_drawing = (
+            not hasattr(self, "_content_stack")
+            or self._content_stack.currentIndex() == 0
+        )
+        is_random_sort = (
+            hasattr(self, "sort_combo") and self.sort_combo.currentIndex() == 6
+        )
+        self.shuffle_button.setVisible(on_life_drawing and is_random_sort)
+        QTimer.singleShot(0, self._position_floating_grid_overlays)
 
     def _schedule_life_drawing_flyout_collapse(self) -> None:
         """Collapse sort/grid flyouts shortly after the Life Drawing tab appears."""
@@ -1418,6 +1419,23 @@ class MainWindow(QMainWindow):
         self.session_settings_btn.setGraphicsEffect(shadow)
         self.session_settings_btn.clicked.connect(self._on_session_settings_clicked)
         self.session_settings_btn.raise_()
+
+        shuffle_icon = load_white_icon("shuffle.png", 96)
+        self.shuffle_button = TraceIconButton(
+            shuffle_icon,
+            size=self.session_settings_btn.sizeHint().height(),
+            palette=ORANGE_TRACE,
+            parent=vp,
+        )
+        self.shuffle_button.setToolTip("Shuffle random order")
+        shuffle_shadow = QGraphicsDropShadowEffect(self.shuffle_button)
+        shuffle_shadow.setBlurRadius(40)
+        shuffle_shadow.setOffset(0, 10)
+        shuffle_shadow.setColor(ORANGE_TRACE.shadow)
+        self.shuffle_button.setGraphicsEffect(shuffle_shadow)
+        self.shuffle_button.clicked.connect(self._on_shuffle_clicked)
+        self.shuffle_button.raise_()
+        self._update_shuffle_floating_visibility()
 
         # === FLOATING TAG PANEL (overlay on image grid viewport) ===
         self._left_panel_expanded = False
@@ -1699,12 +1717,32 @@ class MainWindow(QMainWindow):
             )
             self._grid_bottom_fade.raise_()
         # Start session stays above tag rail, overlay, and tag popover
-        if hasattr(self, "session_settings_btn"):
-            hint = self.session_settings_btn.sizeHint()
-            x = max(margin, (viewport.width() - hint.width()) // 2)
-            y = max(margin, viewport.height() - hint.height() - margin)
-            self.session_settings_btn.setGeometry(x, y, hint.width(), hint.height())
-            self.session_settings_btn.raise_()
+        session_btn = getattr(self, "session_settings_btn", None)
+        shuffle_btn = getattr(self, "shuffle_button", None)
+        if session_btn is not None:
+            session_hint = session_btn.sizeHint()
+            y = max(margin, viewport.height() - session_hint.height() - margin)
+            shuffle_gap = 12
+            if shuffle_btn is not None and shuffle_btn.isVisible():
+                shuffle_hint = shuffle_btn.sizeHint()
+                group_w = shuffle_hint.width() + shuffle_gap + session_hint.width()
+                group_x = max(margin, (viewport.width() - group_w) // 2)
+                shuffle_btn.setGeometry(
+                    group_x, y, shuffle_hint.width(), shuffle_hint.height()
+                )
+                shuffle_btn.raise_()
+                session_btn.setGeometry(
+                    group_x + shuffle_hint.width() + shuffle_gap,
+                    y,
+                    session_hint.width(),
+                    session_hint.height(),
+                )
+            else:
+                x = max(margin, (viewport.width() - session_hint.width()) // 2)
+                session_btn.setGeometry(
+                    x, y, session_hint.width(), session_hint.height()
+                )
+            session_btn.raise_()
 
     def _get_default_tags_from_path(self, default_tags_path: Path) -> Set[str]:
         """
@@ -1940,7 +1978,7 @@ class MainWindow(QMainWindow):
             self.sort_combo.setToolTip(f"Sort by: {SORT_OPTIONS[index][1]}")
         # Show/hide shuffle button based on selected sort
         is_random_sort = index == 6  # Random is index 6
-        self.shuffle_button.setVisible(is_random_sort)
+        self._update_shuffle_floating_visibility()
 
         # Reset shuffle counter when switching away from random sort
         if not is_random_sort:
