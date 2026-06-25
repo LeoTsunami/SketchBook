@@ -102,7 +102,9 @@ from gui.tag_shelves import (
 )
 from gui.startup_sort_worker import StartupSortRunnable, StartupSortSignals
 from core.session_manager import SessionManager
-from gui.icon_utils import find_tag_icon, invert_icon
+from gui.grid_display_flyout import GridDisplayFlyout
+from gui.sort_flyout import SortFlyout
+from gui.icon_utils import find_tag_icon, invert_icon, load_white_icon
 import os
 import json
 
@@ -162,6 +164,16 @@ TAG_LIBRARY_TAG_SHADOW_BLUR_PX = 7
 TAG_LIBRARY_TAG_SHADOW_OFFSET_PX = 2
 TAG_LIBRARY_TAG_SHADOW_ALPHA = 100
 TAG_LIBRARY_OVERLAY_HORIZONTAL_MARGIN_PX = 20  # TagPanelOverlay layout left+right (10+10)
+# Sort combo: short visible labels, longer tooltips (index matches sort_map).
+SORT_OPTIONS: list[tuple[str, str]] = [
+    ("Most recent", "Most Recent First"),
+    ("Oldest", "Oldest First"),
+    ("A→Z", "Filename A→Z"),
+    ("Z→A", "Filename Z→A"),
+    ("Lightest", "Lightest First"),
+    ("Heaviest", "Heaviest First"),
+    ("Random", "Session Course Random"),
+]
 # Vertical scrollbar gutter only (do not also shrink grid width or we get h-scroll).
 TAG_LIBRARY_SCROLLBAR_INSET_RIGHT_PX = 0
 TAG_LIBRARY_SCROLLBAR_INSET_BOTTOM_PX = 10
@@ -421,13 +433,13 @@ class DraggableTagButton(QPushButton):
             drag.setPixmap(pixmap)
 
             host = self.window()
-            if hasattr(host, "_start_tag_panel_drag_outside_poll"):
-                host._start_tag_panel_drag_outside_poll()
+            if hasattr(host, "_begin_tag_library_drag_session"):
+                host._begin_tag_library_drag_session()
             try:
                 drag.exec_(Qt.MoveAction)
             finally:
-                if hasattr(host, "_stop_tag_panel_drag_outside_poll"):
-                    host._stop_tag_panel_drag_outside_poll()
+                if hasattr(host, "_end_tag_library_drag_session"):
+                    host._end_tag_library_drag_session()
 
             return
 
@@ -445,7 +457,8 @@ class WrappingDraggableTagButton(DraggableTagButton):
 
     def __init__(self, text: str, cell_width: int, parent=None):
         super().__init__("", parent)
-        self._cell_width = cell_width
+        self._cell_width = 0  # sentinel: 0 forces first set_cell_width to always run
+        self._geometry_valid = False
         self._source_icon: Optional[QIcon] = None
         self._icon_label: Optional[QLabel] = None
         self._text_label = QLabel(text)
@@ -478,14 +491,20 @@ class WrappingDraggableTagButton(DraggableTagButton):
     # ------------------------------------------------------------------
 
     def set_cell_width(self, width: int, *, min_w: int = TAG_LIBRARY_TAG_CELL_MIN_WIDTH_PX) -> None:
-        """Set fixed cell width and recompute chip geometry."""
-        self._cell_width = max(min_w, width)
+        """Set fixed cell width and recompute chip geometry (no-op if width unchanged)."""
+        new_w = max(min_w, width)
+        if new_w == self._cell_width and self._geometry_valid:
+            return  # nothing to do – avoids cascading geometry recalculations
+        self._cell_width = new_w
         self.setFixedWidth(self._cell_width)
         self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setProperty("tagLibraryCell", True)
+        self._geometry_valid = True
         self._sync_chip_geometry()
 
     def setText(self, text: str) -> None:
+        if self._text_label.text() == text:
+            return
         self._text_label.setText(text)
         self._sync_chip_geometry()
 
@@ -700,11 +719,15 @@ class MainWindow(QMainWindow):
             None  # cursor poll: QDrag often skips Leave on the overlay (Windows)
         )
         self._tag_grid_hover_expand_timer: Optional[QTimer] = (
-            None  # expand category/tag after 0.5s hover during drag
+            None  # expand category/tag after 0.8s hover during drag
         )
         self._tag_grid_hover_target: Optional[Tuple[str, str]] = (
             None  # (role, key) under cursor
         )
+        self._hover_blink_timer: Optional[QTimer] = None
+        self._hover_blink_widget: Optional[QWidget] = None
+        self._hover_blink_state: bool = False
+        self._drag_ghost_placeholders: List[Tuple[QWidget, Any, Any, int, int, int, int]] = []
 
         # Window setup
         self.setWindowTitle("SketchBook")
@@ -1022,16 +1045,22 @@ class MainWindow(QMainWindow):
         ctrl_layout.setContentsMargins(0, 0, 0, 0)
         ctrl_layout.setSpacing(6)
 
-        self.shuffle_button = QPushButton("Shuffle", self._life_drawing_controls)
-        self.shuffle_button.setFixedWidth(70)
+        grid_icon_px = 18
+        grid_ctrl_btn_px = 28
+
+        shuffle_icon = load_white_icon("shuffle.png", grid_icon_px)
+        self.shuffle_button = QPushButton(self._life_drawing_controls)
+        self.shuffle_button.setIcon(shuffle_icon)
+        self.shuffle_button.setIconSize(QSize(grid_icon_px, grid_icon_px))
+        self.shuffle_button.setToolTip("Shuffle random order")
+        self.shuffle_button.setFixedSize(grid_ctrl_btn_px, grid_ctrl_btn_px)
         self.shuffle_button.setStyleSheet("""
             QPushButton {
                 background-color: #3c3f41;
                 color: #ffffff;
                 border: 1px solid #4d4d4d;
                 border-radius: 4px;
-                padding: 4px 8px;
-                font-size: 11px;
+                padding: 4px;
             }
             QPushButton:hover {
                 background-color: #4b6eaf;
@@ -1043,46 +1072,36 @@ class MainWindow(QMainWindow):
         self.shuffle_button.clicked.connect(self._on_shuffle_clicked)
         self.shuffle_button.hide()
 
-        sort_label = QLabel("Sort:", self._life_drawing_controls)
-        sort_label.setStyleSheet("color: #ffffff; font-size: 11px;")
-        self.sort_combo = QComboBox(self._life_drawing_controls)
-        self.sort_combo.addItems(
-            [
-                "Most Recent First",
-                "Oldest First",
-                "Filename A→Z",
-                "Filename Z→A",
-                "Lightest First",
-                "Heaviest First",
-                "Session Course Random",
-            ]
-        )
+        sort_icon = load_white_icon("sort.png", grid_icon_px)
+        grid_display_icon = load_white_icon("imageGrid.png", grid_icon_px)
+        self._sort_flyout = SortFlyout(sort_icon, self._life_drawing_controls)
+        self.sort_combo = self._sort_flyout.sort_combo
+        for short_label, tooltip_label in SORT_OPTIONS:
+            self.sort_combo.addItem(short_label)
+            self.sort_combo.setItemData(
+                self.sort_combo.count() - 1,
+                f"Sort by: {tooltip_label}",
+                Qt.ToolTipRole,
+            )
         default_sort_index = settings.get("ui.grid.sort_index", 6)
         if not 0 <= default_sort_index < self.sort_combo.count():
             default_sort_index = 6
         self.sort_combo.setCurrentIndex(default_sort_index)
-        self.sort_combo.setFixedWidth(150)
         self.sort_combo.currentIndexChanged.connect(self._on_sort_changed)
         self.shuffle_button.setVisible(self.sort_combo.currentIndex() == 6)
-
-        columns_label = QLabel("Columns:", self._life_drawing_controls)
-        columns_label.setStyleSheet("color: #ffffff; font-size: 11px;")
-        self.columns_slider = QSlider(Qt.Horizontal, self._life_drawing_controls)
-        self.columns_slider.setMinimum(3)
-        self.columns_slider.setMaximum(10)
-        self.columns_slider.setValue(settings.get("ui.grid.columns", 4))
-        self.columns_slider.setTickPosition(QSlider.NoTicks)
-        self.columns_slider.setFixedWidth(100)
-        self.columns_slider.valueChanged.connect(self._on_columns_changed)
-        self.columns_count = QLabel(
-            str(self.columns_slider.value()), self._life_drawing_controls
+        self.sort_combo.setToolTip(
+            f"Sort by: {SORT_OPTIONS[self.sort_combo.currentIndex()][1]}"
         )
-        self.columns_count.setStyleSheet("color: #ffffff; font-size: 11px;")
 
-        fit_label = QLabel("Display:", self._life_drawing_controls)
-        fit_label.setStyleSheet("color: #ffffff; font-size: 11px;")
-        self.fit_mode_combo = QComboBox(self._life_drawing_controls)
-        self.fit_mode_combo.addItems(FitMode.labels())
+        self._grid_display_flyout = GridDisplayFlyout(
+            grid_display_icon, self._life_drawing_controls
+        )
+        self.columns_slider = self._grid_display_flyout.columns_slider
+        self.columns_count = self._grid_display_flyout.columns_count
+        self.fit_mode_combo = self._grid_display_flyout.fit_mode_combo
+        self.columns_slider.setValue(settings.get("ui.grid.columns", 4))
+        self.columns_count.setText(str(self.columns_slider.value()))
+        self.columns_slider.valueChanged.connect(self._on_columns_changed)
         stored_fit = settings.get("ui.grid.fit_mode", None)
         if stored_fit is None:
             default_fit = FitMode.CROP_ALL.value
@@ -1091,17 +1110,11 @@ class MainWindow(QMainWindow):
         if not 0 <= default_fit < self.fit_mode_combo.count():
             default_fit = FitMode.CROP_ALL.value
         self.fit_mode_combo.setCurrentIndex(default_fit)
-        self.fit_mode_combo.setFixedWidth(100)
         self.fit_mode_combo.currentIndexChanged.connect(self._on_fit_mode_changed)
 
         ctrl_layout.addWidget(self.shuffle_button, 0, Qt.AlignVCenter)
-        ctrl_layout.addWidget(sort_label, 0, Qt.AlignVCenter)
-        ctrl_layout.addWidget(self.sort_combo, 0, Qt.AlignVCenter)
-        ctrl_layout.addWidget(columns_label, 0, Qt.AlignVCenter)
-        ctrl_layout.addWidget(self.columns_slider, 0, Qt.AlignVCenter)
-        ctrl_layout.addWidget(self.columns_count, 0, Qt.AlignVCenter)
-        ctrl_layout.addWidget(fit_label, 0, Qt.AlignVCenter)
-        ctrl_layout.addWidget(self.fit_mode_combo, 0, Qt.AlignVCenter)
+        ctrl_layout.addWidget(self._sort_flyout, 0, Qt.AlignVCenter)
+        ctrl_layout.addWidget(self._grid_display_flyout, 0, Qt.AlignVCenter)
 
         row.addWidget(self._life_drawing_controls, 0, Qt.AlignVCenter)
 
@@ -1910,8 +1923,10 @@ class MainWindow(QMainWindow):
 
     def _on_sort_changed(self, index: int):
         """Handle sort order change."""
+        if 0 <= index < len(SORT_OPTIONS):
+            self.sort_combo.setToolTip(f"Sort by: {SORT_OPTIONS[index][1]}")
         # Show/hide shuffle button based on selected sort
-        is_random_sort = index == 6  # "Session Course Random" is index 6
+        is_random_sort = index == 6  # Random is index 6
         self.shuffle_button.setVisible(is_random_sort)
 
         # Reset shuffle counter when switching away from random sort
@@ -2453,9 +2468,9 @@ class MainWindow(QMainWindow):
                 btn.set_cell_width(category_w, min_w=category_w)
             else:
                 btn.set_cell_width(cell_w)
-        # Shelf headers (flat QPushButton, not WrappingDraggableTagButton)
-        for header in self.tags_grid_container.findChildren(QPushButton):
-            if header.property("tagGridRole") == "category" and header.isFlat():
+        # Shelf headers are QLabel (converted from QPushButton to avoid consuming mouse events)
+        for header in self.tags_grid_container.findChildren(QLabel):
+            if header.property("tagGridRole") == "category":
                 header.setFixedWidth(category_w)
         self.tags_grid_container.updateGeometry()
         self.tags_grid_container.adjustSize()
@@ -2626,86 +2641,81 @@ class MainWindow(QMainWindow):
         """
         Apply unified gradient style + 4 visual states to any tag library button.
 
+        The heavy stylesheet string is generated once per (branch_key, depth) and
+        cached on the button.  Subsequent calls only refresh the tagState property
+        when the state actually changed, avoiding costly setStyleSheet / unpolish
+        / polish calls on every _sync_tag_grid_state sweep.
+
         States:
             rest       – vivid gradient, subtle outline
             hover      – brighter gradient, lighter border (via :hover QSS)
             selected   – blue-tinted gradient + blue border  (selected_for_drag=True)
             active     – green-tinted gradient + green border (active=True)
         """
-        bg = self._get_hierarchy_background_color(branch_key, depth)
         dark_theme = settings.get("ui.theme", "dark") != "light"
-        text = "#f5f5f5" if dark_theme else "#1a1a1a"
 
-        # --- Gradients for all 4 states ----------------------------------------
-        # rest
-        grad_rest = self._chip_gradient(bg, lighter=108, darker=112, alpha_top=220, alpha_bot=200)
-        # hover (brighter)
-        grad_hover = self._chip_gradient(bg, lighter=128, darker=108, alpha_top=240, alpha_bot=225)
-        # selected: tint toward blue
-        blue_tint = QColor(80, 150, 255)
-        bg_sel = self._blend_color(bg, blue_tint, 0.30)
-        grad_sel = self._chip_gradient(bg_sel, lighter=115, darker=108, alpha_top=235, alpha_bot=215)
-        grad_sel_h = self._chip_gradient(bg_sel, lighter=135, darker=105, alpha_top=245, alpha_bot=230)
-        # active (used as tag): tint toward green
-        green_tint = QColor(80, 220, 100)
-        bg_act = self._blend_color(bg, green_tint, 0.30)
-        grad_act = self._chip_gradient(bg_act, lighter=115, darker=108, alpha_top=235, alpha_bot=215)
-        grad_act_h = self._chip_gradient(bg_act, lighter=135, darker=105, alpha_top=245, alpha_bot=230)
+        # --- Stylesheet: only rebuild if (branch_key, depth) changed -------------
+        style_key = (branch_key, depth)
+        if button.property("_styleKey") != str(style_key):
+            bg = self._get_hierarchy_background_color(branch_key, depth)
+            text = "#f5f5f5" if dark_theme else "#1a1a1a"
 
-        # --- Border colors -------------------------------------------------------
-        border_idle = tag_library_idle_border_css(bg)
-        border_hover = f"2px solid {bg.lighter(165).name()}"
-        blue_border = "#5aabff" if dark_theme else "#2b6cb0"
-        green_border = "#72f572" if dark_theme else "#2fa84f"
+            grad_rest = self._chip_gradient(bg, lighter=108, darker=112, alpha_top=220, alpha_bot=200)
+            grad_hover = self._chip_gradient(bg, lighter=128, darker=108, alpha_top=240, alpha_bot=225)
 
-        # --- Unified font/padding (same for all button kinds) --------------------
-        font_px = TAG_LIBRARY_FONT_SUBTAG_PX
-        font_css = f"font-size: {font_px}px; font-weight: 600;"
-        # WrappingDraggableTagButton manages its own internal layout; no QSS padding
-        is_wrapping = isinstance(button, WrappingDraggableTagButton)
-        padding = "0px" if is_wrapping else f"{TAG_LIBRARY_TAG_STYLE_V_PADDING_PX}px 4px"
+            blue_tint = QColor(80, 150, 255)
+            bg_sel = self._blend_color(bg, blue_tint, 0.30)
+            grad_sel = self._chip_gradient(bg_sel, lighter=115, darker=108, alpha_top=235, alpha_bot=215)
+            grad_sel_h = self._chip_gradient(bg_sel, lighter=135, darker=105, alpha_top=245, alpha_bot=230)
 
-        # --- Assemble stylesheet -------------------------------------------------
-        def _block(selector: str, grad: str, border: str) -> str:
-            return (
-                f"{selector} {{ padding: {padding}; color: {text}; {font_css} "
-                f"background: {grad}; border: {border}; border-radius: 5px; }}\n"
+            green_tint = QColor(80, 220, 100)
+            bg_act = self._blend_color(bg, green_tint, 0.30)
+            grad_act = self._chip_gradient(bg_act, lighter=115, darker=108, alpha_top=235, alpha_bot=215)
+            grad_act_h = self._chip_gradient(bg_act, lighter=135, darker=105, alpha_top=245, alpha_bot=230)
+
+            border_idle = tag_library_idle_border_css(bg)
+            border_hover = f"2px solid {bg.lighter(165).name()}"
+            blue_border = "#5aabff" if dark_theme else "#2b6cb0"
+            green_border = "#72f572" if dark_theme else "#2fa84f"
+
+            font_px = TAG_LIBRARY_FONT_SUBTAG_PX
+            font_css = f"font-size: {font_px}px; font-weight: 600;"
+            is_wrapping = isinstance(button, WrappingDraggableTagButton)
+            padding = "0px" if is_wrapping else f"{TAG_LIBRARY_TAG_STYLE_V_PADDING_PX}px 4px"
+
+            def _block(selector: str, grad: str, border: str) -> str:
+                return (
+                    f"{selector} {{ padding: {padding}; color: {text}; {font_css} "
+                    f"background: {grad}; border: {border}; border-radius: 5px; }}\n"
+                )
+
+            css = (
+                _block("QPushButton", grad_rest, border_idle)
+                + _block("QPushButton:hover", grad_hover, border_hover)
+                + _block('QPushButton[tagState="selected"]', grad_sel, f"2px solid {blue_border}")
+                + _block('QPushButton[tagState="selected"]:hover', grad_sel_h, f"2px solid {blue_border}")
+                + _block('QPushButton[tagState="active"]', grad_act, f"2px solid {green_border}")
+                + _block('QPushButton[tagState="active"]:hover', grad_act_h, f"2px solid {green_border}")
             )
+            button.setStyleSheet(css)
+            button.setProperty("_styleKey", str(style_key))
+            button.setCursor(Qt.PointingHandCursor)
 
-        css = (
-            _block("QPushButton", grad_rest, border_idle)
-            + _block("QPushButton:hover", grad_hover, border_hover)
-            + _block('QPushButton[tagState="selected"]', grad_sel, f"2px solid {blue_border}")
-            + _block('QPushButton[tagState="selected"]:hover', grad_sel_h, f"2px solid {blue_border}")
-            + _block('QPushButton[tagState="active"]', grad_act, f"2px solid {green_border}")
-            + _block('QPushButton[tagState="active"]:hover', grad_act_h, f"2px solid {green_border}")
-        )
-        button.setStyleSheet(css)
+            # Drop shadow: create once per button
+            shadow = button.graphicsEffect()
+            if not isinstance(shadow, QGraphicsDropShadowEffect):
+                shadow = QGraphicsDropShadowEffect(button)
+                button.setGraphicsEffect(shadow)
+                shadow.setBlurRadius(TAG_LIBRARY_TAG_SHADOW_BLUR_PX)
+                shadow.setOffset(0, TAG_LIBRARY_TAG_SHADOW_OFFSET_PX)
+                shadow.setColor(QColor(0, 0, 0, TAG_LIBRARY_TAG_SHADOW_ALPHA))
 
-        # --- Sync state property -------------------------------------------------
-        if selected_for_drag:
-            button.setProperty("tagState", "selected")
-        elif active:
-            button.setProperty("tagState", "active")
-        else:
-            button.setProperty("tagState", "")
-        # Force QSS re-evaluation after property change
-        button.style().unpolish(button)
-        button.style().polish(button)
-
-        button.setCursor(Qt.PointingHandCursor)
-
-        # --- Drop shadow ---------------------------------------------------------
-        shadow = button.graphicsEffect()
-        if not isinstance(shadow, QGraphicsDropShadowEffect):
-            shadow = QGraphicsDropShadowEffect(button)
-            button.setGraphicsEffect(shadow)
-        shadow.setBlurRadius(TAG_LIBRARY_TAG_SHADOW_BLUR_PX)
-        shadow.setOffset(0, TAG_LIBRARY_TAG_SHADOW_OFFSET_PX)
-        shadow.setColor(QColor(0, 0, 0, TAG_LIBRARY_TAG_SHADOW_ALPHA))
-
-        if is_wrapping:
-            button._sync_chip_geometry()
+        # --- State property: only re-polish when it actually changes -------------
+        new_state = "selected" if selected_for_drag else ("active" if active else "")
+        if button.property("tagState") != new_state:
+            button.setProperty("tagState", new_state)
+            button.style().unpolish(button)
+            button.style().polish(button)
 
     def _on_icon_preview(self, tag: str, icon_filename: Optional[str]) -> None:
         """Live preview: show the chosen icon on the tag button while the icon picker dialog is open."""
@@ -2797,8 +2807,9 @@ class MainWindow(QMainWindow):
                     self._deactivate_subcategory(category, tag)
                 else:
                     category_tags.add(tag)
-        self._apply_category_filters()
+        # Update tag library visuals immediately, then let image grid catch up async.
         self._sync_tag_grid_state()
+        QTimer.singleShot(0, self._apply_category_filters)
 
     def _deactivate_category(self, category: str) -> None:
         """
@@ -2952,6 +2963,39 @@ class MainWindow(QMainWindow):
         buttons = self._subcategory_buttons.get(category, {})
         return buttons.get(tag_name)
 
+    def _tag_filters_floating_btn_global_rect(self) -> Optional[QRect]:
+        """
+        Return the Tags-filters rail button bounds in screen coordinates.
+
+        Returns:
+            QRect or None if the button is missing or hidden.
+        """
+        btn = getattr(self, "tag_filters_floating_btn", None)
+        if btn is None or not btn.isVisible():
+            return None
+        return QRect(btn.mapToGlobal(QPoint(0, 0)), btn.size())
+
+    def _begin_tag_library_drag_session(self) -> None:
+        """
+        Start shared drag helpers: panel fold/reopen poll and tag-library autoscroll.
+
+        Used for every tag-library QDrag (user tags, categories, multi-select).
+        """
+        self._tag_drag_in_progress = True
+        self._start_tag_panel_drag_outside_poll()
+        if self._tag_drag_scroll_timer is None:
+            self._tag_drag_scroll_timer = QTimer(self)
+            self._tag_drag_scroll_timer.timeout.connect(self._on_tag_drag_scroll_tick)
+        self._tag_drag_scroll_timer.start(120)
+
+    def _end_tag_library_drag_session(self) -> None:
+        """Stop drag helpers after any tag-library QDrag ends."""
+        self._tag_drag_in_progress = False
+        self._stop_tag_panel_drag_outside_poll()
+        self._tag_grid_hover_expand_cancel()
+        if self._tag_drag_scroll_timer is not None:
+            self._tag_drag_scroll_timer.stop()
+
     def _start_tag_panel_drag_outside_poll(self) -> None:
         """
         Poll the cursor while a tag-library QDrag runs.
@@ -2976,39 +3020,66 @@ class MainWindow(QMainWindow):
             self._tag_panel_drag_outside_poll_timer.stop()
 
     def _on_tag_panel_drag_outside_poll_tick(self) -> None:
-        """Hide the tag panel when the cursor is outside it during an active library drag."""
+        """
+        During a tag-library drag: fold panel over the image grid, reopen on rail/panel hover.
+
+        Keeps polling while the drag runs (even when folded) so hovering the lateral
+        Tags-filters button can slide the library back in.
+        """
+        if not self._tag_drag_in_progress:
+            self._stop_tag_panel_drag_outside_poll()
+            return
         ov = getattr(self, "_tag_panel_overlay", None)
         if ov is None:
             self._stop_tag_panel_drag_outside_poll()
             return
-        if not ov.is_panel_visible():
-            self._stop_tag_panel_drag_outside_poll()
-            return
         if ov.is_dismiss_locked():
             return
-        if ov.panel_global_rect().contains(QCursor.pos()):
+
+        pos = QCursor.pos()
+        on_panel = ov.panel_global_rect().contains(pos)
+        rail_rect = self._tag_filters_floating_btn_global_rect()
+        on_rail = rail_rect is not None and rail_rect.contains(pos)
+
+        if on_panel or on_rail:
+            if not ov.is_panel_visible():
+                ov.show_animated()
+                self._left_panel_expanded = True
+                QTimer.singleShot(0, self._position_floating_grid_overlays)
             return
-        ov.hide_animated()
-        self._stop_tag_panel_drag_outside_poll()
+
+        if ov.is_panel_visible():
+            ov.hide_animated()
+            self._left_panel_expanded = False
 
     def _on_tag_drag_scroll_tick(self) -> None:
         """During tag drag: scroll tag library when cursor is near top or bottom edge."""
         if not self._tag_drag_in_progress:
+            return
+        ov = getattr(self, "_tag_panel_overlay", None)
+        if ov is None or not ov.is_panel_visible():
             return
         scroll = getattr(self, "tags_scroll_area", None)
         if not scroll:
             return
         viewport = scroll.viewport()
         vbar = scroll.verticalScrollBar()
-        if not viewport or not vbar.isVisible():
+        if not viewport or vbar is None:
             return
-        margin = 40
-        step = 24
-        global_rect = QRect(viewport.mapToGlobal(QPoint(0, 0)), viewport.size())
+        margin = 48
+        step = 28
         pos = QCursor.pos()
-        if pos.y() < global_rect.top() + margin:
+        # Prefer scroll viewport edges; fall back to whole panel when viewport is narrow.
+        scroll_rect = QRect(viewport.mapToGlobal(QPoint(0, 0)), viewport.size())
+        panel_rect = ov.panel_global_rect()
+        zone = scroll_rect if scroll_rect.contains(pos) else (
+            panel_rect if panel_rect.contains(pos) else None
+        )
+        if zone is None:
+            return
+        if pos.y() < zone.top() + margin:
             vbar.setValue(max(0, vbar.value() - step))
-        elif pos.y() > global_rect.bottom() - margin:
+        elif pos.y() > zone.bottom() - margin:
             vbar.setValue(min(vbar.maximum(), vbar.value() + step))
 
     def _start_tag_button_drag(self, button: QWidget, tag_text: str) -> None:
@@ -3066,8 +3137,9 @@ class MainWindow(QMainWindow):
             painter.end()
         if hot_spot is None:
             hot_spot = pixmap.rect().center()
-        # Remove all selected tags from their layouts and hide (so they're all "with the cursor")
+        # Remove all selected tags from their layouts, replace with ghost placeholders.
         restore_list: List[Tuple[QWidget, QWidget, Any, int, int, int, int]] = []
+        self._drag_ghost_placeholders = []
         for t in tags_to_drop:
             btn = self._get_tag_button_for(t)
             if not btn or not btn.isVisible():
@@ -3080,7 +3152,18 @@ class MainWindow(QMainWindow):
                 if idx >= 0 and hasattr(lay, "getItemPosition"):
                     r, c, rspan, cspan = lay.getItemPosition(idx)
             if lay is not None and r >= 0:
+                # Insert a semi-transparent ghost in the vacated cell
+                ghost = QWidget(cont)
+                ghost.setFixedSize(btn.width(), btn.height())
+                ghost.setStyleSheet(
+                    "background: rgba(255,255,255,0.07);"
+                    "border: 1px dashed rgba(255,255,255,0.25);"
+                    "border-radius: 6px;"
+                )
+                ghost.show()
                 lay.removeWidget(btn)
+                lay.addWidget(ghost, r, c, rspan, cspan)
+                self._drag_ghost_placeholders.append((ghost, cont, lay, r, c, rspan, cspan))
             btn.hide()
             restore_list.append((btn, cont, lay, r, c, rspan, cspan))
         drag = QDrag(button)
@@ -3096,20 +3179,20 @@ class MainWindow(QMainWindow):
         drag.setMimeData(mime_data)
         drag.setPixmap(pixmap)
         drag.setHotSpot(hot_spot)
-        # Auto-scroll tag library when cursor near top/bottom during drag (timer runs in nested event loop)
-        self._tag_drag_in_progress = True
-        self._start_tag_panel_drag_outside_poll()
-        if self._tag_drag_scroll_timer is None:
-            self._tag_drag_scroll_timer = QTimer(self)
-            self._tag_drag_scroll_timer.timeout.connect(self._on_tag_drag_scroll_tick)
-        self._tag_drag_scroll_timer.start(120)
+        self._begin_tag_library_drag_session()
         try:
             result = drag.exec_(Qt.MoveAction)
         finally:
-            self._tag_drag_in_progress = False
-            self._stop_tag_panel_drag_outside_poll()
-            if self._tag_drag_scroll_timer is not None:
-                self._tag_drag_scroll_timer.stop()
+            self._end_tag_library_drag_session()
+            # Always remove ghost placeholders
+            for ghost, cont, lay, r, c, rspan, cspan in self._drag_ghost_placeholders:
+                try:
+                    if lay is not None:
+                        lay.removeWidget(ghost)
+                    ghost.deleteLater()
+                except Exception:
+                    pass
+            self._drag_ghost_placeholders = []
         # Restore all removed tags to their original place if drop was cancelled or on empty/image (grid not reloaded)
         if not self._tag_drop_was_on_grid and restore_list:
             try:
@@ -3310,19 +3393,23 @@ class MainWindow(QMainWindow):
         ):
             md = event.mimeData()
             if mime_data_looks_like_tag_library_drag(md):
-                btn = getattr(self, "tag_filters_floating_btn", None)
                 ov = getattr(self, "_tag_panel_overlay", None)
-                if (
-                    btn is not None
-                    and ov is not None
-                    and btn.isVisible()
-                    and hasattr(event, "pos")
-                    and btn.geometry().contains(event.pos())
-                    and not ov.is_panel_visible()
-                ):
-                    ov.show_animated()
-                    self._left_panel_expanded = True
-                    QTimer.singleShot(0, self._position_floating_grid_overlays)
+                rail_rect = self._tag_filters_floating_btn_global_rect()
+                if ov is not None and rail_rect is not None:
+                    pos = (
+                        event.globalPosition().toPoint()
+                        if hasattr(event, "globalPosition")
+                        and hasattr(event.globalPosition(), "toPoint")
+                        else (
+                            self.image_grid.viewport().mapToGlobal(event.pos())
+                            if hasattr(event, "pos")
+                            else QCursor.pos()
+                        )
+                    )
+                    if rail_rect.contains(pos) and not ov.is_panel_visible():
+                        ov.show_animated()
+                        self._left_panel_expanded = True
+                        QTimer.singleShot(0, self._position_floating_grid_overlays)
             return False
 
         # Keep floating grid overlays (Tags filters, Start session) anchored on viewport resize.
@@ -3411,7 +3498,17 @@ class MainWindow(QMainWindow):
                 isinstance(obj, WrappingDraggableTagButton)
                 and not bool(obj.property("tagGridCategory"))
             )
-            is_empty_area = obj == viewport or obj == self.tags_grid_container
+            # "Empty area" = anything in the tag library that isn't a tag chip or scrollbar.
+            # Shelf headers are QLabel with WA_TransparentForMouseEvents so their clicks
+            # already fall through to the viewport; containers/margins/spacing also qualify.
+            from qtpy.QtWidgets import QScrollBar as _QScrollBar
+            is_interactive_btn = isinstance(obj, DraggableTagButton)
+            is_scrollbar = isinstance(obj, _QScrollBar)
+            is_empty_area = (
+                self._is_in_tag_library(obj)
+                and not is_interactive_btn
+                and not is_scrollbar
+            )
 
             # --- Ctrl / Shift + click on any subtag chip ---
             if has_modifier and is_subtag_btn:
@@ -3423,16 +3520,14 @@ class MainWindow(QMainWindow):
                         self._tag_library_ctrl_click(tag)
                 return True  # consume: don't fire filter toggle
 
-            # --- Simple click anywhere: clear selection (handled by button clicks) ---
-            if not has_modifier and is_subtag_btn:
-                # Clear library selection on a plain click; filter logic runs normally
-                if self._tag_library_selection:
-                    self._tag_library_selection.clear()
-                    self._last_selected_tag = None
-                    self._sync_tag_grid_state()
-                return False  # let button receive the click
+            # --- Simple click anywhere without modifier: clear selection ---
+            if not has_modifier and self._tag_library_selection:
+                self._tag_library_selection.clear()
+                self._last_selected_tag = None
+                self._sync_tag_grid_state()
+                # Do NOT consume the event so buttons still fire their click
 
-            # --- Rubber-band drag from empty area (modifier optional) ---
+            # --- Rubber-band drag from any empty/non-interactive area ---
             if is_empty_area:
                 self._tag_library_selection_start = vp_pos
                 self._tag_library_is_selecting = True
@@ -3674,7 +3769,7 @@ class MainWindow(QMainWindow):
             widget.style().polish(widget)
 
     def _on_tag_grid_drag_hover(self, target: Optional[QWidget]) -> None:
-        """While dragging over the tag grid: start 0.5s timer to expand category/tag under cursor."""
+        """While dragging over the tag grid: 0.8s hover expand + blink animation on target."""
         if target is None:
             self._tag_grid_hover_expand_cancel()
             return
@@ -3688,13 +3783,77 @@ class MainWindow(QMainWindow):
             return
         self._tag_grid_hover_expand_cancel()
         self._tag_grid_hover_target = current
+        # Start blink animation on the hovered target widget
+        self._start_hover_blink(target)
         if self._tag_grid_hover_expand_timer is None:
             self._tag_grid_hover_expand_timer = QTimer(self)
             self._tag_grid_hover_expand_timer.setSingleShot(True)
             self._tag_grid_hover_expand_timer.timeout.connect(
                 self._tag_grid_hover_expand_fire
             )
-        self._tag_grid_hover_expand_timer.start(500)
+        self._tag_grid_hover_expand_timer.start(800)
+
+    def _start_hover_blink(self, widget: QWidget) -> None:
+        """
+        Start a blink animation on widget to signal an imminent auto-expand.
+
+        Uses a transparent overlay QFrame that pulses on top of the widget so the
+        blink does not interfere with the inline QSS already applied to tag buttons.
+
+        Args:
+            widget: The category or tag button being hovered.
+        """
+        self._stop_hover_blink()
+        self._hover_blink_widget = widget
+        self._hover_blink_state = False
+
+        # Overlay: sits on top of the widget inside its parent
+        overlay = QFrame(widget)
+        overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        overlay.setGeometry(widget.rect())
+        overlay.setStyleSheet(
+            "QFrame { border: 3px solid rgba(255,200,60,0); border-radius: 6px;"
+            " background: rgba(255,200,60,0); }"
+        )
+        overlay.show()
+        self._hover_blink_overlay: Optional[QFrame] = overlay  # type: ignore[attr-defined]
+
+        self._hover_blink_timer = QTimer(self)
+        self._hover_blink_timer.setInterval(160)
+        self._hover_blink_timer.timeout.connect(self._on_hover_blink_tick)
+        self._hover_blink_timer.start()
+
+    def _on_hover_blink_tick(self) -> None:
+        """Pulse the overlay border/glow between bright and dim."""
+        w = self._hover_blink_widget
+        overlay = getattr(self, "_hover_blink_overlay", None)
+        if w is None or overlay is None or not w.isVisible():
+            self._stop_hover_blink()
+            return
+        self._hover_blink_state = not self._hover_blink_state
+        if self._hover_blink_state:
+            overlay.setStyleSheet(
+                "QFrame { border: 3px solid rgba(255,200,60,220); border-radius: 6px;"
+                " background: rgba(255,200,60,35); }"
+            )
+        else:
+            overlay.setStyleSheet(
+                "QFrame { border: 3px solid rgba(255,200,60,50); border-radius: 6px;"
+                " background: rgba(255,200,60,8); }"
+            )
+        overlay.setGeometry(w.rect())
+
+    def _stop_hover_blink(self) -> None:
+        """Stop the blink animation and destroy the overlay."""
+        if self._hover_blink_timer is not None:
+            self._hover_blink_timer.stop()
+            self._hover_blink_timer = None
+        overlay = getattr(self, "_hover_blink_overlay", None)
+        if overlay is not None:
+            overlay.deleteLater()
+            self._hover_blink_overlay = None
+        self._hover_blink_widget = None
+        self._hover_blink_state = False
 
     def _tag_grid_hover_expand_cancel(self) -> None:
         """Cancel hover-expand timer and clear target (e.g. on DragLeave or when target changes)."""
@@ -3702,6 +3861,7 @@ class MainWindow(QMainWindow):
             self._tag_grid_hover_expand_timer.stop()
             self._tag_grid_hover_expand_timer = None
         self._tag_grid_hover_target = None
+        self._stop_hover_blink()
 
     def _tag_grid_hover_expand_fire(self) -> None:
         """Expand the category or tag that was hovered for 0.5s (so user can see where to drop)."""
@@ -3730,29 +3890,33 @@ class MainWindow(QMainWindow):
         widget.setProperty("tagGridRole", role)
         widget.setProperty("tagGridKey", key)
 
-    def _build_shelf_header(self, category: str) -> QPushButton:
+    def _build_shelf_header(self, category: str) -> QLabel:
         """
-        Build a shelf section title that accepts tag drop (reparent under this shelf).
+        Build a shelf section title that accepts tag drops (reparent under this shelf).
+
+        Using QLabel instead of QPushButton so mouse events pass through to the
+        viewport for rubber-band selection, while Qt's separate drop-event system
+        still routes drops correctly.
 
         Args:
             category: Shelf name including trailing ':'.
 
         Returns:
-            Flat push button styled as a section header.
+            Styled QLabel acting as a section header and drop target.
         """
-        header = QPushButton(category)
+        header = QLabel(category)
         header.setObjectName("TagGridButton")
-        header.setFlat(True)
         header.setCursor(Qt.ArrowCursor)
         header.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         header.setFixedWidth(self._tag_library_category_row_width())
         header.setStyleSheet(
-            f"QPushButton {{ font-weight: bold; font-size: {TAG_LIBRARY_FONT_SHELF_TITLE_PX}px; "
-            "padding: 4px 6px; background-color: transparent; border: none; "
-            "text-align: left; color: #ffffff; }}"
-            "QPushButton:hover { background-color: rgba(255, 255, 255, 0.10); border-radius: 4px; }"
+            f"QLabel#TagGridButton {{ font-weight: bold; font-size: {TAG_LIBRARY_FONT_SHELF_TITLE_PX}px; "
+            "padding: 4px 6px; background-color: transparent; "
+            "color: #ffffff; }}"
         )
-        header.setCursor(Qt.PointingHandCursor)
+        # QLabel does not consume mouse events, so clicks propagate normally to the
+        # viewport and the eventFilter correctly classifies it as an empty area for
+        # rubber-band selection. Drops still work via Qt's separate drop routing.
         self._configure_tag_grid_drop_target(header, "category", category)
         return header
 
@@ -4067,6 +4231,11 @@ class MainWindow(QMainWindow):
         its children on the next row(s), then the rest. Rebuilds each category's tag container
         layout with only visible tags so the grid has no holes.
         """
+        # Never rebuild while a drag is in progress – it would destroy ghost placeholders
+        # and scramble the layout underneath the cursor.
+        if getattr(self, "_tag_drag_in_progress", False):
+            return
+
         max_cols = 3
         placements = self._user_tags_config.get("placements", {})
         for category, button in self._category_buttons.items():
@@ -4159,11 +4328,39 @@ class MainWindow(QMainWindow):
                         ),
                     )
 
+        # Compute a snapshot of currently visible tags per category so we can skip the
+        # expensive layout rebuild when nothing has changed.
+        def _build_visibility_snapshot() -> Dict[str, Any]:
+            snap: Dict[str, Any] = {}
+            for cat in self._subcategory_tag_order:
+                if is_tag_shelf(cat):
+                    continue
+                is_active = cat in self._active_categories
+                cat_subtags = self._active_subtags.get(cat, set())
+                visible: List[str] = []
+                for t, tb in self._subcategory_buttons.get(cat, {}).items():
+                    pl = placements.get(t)
+                    pt = pl.get("parent_tag") if isinstance(pl, dict) else None
+                    show = is_active and (pt is None or pt in cat_subtags)
+                    if show:
+                        visible.append(t)
+                snap[cat] = (is_active, frozenset(cat_subtags), frozenset(visible))
+            return snap
+
+        new_snapshot = _build_visibility_snapshot()
+        layout_changed = new_snapshot != getattr(self, "_tag_grid_layout_snapshot", None)
+
+        if layout_changed:
+            self._tag_grid_layout_snapshot = new_snapshot
+
         # Rebuild each category container with grouped hierarchy blocks.
         # Children are rendered inside a subtle framed block directly under their parent.
+        # Only performed when the visibility snapshot changed.
         for category in self._subcategory_tag_order:
             if is_tag_shelf(category):
                 continue
+            if not layout_changed:
+                continue  # skip expensive rebuild – only styles were touched above
             container = self._subcategory_containers.get(category)
             if not container:
                 continue
@@ -4298,23 +4495,24 @@ class MainWindow(QMainWindow):
             container.setMinimumHeight(0)
             container.setVisible(True)
 
-        # Force layout recalculation: Qt often does not recalculate when children go from
-        # hidden to visible after a full rebuild. Invalidate then activate inner layouts first,
-        # then the main grid layout (see QTBUG-66151, nested QGridLayout).
-        for container in self._subcategory_containers.values():
-            lay = container.layout()
-            if lay:
-                lay.invalidate()
-                lay.activate()
-            container.updateGeometry()
-        self.tags_grid_layout.invalidate()
-        self.tags_grid_layout.activate()
-        self.tags_grid_container.updateGeometry()
-        self.tags_grid_container.adjustSize()
-        self.tags_grid_container.update()
-        if hasattr(self, "tags_scroll_area") and self.tags_scroll_area.viewport():
-            self.tags_scroll_area.viewport().update()
-        QTimer.singleShot(0, self._apply_tag_library_cell_widths)
+        if layout_changed:
+            # Force layout recalculation: Qt often does not recalculate when children go from
+            # hidden to visible after a full rebuild. Invalidate then activate inner layouts
+            # first, then the main grid layout (see QTBUG-66151, nested QGridLayout).
+            for container in self._subcategory_containers.values():
+                lay = container.layout()
+                if lay:
+                    lay.invalidate()
+                    lay.activate()
+                container.updateGeometry()
+            self.tags_grid_layout.invalidate()
+            self.tags_grid_layout.activate()
+            self.tags_grid_container.updateGeometry()
+            self.tags_grid_container.adjustSize()
+            self.tags_grid_container.update()
+            if hasattr(self, "tags_scroll_area") and self.tags_scroll_area.viewport():
+                self.tags_scroll_area.viewport().update()
+            QTimer.singleShot(0, self._apply_tag_library_cell_widths)
 
     @staticmethod
     def _normalize_tag_for_match(tag: str) -> str:
@@ -4421,8 +4619,12 @@ class MainWindow(QMainWindow):
     def _set_button_active(self, button: QPushButton, active: bool) -> None:
         """
         Apply active styling to a tag button via property so QSS applies highlight.
+        Only triggers unpolish/polish when the property value actually changes.
         """
-        button.setProperty("tagActive", "true" if active else "false")
+        new_val = "true" if active else "false"
+        if button.property("tagActive") == new_val:
+            return
+        button.setProperty("tagActive", new_val)
         button.style().unpolish(button)
         button.style().polish(button)
         button.update()

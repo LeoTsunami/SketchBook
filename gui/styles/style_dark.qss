@@ -143,11 +143,14 @@ QFrame#ImageThumbnail[dragOver="true"] {
     border: 3px dashed #ffffff;
 }
 
-/* Tag library: drop target when dragging a tag (same look as image thumbnail) */
-QPushButton#TagGridButton[dragOver="true"] {
-    background-color: #5d7bc0;
-    border: 3px dashed #ffffff;
+/* Tag library: drop target when dragging a tag (QPushButton = category row, QLabel = shelf header) */
+QPushButton#TagGridButton[dragOver="true"],
+QLabel#TagGridButton[dragOver="true"] {
+    background-color: rgba(93, 123, 192, 0.55);
+    border: 3px dashed #8ab5ff;
+    border-radius: 6px;
 }
+
 
 /* Tag Components */
 QFrame#DraggableTagChip {

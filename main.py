@@ -11,6 +11,7 @@ from qtpy.QtGui import QFontDatabase, QFont
 from gui.main_window import MainWindow
 from core.settings import settings
 from core.user_data import user_data
+
 from core.config_backup import run_config_backup
 
 # Force stdout to be unbuffered for immediate print output
