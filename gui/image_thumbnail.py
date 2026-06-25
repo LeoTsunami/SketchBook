@@ -20,7 +20,7 @@ from qtpy.QtWidgets import (
     QGraphicsDropShadowEffect,
     QGraphicsColorizeEffect,
 )
-from qtpy.QtCore import Qt, Signal, QTimer, QUrl, QEvent
+from qtpy.QtCore import Qt, Signal, QTimer, QUrl
 from qtpy.QtGui import (
     QPainter,
     QPixmap,
@@ -215,16 +215,13 @@ class ImageThumbnail(QFrame):
         # We'll handle clicks manually to distinguish image clicks from tag clicks
         # self.setAttribute(Qt.WA_TransparentForMouseEvents, True)  # REMOVED - causes issues with tag clicks
 
-        # Create layout — no inner margins so the image meets the card border.
+        # Create layout
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(4, 4, 4, 4)
         layout.setSpacing(0)  # Reduced spacing since we don't have labels anymore
 
         # Create graphics view for better image rendering
         self.graphics_view = QGraphicsView()
-        # Reason: Default QGraphicsView frame adds viewport inset; thumbnails looked
-        # off-center and letterboxed until hover; match image_viewer / slideshow.
-        self.graphics_view.setFrameShape(QFrame.NoFrame)
         self.graphics_view.setStyleSheet("""
             QGraphicsView {
                 background: transparent;
@@ -235,10 +232,8 @@ class ImageThumbnail(QFrame):
         self.graphics_view.setRenderHint(QPainter.SmoothPixmapTransform, True)
         self.graphics_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        # Reason: FullViewportUpdate ensures the whole viewport repaints when the
-        # transform changes; required so stacked QGraphicsEffects (shadow + hover
-        # colorize) see a fresh source snapshot after each fit_pixmap_in_view call.
-        self.graphics_view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
+        # Reason: fewer full viewport repaints when only the transform changes during resize.
+        self.graphics_view.setViewportUpdateMode(QGraphicsView.MinimalViewportUpdate)
         # Make graphics view transparent to mouse events so ImageGrid can handle selection
         self.graphics_view.setAttribute(Qt.WA_TransparentForMouseEvents, True)
         self.scene = QGraphicsScene()
@@ -252,46 +247,23 @@ class ImageThumbnail(QFrame):
         # Make image container transparent to mouse events so ImageGrid can handle selection
         self.image_container.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
-        # Wrapper so hover colorize is not applied to QGraphicsView itself — Qt
-        # graphics effects on QGraphicsView can shift painted content vs. hover.
-        self._hover_fx_wrapper = QWidget()
-        self._hover_fx_wrapper.setStyleSheet("background: transparent;")
-        self._hover_fx_wrapper.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        _hover_wrap_layout = QVBoxLayout(self._hover_fx_wrapper)
-        _hover_wrap_layout.setContentsMargins(0, 0, 0, 0)
-        _hover_wrap_layout.setSpacing(0)
-        _hover_wrap_layout.addWidget(self.graphics_view)
-
         # Create container layout
         container_layout = QVBoxLayout(self.image_container)
         container_layout.setContentsMargins(0, 0, 0, 0)
-        container_layout.addWidget(self._hover_fx_wrapper)
+        container_layout.addWidget(self.graphics_view)
 
         # Subtle depth on transparent thumbnails.
         self._shadow_effect = QGraphicsDropShadowEffect(self)
         self._shadow_effect.setBlurRadius(12)
         self._shadow_effect.setOffset(0, 2)
         self._shadow_effect.setColor(QColor(0, 0, 0, 85))
-        self.image_container.setGraphicsEffect(None)
+        self.image_container.setGraphicsEffect(self._shadow_effect)
 
         # Hover brightening (white tint at low strength).
-        # Reason: the effect MUST start disabled; an active QGraphicsColorizeEffect
-        # (even at strength 0) caches the widget sub-tree rendering.  Inside a
-        # QScrollArea the cached pixmap is never invalidated by scroll, so every
-        # previously-hovered thumbnail's image appears frozen in place.
         self._hover_effect = QGraphicsColorizeEffect(self)
         self._hover_effect.setColor(QColor(255, 255, 255))
         self._hover_effect.setStrength(0.0)
-        self._hover_effect.setEnabled(False)
-        self._hover_fx_wrapper.setGraphicsEffect(self._hover_effect)
-
-        # Selection outline overlay (drawn above the image content).
-        self.selection_overlay = QWidget(self.image_container)
-        self.selection_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self.selection_overlay.setStyleSheet(
-            "background: transparent; border: 3px solid #5d9dff; border-radius: 6px;"
-        )
-        self.selection_overlay.hide()
+        self.graphics_view.setGraphicsEffect(self._hover_effect)
 
         layout.addWidget(self.image_container, 1)  # Give image container stretch factor
 
@@ -317,50 +289,6 @@ class ImageThumbnail(QFrame):
         # Reason: set directly by ImageGrid during interactive resize to avoid
         # expensive parent-chain walk (_ancestor_grid_resize_interactive) on every resizeEvent.
         self._fast_resize_active: bool = False
-        self._debug_thumb_position = False
-
-        # Reason: must run when the viewport *widget* inside the QGraphicsView
-        # actually resizes — not just when the ImageThumbnail frame resizes,
-        # which may fire before the viewport has its final geometry.
-        # Installed last so all other attributes already exist when the filter fires.
-        self.graphics_view.viewport().installEventFilter(self)
-
-    def _debug_position(self, stage: str) -> None:
-        """Emit detailed geometry diagnostics for thumbnail/image alignment."""
-        if not self._debug_thumb_position or not self.graphics_view:
-            return
-        if not self.pixmap_item:
-            print(
-                f"[thumb_debug] id={self.image_id} stage={stage} no_pixmap",
-                flush=True,
-            )
-            return
-        try:
-            thumb_rect = self.rect()
-            container_rect = self.image_container.rect()
-            view_rect = self.graphics_view.rect()
-            viewport_rect = self.graphics_view.viewport().rect()
-            scene_rect = self.scene.sceneRect()
-            mapped_center = self.graphics_view.mapFromScene(scene_rect.center())
-            viewport_center = viewport_rect.center()
-            print(
-                (
-                    "[thumb_debug] "
-                    f"id={self.image_id} stage={stage} "
-                    f"thumb={thumb_rect.width()}x{thumb_rect.height()} "
-                    f"container={container_rect.width()}x{container_rect.height()} "
-                    f"view={view_rect.width()}x{view_rect.height()} "
-                    f"viewport={viewport_rect.width()}x{viewport_rect.height()} "
-                    f"scene={scene_rect.width():.1f}x{scene_rect.height():.1f} "
-                    f"center_delta=({mapped_center.x() - viewport_center.x()},"
-                    f"{mapped_center.y() - viewport_center.y()}) "
-                    f"transform=(m11={self.graphics_view.transform().m11():.4f},"
-                    f"m22={self.graphics_view.transform().m22():.4f})"
-                ),
-                flush=True,
-            )
-        except RuntimeError:
-            return
 
     def set_fit_mode(self, mode: FitMode) -> None:
         """
@@ -399,7 +327,6 @@ class ImageThumbnail(QFrame):
             fit_pixmap_in_view(
                 self.graphics_view, self.scene, self.pixmap_item, self._fit_mode
             )
-            self._debug_position("set_image_after_fit")
 
         except Exception as e:
             self.set_error(str(e))
@@ -444,9 +371,6 @@ class ImageThumbnail(QFrame):
         fit_pixmap_in_view(
             self.graphics_view, self.scene, self.pixmap_item, self._fit_mode
         )
-        # Reason: stacked QGraphicsEffects may cache the old render; forcing an
-        # update on the outermost effect container ensures the new transform is shown.
-        self.image_container.update()
         if self.tag_chips:
             self._relayout_tags()
 
@@ -481,28 +405,10 @@ class ImageThumbnail(QFrame):
         self.scene.addText(f"Error: {error_msg}")
 
     def eventFilter(self, obj, event):
-        """Filter events: re-fit on viewport resize; pass-through for tag chips."""
-        try:
-            if obj is self.graphics_view.viewport() and event.type() == QEvent.Resize:
-                if self.pixmap_item:
-                    fast = self._fast_resize_active
-                    if fast:
-                        self.pixmap_item.setTransformationMode(Qt.FastTransformation)
-                    fit_pixmap_in_view(
-                        self.graphics_view,
-                        self.scene,
-                        self.pixmap_item,
-                        self._fit_mode,
-                    )
-                    self._debug_position("viewport_resize_after_fit")
-                return False
-        except (RuntimeError, AttributeError):
-            # Reason: during teardown C++ objects may be deleted before Python wrappers.
-            return False
-        if hasattr(self, "tags_container") and (
-            isinstance(obj, TagChip) or obj.parent() == self.tags_container
-        ):
-            return False
+        """Filter events to ensure tag chips can receive mouse events."""
+        # Let tag chips and their children handle their own events
+        if isinstance(obj, TagChip) or obj.parent() == self.tags_container:
+            return False  # Don't filter, let the widget handle it
         return super().eventFilter(obj, event)
 
     def mousePressEvent(self, event):
@@ -521,12 +427,20 @@ class ImageThumbnail(QFrame):
         event.ignore()  # Let the event propagate
 
     def resizeEvent(self, event):
-        """Handle resize events: re-layout tags (image re-fit is handled by viewport event filter)."""
+        """Handle resize events: re-fit image and re-layout tags."""
         super().resizeEvent(event)
-        # Keep overlay synced and above image content.
-        self.selection_overlay.setGeometry(self.image_container.rect())
-        self.selection_overlay.raise_()
-        if self.tag_chips and not self._fast_resize_active:
+
+        fast = self._fast_resize_active
+        if self.pixmap_item:
+            self.pixmap_item.setTransformationMode(
+                Qt.FastTransformation if fast else Qt.SmoothTransformation
+            )
+        self.graphics_view.setRenderHint(QPainter.SmoothPixmapTransform, not fast)
+        fit_pixmap_in_view(
+            self.graphics_view, self.scene, self.pixmap_item, self._fit_mode
+        )
+
+        if self.tag_chips and not fast:
             self._relayout_tags()
 
     def set_selected(self, selected: bool):
@@ -536,15 +450,6 @@ class ImageThumbnail(QFrame):
             self.setProperty("selected", selected)
             self.style().unpolish(self)
             self.style().polish(self)
-            if selected:
-                self.selection_overlay.setStyleSheet(
-                    "background: transparent; border: 3px solid #5d9dff; border-radius: 6px;"
-                )
-                self.selection_overlay.setGeometry(self.image_container.rect())
-                self.selection_overlay.show()
-                self.selection_overlay.raise_()
-            else:
-                self.selection_overlay.hide()
 
     def _set_hovered(self, hovered: bool) -> None:
         """Update hovered visual state (brightness + subtle border accent)."""
@@ -552,23 +457,9 @@ class ImageThumbnail(QFrame):
             return
         self._hovered = hovered
         self.setProperty("hovered", hovered)
-        # Reason: enable the effect only while hovered; disabling it when idle
-        # avoids the stale-cache scroll bug (see __init__ comment).
-        if hovered:
-            self._hover_effect.setStrength(0.10)
-            self._hover_effect.setEnabled(True)
-        else:
-            self._hover_effect.setEnabled(False)
-            self._hover_effect.setStrength(0.0)
-        if self.selected:
-            border_color = "#8ab9ff" if hovered else "#5d9dff"
-            self.selection_overlay.setStyleSheet(
-                f"background: transparent; border: 3px solid {border_color}; border-radius: 6px;"
-            )
-            self.selection_overlay.raise_()
+        self._hover_effect.setStrength(0.10 if hovered else 0.0)
         self.style().unpolish(self)
         self.style().polish(self)
-        self._debug_position("hover_on" if hovered else "hover_off")
 
     def set_tags_visible(self, visible: bool) -> None:
         """

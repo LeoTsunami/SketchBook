@@ -1,62 +1,13 @@
 # Changelog
 
-## 2026-04-19 (Fix hover-then-scroll frozen thumbnails)
+## 2026-04-13
 ### ✅ Tasks:
-- Fix bug where hovering an image thumbnail and then hovering another would leave the first image frozen in place during scrolling.
+- Make workspace Python run configuration machine-agnostic
 
-  - Root cause: `QGraphicsColorizeEffect` on the hover wrapper was always active (even at strength 0.0 after leaving). Qt's effect rendering pipeline caches the widget sub-tree; the cached pixmap was never invalidated by scroll events, so previously-hovered thumbnails appeared stuck.
-  - Solution: disable the effect entirely (`setEnabled(False)`) when the thumbnail is not hovered; enable it only during hover.
-  - Updated tests: `tests/test_image_thumbnail.py` (3 new assertions + 2 new test cases).
-→ Result: All thumbnails scroll correctly after being hovered; hover brightness effect still works as expected.
----
-
-## 2026-04-15 (Image grid thumbnail centering and fill)
-### ✅ Tasks:
-- Fix off-center thumbnails and “hover nudges toward center” by removing the default `QGraphicsView` frame inset, resetting the view transform before each `fitInView`, and moving hover brightening off the `QGraphicsView` onto a transparent wrapper (graphics effects on the view could shift painting).
-- Remove inner thumbnail layout margins so images reach the card border in crop/fill modes.
-- Add env-gated debug logs (`SKETCHBOOK_DEBUG_THUMB_POSITION=1`) to trace thumbnail geometry and center deltas during grid placement, async load, viewport resize, and hover transitions.
-- After validation, disable debug logs by default and keep only hover brightening active (shadow effect remains disabled temporarily) to reintroduce visual effects progressively.
-
-  - Added tests: `tests/test_thumbnail_fitting.py` (`TestFitPixmapInView`).
-→ Result: Grid images stay centered and fill the thumbnail frame edge-to-edge; hover no longer changes apparent alignment. Also removed legacy -4/-8 inner sizing offsets in ImageGrid that still introduced visible gaps after the transparent-card refactor.
----
-
-## 2026-04-14 (Image grid thumbnail visual refresh)
-### ✅ Tasks:
-- Remove opaque gray tile background behind image thumbnails and use transparent cards with subtle drop shadow.
-- Add hover feedback on thumbnails (slight image brightening) and enforce blue selection outline around selected images.
-- Align thumbnail border rules in all themes (`dark`, `light`, `neon_night`, `sunset_glass`, `midnight_ocean`) to preserve contrast on transparent cards.
-
-  - Added tests: `tests/test_image_thumbnail.py`.
-→ Result: The grid looks cleaner over themed backgrounds, hover feels more alive, and selection state is clearer with a consistent blue outline.
----
-
-## 2026-04-14 (Session polish: spinbox, resize, transparent slide background)
-### ✅ Tasks:
-- Fix `SessionSettingsDialog` course-duration `QSpinBox` arrows so increment/decrement works reliably with explicit subcontrols in the themed stylesheet.
-- Make `SlideshowWindow` resizable in frameless windowed mode by delegating border drags to `startSystemResize`.
-- Remove remaining gray image-area artifact in session by enforcing transparent `QGraphicsView` frame/background/viewport.
-
-  - Added tests: `tests/test_session_settings_dialog.py`.
-→ Result: Session settings controls feel correct again, windowed slideshow can be resized, and slides render over the theme background without gray blocks.
----
-
-## 2026-04-14 (Unified window chrome and glass controls)
-### ✅ Tasks:
-- Introduce shared UI module `gui/window_chrome.py` to centralize frameless custom window bar behavior and reusable glass button styling.
-- Apply shared chrome to secondary windows (`SlideshowWindow`, `ImageViewerWindow`, `SessionSettingsDialog`) so they match main UI direction (custom bar + theme background consistency).
-
-  - Added tests: `tests/test_window_chrome.py`.
-→ Result: Secondary windows now use a unified custom chrome and glass action style instead of mixed native title bars / per-window button styles.
----
-
-## 2026-04-14 (Session: slideshow load + theme background)
-### ✅ Tasks:
-- Fix drawing session slideshow not showing images after `ImageLoaderWorker` API change (`finished` emits one HQ `QPixmap`, not a tuple).
-- Session window: reuse the active theme’s `QMainWindow` QSS rule (e.g. Dark gradient) plus transparent central stack / `QGraphicsView` so letterboxing matches the main app.
-
-  - Added `gui/theme_qss_utils.py` and tests `tests/test_theme_qss_utils.py`.
-→ Result: Session images display again; session chrome aligns with the selected global theme background.
+  - Updated `.vscode/settings.json` to stop pinning a hard `.venv` interpreter path.
+  - Switched `python.defaultInterpreterPath` to `python` and enabled terminal environment activation.
+  - Avoids Play/Run failures on PCs where `.venv` is absent or recreated with different local Python installs.
+→ Result: Running from Cursor Play now uses an available local interpreter instead of a machine-specific venv path.
 ---
 
 ## 2026-04-13 (UI polish: grid spacing, tags rail, fade, session CTA)

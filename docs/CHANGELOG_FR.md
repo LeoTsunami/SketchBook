@@ -1,62 +1,13 @@
 # Journal des modifications
 
-## 2026-04-19 (Correction du bug vignettes figées après survol)
+## 2026-04-13
 ### ✅ Tâches :
-- Correction du bug où survoler une vignette puis en survoler une autre laissait la première image figée en place pendant le défilement.
+- Rendre la configuration Python du workspace agnostique entre machines
 
-  - Cause racine : le `QGraphicsColorizeEffect` sur le conteneur de survol restait actif (même à strength 0.0 après le départ du curseur). Le pipeline de rendu des effets Qt met en cache le sous-arbre du widget ; le pixmap mis en cache n'était jamais invalidé par les événements de défilement, ce qui faisait apparaître les vignettes précédemment survolées comme « collées ».
-  - Solution : désactiver entièrement l'effet (`setEnabled(False)`) quand la vignette n'est pas survolée ; l'activer uniquement pendant le survol.
-  - Tests mis à jour : `tests/test_image_thumbnail.py` (3 nouvelles assertions + 2 nouveaux cas de test).
-→ Résultat : toutes les vignettes défilent correctement après avoir été survolées ; l'effet de luminosité au survol fonctionne toujours comme prévu.
----
-
-## 2026-04-15 (Centrage et remplissage des vignettes grille)
-### ✅ Tâches :
-- Correction des vignettes décentrées et du léger recalage au survol : `QGraphicsView` sans cadre par défaut, `resetTransform` avant chaque `fitInView`, et effet de survol appliqué sur un conteneur autour de la vue (pas sur la vue elle-même — les effets graphiques pouvaient décaler le rendu).
-- Suppression des marges internes de la vignette pour que l’image arrive jusqu’au bord de la carte en modes remplissage/recadrage.
-- Ajout de logs de debug activables par variable d’environnement (`SKETCHBOOK_DEBUG_THUMB_POSITION=1`) pour tracer géométrie/centrage pendant placement grille, chargement asynchrone, resize viewport et hover.
-- Après validation, logs de debug désactivés par défaut et seul l’éclaircissement au survol est réactivé (ombre toujours désactivée temporairement) pour réintroduire les effets progressivement.
-
-  - Tests ajoutés : `tests/test_thumbnail_fitting.py` (`TestFitPixmapInView`).
-→ Résultat : l’image reste centrée et remplit la vignette jusqu’au contour ; le survol ne modifie plus l’alignement apparent.
----
-
-## 2026-04-14 (Refresh visuel des vignettes Image Grid)
-### ✅ Tâches :
-- Suppression du fond gris opaque derrière les vignettes ; passage à des tuiles transparentes avec une ombre portée légère.
-- Ajout d’un feedback hover (image légèrement éclaircie) et d’un contour bleu clair pour les images sélectionnées.
-- Harmonisation des règles de bordure des vignettes dans tous les thèmes (`dark`, `light`, `neon_night`, `sunset_glass`, `midnight_ocean`) pour conserver le contraste sur fond transparent.
-
-  - Test ajouté : `tests/test_image_thumbnail.py`.
-→ Résultat : la grille est plus propre sur les fonds thème, le hover est plus lisible, et la sélection ressort mieux avec un contour bleu cohérent.
----
-
-## 2026-04-14 (Session polish : spinbox, resize, fond transparent des slides)
-### ✅ Tâches :
-- Correction des flèches du `QSpinBox` de durée dans `SessionSettingsDialog` (incrément/décrément fiables via sous-contrôles explicites dans le thème).
-- Fenêtre `SlideshowWindow` redimensionnable en mode fenêtré frameless via délégation du drag de bord à `startSystemResize`.
-- Suppression de l’artefact gris restant derrière l’image en session en forçant la transparence de la `QGraphicsView` (frame/background/viewport).
-
-  - Test ajouté : `tests/test_session_settings_dialog.py`.
-→ Résultat : les contrôles de session sont de nouveau fluides, la fenêtre session fenêtrée se redimensionne, et les slides s’affichent sur le fond thème sans bloc gris.
----
-
-## 2026-04-14 (Chrome fenêtres unifié et boutons glass)
-### ✅ Tâches :
-- Ajout d’un module UI partagé `gui/window_chrome.py` pour centraliser la barre custom frameless et le style de boutons glass réutilisable.
-- Application de ce chrome partagé aux fenêtres secondaires (`SlideshowWindow`, `ImageViewerWindow`, `SessionSettingsDialog`) pour alignement avec la main UI (barre custom + cohérence du fond thème).
-
-  - Tests ajoutés : `tests/test_window_chrome.py`.
-→ Résultat : les fenêtres secondaires utilisent désormais un chrome unifié et des actions glass, au lieu d’un mélange de barres natives et styles locaux.
----
-
-## 2026-04-14 (Session : affichage diapos + fond thème)
-### ✅ Tâches :
-- Correction de la session dessin : les images ne s’affichaient plus après changement d’API de `ImageLoaderWorker` (`finished` émet un seul pixmap HQ, pas un tuple).
-- Fenêtre session : réutilisation de la règle QSS `QMainWindow` du thème actif (ex. dégradé Dark) et empilement transparent (widget central + `QGraphicsView`) pour le letterboxing comme dans l’app principale.
-
-  - Ajout de `gui/theme_qss_utils.py` et tests `tests/test_theme_qss_utils.py`.
-→ Résultat : les images de session s’affichent à nouveau ; le fond de la fenêtre session est aligné sur le thème global.
+  - Mise à jour de `.vscode/settings.json` pour ne plus imposer un chemin d'interpréteur `.venv` figé.
+  - Passage de `python.defaultInterpreterPath` à `python` et activation de l'environnement dans le terminal.
+  - Évite les échecs Play/Run sur les PC où `.venv` n'existe pas encore ou a été recréé avec une autre installation locale de Python.
+→ Résultat : le bouton Play de Cursor utilise un interpréteur disponible localement au lieu d'un chemin venv spécifique à une machine.
 ---
 
 ## 2026-04-13 (Polish UI : marge grille, rail tags, fade, CTA session)

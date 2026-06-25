@@ -422,15 +422,13 @@ The `ImageGrid` class manages the display of image thumbnails in a responsive gr
 
 - **Single source of truth**: `gui/thumbnail_fitting.py` centralises all image→cell fitting logic.
   - `FitMode` enum: `FIT_ALL` (no crop), `FIT_HEIGHT` (fill height), `FIT_WIDTH` (fill width), `CROP_ALL` (fill cell, crop excess).
-  - `fit_pixmap_in_view(view, scene, pixmap_item, mode)` — applies manual transform math (no `fitInView`) to avoid QTBUG-11945 2px inner margins.
+  - `fit_pixmap_in_view(view, scene, pixmap_item, mode)` — applies the chosen strategy via `fitInView` / transform.
   - `compute_fitted_size(image_w, image_h, cell_w, cell_h, mode)` — pure-geometry helper that returns the final (display_w, display_h) for a given image in a given cell.
-- `ImageThumbnail.set_image()` and viewport `QEvent.Resize` (event filter on `graphics_view.viewport()`) delegate to `fit_pixmap_in_view()`, so images are re-fitted against the *actual viewport size*.
+- `ImageThumbnail.set_image()` and `resizeEvent()` both delegate to `fit_pixmap_in_view()`, so images are *always* re-fitted when the cell size changes (column slider, window resize, sidebar animation).
 - `ImageThumbnail.set_fit_mode(mode)` updates the display mode and immediately re-fits the current image.
 - `ImageGrid.set_fit_mode(mode)` propagates the mode to all existing thumbnails and the pool.
 - The user selects the mode via a "Display:" combo box in the top chrome bar; the choice is persisted in `ui.grid.fit_mode`.
-- `ImageThumbnail` uses `QGraphicsView` with `QFrame.NoFrame` (avoids default viewport inset), zero inner layout margins so the pixmap meets the card border, and applies hover brightening (`QGraphicsColorizeEffect`) on a wrapper widget around the view — not on the view itself — to avoid hover-time paint shifts.
 - `QGraphicsView` render hints `SmoothPixmapTransform` and `Antialiasing` are enabled for crisp downscaling.
-- Debug instrumentation for spawn/hover/scroll alignment can be enabled with `SKETCHBOOK_DEBUG_THUMB_POSITION=1`; logs include thumbnail/view/viewport sizes, transform scale, and center delta.
 - Thumbnails are loaded by `ImageLoaderWorker` with two passes:
   - A lightweight `fast_pixmap` (currently not displayed in the grid but kept for potential future uses such as placeholders).
   - A **high‑quality pixmap** that is upscaled using a factor of at least 3.0× on standard DPI screens (or the device pixel ratio on HiDPI screens), then downscaled by Qt in the view.

@@ -167,7 +167,7 @@ The choice is saved automatically and restored on relaunch.
 - While you **drag a window edge** to resize the main window, previews may look slightly softer or blocky for a moment so the UI stays responsive; a moment after you **release** the mouse, thumbnails are refitted with full smooth scaling again.
 - Internally, SketchBook loads a 2x-resolution version of each image for thumbnails and lets Qt downscale it, which produces a sharp result, especially after window resizes or when using many columns.
 - When you change tag filters repeatedly, the grid discards the previous thumbnail widgets completely so old images cannot linger as non-interactive scraps in the margins.
-- Thumbnail tiles are transparent over the app theme background (no solid gray card). The image fills the rounded card up to its border (no inner padding band) and stays centered; each thumbnail has a subtle drop shadow, brightens slightly on hover, and shows a blue outline when selected.
+- Thumbnail tiles are transparent over the app theme background (no solid gray card). Each thumbnail has a subtle drop shadow, brightens slightly on hover, and shows a blue outline when selected.
 
 ## Single Image Viewer
 

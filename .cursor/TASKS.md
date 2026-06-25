@@ -8,14 +8,7 @@ Update this file via prompt:
 
 ## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
 
-- [x] Image grid: fix hover-then-scroll bug — disable `QGraphicsColorizeEffect` when not hovered so Qt's effect cache does not freeze the thumbnail image in place during scrolling (2026-04-19)
-- [x] Image grid effects step-by-step rollback: disable runtime debug logs by default; keep shadow disabled; re-enable hover brighten only for visual isolation tests (2026-04-15)
-- [x] Image grid debug instrumentation: trace thumbnail placement/alignment across spawn, hover, and scroll with env-gated logs (`SKETCHBOOK_DEBUG_THUMB_POSITION=1`) in `image_grid` and `image_thumbnail` (2026-04-15)
-- [x] Image grid: center thumbnails by default, fill card to border (no inset band), fix hover shift — `QGraphicsView` NoFrame, hover colorize on wrapper, `resetTransform` before `fitInView` (2026-04-15)
-- [x] Image grid thumbnails visual refresh: transparent tile background, subtle drop shadow, hover brightening, and blue selection outline across themes (2026-04-14)
-- [x] Session UX fixes: Course duration spinbox arrows (up/down) in Session Settings; slideshow windowed resize for frameless mode; remove remaining gray block behind slides by enforcing transparent graphics view/viewport (2026-04-14)
-- [x] Unified secondary windows UI: shared frameless custom chrome module (`window_chrome`), theme-aligned background, and glass action buttons in session/viewer/settings windows (2026-04-14)
-- [x] Session slideshow: fix `ImageLoaderWorker.finished` (single pixmap) unpacking error; session window uses theme `QMainWindow` background + transparent view letterboxing (2026-04-14)
+- [x] Workspace Python launch config: remove hard dependency on `.venv\Scripts\python.exe` to support multi-PC setups with different Python environments (2026-04-13)
 - [x] UI polish: image-grid left margin +15px; Tag filters trigger and Tag library +10px width (+25px height); lighter blue Tag filters color; theme-matched bottom fade; glassy Start session button with stronger blue shadow and animated border glow (2026-04-13)
 - [x] Tab system: two-line header (chrome + tab bar) with QStackedWidget; tabs Life Drawing / WhiteBoard / Market; grid controls on tab bar; per-tab show/hide (2026-04-13)
 - [x] Image grid: drain `QGridLayout` on every `clear()` + start of `_update_virtualized_view` to fix non-interactive ghost thumbnails after tag/filter switches (virtual ↔ non-virtual) (2026-04-13)
