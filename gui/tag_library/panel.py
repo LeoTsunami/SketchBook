@@ -831,6 +831,70 @@ class TagLibraryPanel(QWidget):
         self._apply_all_states()
         self._emit_filter()
 
+    def sync_filter_state_from(
+        self,
+        active_categories: Set[str],
+        active_subtags: Dict[str, Set[str]],
+        selection: Optional[Set[str]] = None,
+    ) -> None:
+        """
+        Mirror filter/selection state from MainWindow and refresh the UI.
+
+        Args:
+            active_categories: Expanded category filters.
+            active_subtags: Active subtags per category.
+            selection: Tags selected for multi-drag (optional).
+        """
+        self._active_categories = set(active_categories)
+        self._active_subtags = {k: set(v) for k, v in active_subtags.items()}
+        if selection is not None:
+            self._tag_library_selection = set(selection)
+        self._apply_all_states()
+
+    def map_point_to_content(self, panel_pos: QPoint) -> QPoint:
+        """
+        Map a point in panel coordinates to the scroll content widget.
+
+        Args:
+            panel_pos: Position relative to this panel widget.
+
+        Returns:
+            QPoint: Matching position in ``_content`` coordinates.
+        """
+        viewport = self._scroll_area.viewport()
+        vp_pos = viewport.mapFrom(self, panel_pos)
+        return self._content.mapFrom(viewport, vp_pos)
+
+    def apply_expand_for_drop_target(self, role: str, key: str) -> None:
+        """
+        Expand a category or subtag while dragging over it (hover-to-reveal).
+
+        Args:
+            role: ``"category"`` or ``"tag"``.
+            key: Category or tag name from ``tagGridKey``.
+        """
+        if self._taxonomy is None:
+            return
+        if role == "category":
+            if is_tag_shelf(key):
+                self._active_subtags.setdefault(key, set())
+            else:
+                self._active_categories.add(key)
+                self._active_subtags.setdefault(key, set())
+                section = self._category_sections.get(key)
+                if section:
+                    section.set_expanded(True)
+        elif role == "tag":
+            category = self._taxonomy.subtag_to_category.get(key)
+            if category:
+                self._active_categories.add(category)
+                self._active_subtags.setdefault(category, set()).add(key)
+                section = self._category_sections.get(category)
+                if section:
+                    section.set_expanded(True)
+        self._apply_all_states()
+        self._emit_filter()
+
     def get_chip(self, tag: str) -> Optional[WrappingDraggableTagButton]:
         """
         Return the chip widget for *tag* (subtag or header), or None.

@@ -381,14 +381,15 @@ class TagLibraryWheelFilter(QObject):
 
 
 class TagGridDropFilter(QObject):
-    """Event filter to accept tag-library drag/drop on the tag grid container."""
+    """Event filter to accept tag-library drag/drop on the tag library panel."""
 
     def __init__(self, main_window: "MainWindow"):
         super().__init__(main_window)
         self._main = main_window
 
     def eventFilter(self, obj: QObject, event: QEvent) -> bool:
-        if obj != self._main.tags_grid_container:
+        panel = getattr(self._main, "_tag_library_panel", None)
+        if panel is None or obj != panel:
             return False
         try:
             _drag_enter = QEvent.Type.DragEnter
@@ -1353,6 +1354,9 @@ class MainWindow(QMainWindow):
 
         # Legacy compat stubs so old call sites compile (will be cleaned up later)
         self.tags_grid_container = self._tag_library_panel
+        self._tag_library_panel.setAcceptDrops(True)
+        self._tag_grid_drop_filter = TagGridDropFilter(self)
+        self._tag_library_panel.installEventFilter(self._tag_grid_drop_filter)
 
         # Tag library content is filled on first window show (fast empty shell at startup).
 
@@ -2638,11 +2642,75 @@ class MainWindow(QMainWindow):
 
     def _get_tag_button_for(self, tag_name: str) -> Optional[QWidget]:
         """Return the tag button widget for the given user tag name, or None."""
+        panel = getattr(self, "_tag_library_panel", None)
+        if panel is not None:
+            chip = panel.get_chip(tag_name)
+            if chip is not None:
+                return chip
         category = self._subtag_to_category.get(tag_name)
         if not category:
             return None
         buttons = self._subcategory_buttons.get(category, {})
         return buttons.get(tag_name)
+
+    def _tag_library_selection_union(self) -> Set[str]:
+        """
+        Return the combined tag-library multi-select from MainWindow and panel.
+
+        Returns:
+            Set[str]: Selected tag names.
+        """
+        selection = set(self._tag_library_selection)
+        panel = getattr(self, "_tag_library_panel", None)
+        if panel is not None:
+            selection |= set(panel._tag_library_selection)
+        return selection
+
+    def _tags_being_dragged(self, primary_tag: str) -> Set[str]:
+        """
+        Resolve which user tags move together for a grid drag or drop.
+
+        When *primary_tag* is part of the current multi-selection, every
+        selected user tag is included; otherwise only *primary_tag* moves.
+
+        Args:
+            primary_tag: Tag under the cursor when the drag started.
+
+        Returns:
+            Set[str]: User-owned tag names to reparent.
+        """
+        user_tags = self._get_user_tags()
+        if primary_tag not in user_tags:
+            return set()
+        selection = self._tag_library_selection_union()
+        if primary_tag in selection and len(selection) > 1:
+            return {t for t in selection if t in user_tags}
+        return {primary_tag}
+
+    def _tags_from_drop_mime(self, mime_data: "QMimeData", primary_tag: str) -> Set[str]:
+        """
+        Read dragged tag names from drop MIME data.
+
+        Prefers ``TAG_LIBRARY_MULTI_MIME`` when present, otherwise falls back
+        to the live selection or the single primary tag.
+
+        Args:
+            mime_data: Qt MIME payload from the drop event.
+            primary_tag: Primary tag encoded in ``TAG_LIBRARY_MIME``.
+
+        Returns:
+            Set[str]: User-owned tag names to reparent.
+        """
+        user_tags = self._get_user_tags()
+        tags: Set[str] = set()
+        if mime_data.hasFormat(TAG_LIBRARY_MULTI_MIME):
+            raw = mime_data.data(TAG_LIBRARY_MULTI_MIME)
+            if raw:
+                text = bytes(raw).decode("utf-8")
+                tags = {line.strip() for line in text.splitlines() if line.strip()}
+        if not tags:
+            tags = self._tags_being_dragged(primary_tag)
+        return {t for t in tags if t in user_tags}
 
     def _tag_filters_floating_btn_global_rect(self) -> Optional[QRect]:
         """
@@ -2779,11 +2847,9 @@ class MainWindow(QMainWindow):
                     layout.getItemPosition(idx)
                 )
         # Build list of tags we're dragging (for multi pixmap and MIME)
-        tags_to_drop = (
-            set(self._tag_library_selection)
-            if tag_text in self._tag_library_selection
-            else {tag_text}
-        )
+        tags_to_drop = self._tags_being_dragged(tag_text)
+        if not tags_to_drop:
+            return
         # Composite pixmap: all selected tags stacked (before we remove any button)
         pixmap = None
         hot_spot: Optional[QPoint] = None
@@ -2936,6 +3002,9 @@ class MainWindow(QMainWindow):
         Returns:
             List of (tag, viewport rect) tuples in grid display order.
         """
+        panel = getattr(self, "_tag_library_panel", None)
+        if panel is not None:
+            return panel.get_visible_chip_rects(user_only=user_only)
         viewport = (
             getattr(self, "tags_scroll_area", None) and self.tags_scroll_area.viewport()
         )
@@ -3110,6 +3179,28 @@ class MainWindow(QMainWindow):
             _mouse_move = QEvent.MouseMove
             _mouse_release = QEvent.MouseButtonRelease
 
+        if event.type() == _mouse_move and self._tag_library_drag_start_button is not None:
+            viewport = (
+                getattr(self, "tags_scroll_area", None)
+                and self.tags_scroll_area.viewport()
+            )
+            if viewport and hasattr(event, "globalPos"):
+                vp_pos = viewport.mapFromGlobal(event.globalPos())
+                if (
+                    not self._tag_library_is_selecting
+                    and self._tag_library_selection_start is not None
+                    and (vp_pos - self._tag_library_selection_start).manhattanLength()
+                    >= 10
+                ):
+                    btn = self._tag_library_drag_start_button
+                    tag_text = self._tag_library_drag_start_tag or ""
+                    self._tag_library_drag_start_button = None
+                    self._tag_library_drag_start_tag = None
+                    self._tag_library_selection_start = None
+                    if tag_text and btn and btn.property("userTag"):
+                        self._start_tag_button_drag(btn, tag_text)
+                        return True
+
         if event.type() == _mouse_move and self._tag_library_is_selecting:
             viewport = (
                 getattr(self, "tags_scroll_area", None)
@@ -3203,12 +3294,28 @@ class MainWindow(QMainWindow):
                         self._tag_library_ctrl_click(tag)
                 return True  # consume: don't fire filter toggle
 
-            # --- Simple click anywhere without modifier: clear selection ---
+            # --- Simple click without modifier: clear selection unless clicking a selected tag ---
             if not has_modifier and self._tag_library_selection:
-                self._tag_library_selection.clear()
-                self._last_selected_tag = None
-                self._sync_tag_grid_state()
+                clicked_tag = ""
+                if is_subtag_btn:
+                    clicked_tag = (
+                        obj.property("baseLabel")
+                        or (obj.text() if hasattr(obj, "text") else "")
+                    )
+                if not clicked_tag or clicked_tag not in self._tag_library_selection:
+                    self._tag_library_selection.clear()
+                    self._last_selected_tag = None
+                    self._sync_tag_grid_state()
                 # Do NOT consume the event so buttons still fire their click
+
+            # --- Track user-tag press for drag-to-reparent (no modifier needed) ---
+            if is_subtag_btn and obj.property("userTag") and not has_modifier:
+                self._tag_library_drag_start_button = obj
+                self._tag_library_drag_start_tag = (
+                    obj.property("baseLabel") or obj.text()
+                )
+                self._tag_library_selection_start = vp_pos
+                return False
 
             # --- Rubber-band drag from any empty/non-interactive area ---
             if is_empty_area:
@@ -3585,18 +3692,12 @@ class MainWindow(QMainWindow):
         self._exit_parent_select_mode()
 
     def _get_tag_grid_drop_target_at(self, pos: QPoint) -> Optional[QWidget]:
-        """Return the category or tag button (widget with tagGridRole) at pos in container coords, or None."""
-        container = getattr(self, "tags_grid_container", None)
-        if not container:
+        """Return the category or tag chip at *pos* in panel coordinates, or None."""
+        panel = getattr(self, "_tag_library_panel", None)
+        if panel is None:
             return None
-        w = container.childAt(pos)
-        while w and w != container:
-            if w.property("tagGridRole"):
-                return w
-            local = w.mapFrom(container, pos)
-            next_w = w.childAt(local) if hasattr(w, "childAt") else None
-            w = next_w
-        return None
+        content_pos = panel.map_point_to_content(pos)
+        return panel.get_drop_target_at(content_pos)
 
     def _set_tag_grid_drop_highlight(self, widget: Optional[QWidget]) -> None:
         """Set or clear the drop-target highlight (same look as image grid: dragOver property + style polish)."""
@@ -3712,6 +3813,10 @@ class MainWindow(QMainWindow):
             return
         role, key = self._tag_grid_hover_target
         self._tag_grid_hover_target = None
+        panel = getattr(self, "_tag_library_panel", None)
+        if panel is not None:
+            panel.apply_expand_for_drop_target(role, key)
+            return
         if role == "category":
             if is_tag_shelf(key):
                 self._active_subtags.setdefault(key, set())
@@ -3793,14 +3898,11 @@ class MainWindow(QMainWindow):
             placement = {"parent_tag": key}
         else:
             return
-        # Reparent all selected tags (or just the dragged one if not in selection)
-        user_tags = self._get_user_tags()
-        tags_to_reparent = (
-            set(self._tag_library_selection)
-            if dropped_tag in self._tag_library_selection
-            else {dropped_tag}
-        )
-        tags_to_reparent = {t for t in tags_to_reparent if t in user_tags and t != key}
+        # Reparent all dragged tags (multi-selection or single tag).
+        tags_to_reparent = self._tags_from_drop_mime(event.mimeData(), dropped_tag)
+        tags_to_reparent.discard(key)
+        if not tags_to_reparent:
+            return
         cfg = self._user_tags_config
         placements = dict(cfg.get("placements", {}))
         for tag in tags_to_reparent:
@@ -3817,7 +3919,6 @@ class MainWindow(QMainWindow):
         # Defer heavy rebuild to next event loop to avoid lag on drop
         def _do_tag_grid_rebuild() -> None:
             self._user_tags_config = user_tags_config.load_config()
-            self._load_tags_into_grid(skip_sync=True)
             self._active_categories = saved_categories
             self._active_subtags = saved_subtags
             if role == "category":
@@ -3832,6 +3933,7 @@ class MainWindow(QMainWindow):
                     if not is_tag_shelf(category):
                         self._active_categories.add(category)
                     self._active_subtags.setdefault(category, set()).add(key)
+            self._load_tags_into_grid(skip_sync=True)
             self._sync_tag_grid_state()
 
             # Defer repaint to next event loop tick
@@ -4162,7 +4264,11 @@ class MainWindow(QMainWindow):
         """
         panel = getattr(self, "_tag_library_panel", None)
         if panel is not None:
-            panel._apply_all_states()
+            panel.sync_filter_state_from(
+                self._active_categories,
+                self._active_subtags,
+                self._tag_library_selection,
+            )
 
     def _sync_tag_grid_state_LEGACY(
         self,

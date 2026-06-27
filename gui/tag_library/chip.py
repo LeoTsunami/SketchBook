@@ -346,6 +346,17 @@ class WrappingDraggableTagButton(DraggableTagButton):
         self.setCursor(Qt.PointingHandCursor)
         self.set_cell_width(cell_width)
 
+    def mouseMoveEvent(self, event) -> None:
+        """
+        User tags rely on MainWindow's drag handler (multi-select, ghosts).
+
+        Built-in single-tag QDrag is skipped so it cannot race the panel flow.
+        """
+        if self.property("userTag"):
+            QPushButton.mouseMoveEvent(self, event)
+            return
+        super().mouseMoveEvent(event)
+
     # ------------------------------------------------------------------
     # Public API
     # ------------------------------------------------------------------
