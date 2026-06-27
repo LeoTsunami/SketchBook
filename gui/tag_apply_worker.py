@@ -92,3 +92,33 @@ class TagApplyWorker(QRunnable):
         except Exception as exc:  # pragma: no cover - defensive
             self.signals.error.emit(str(exc))
 
+
+class TagLibraryDeleteWorker(QRunnable):
+    """Worker that removes tag names from all images in the library."""
+
+    def __init__(self, image_manager, tags: List[str]):
+        """
+        Initialize the worker.
+
+        Args:
+            image_manager: ImageManager instance.
+            tags: User tag names to delete from every image.
+        """
+        super().__init__()
+        self.image_manager = image_manager
+        self.tags = list(tags)
+        self.signals = TagApplySignals()
+        self.setAutoDelete(True)
+
+    @Slot()
+    def run(self) -> None:
+        """Remove tags from all images and emit progress."""
+        try:
+            count = self.image_manager.db.remove_tags(
+                set(self.tags),
+                progress=self.signals.progress.emit,
+            )
+            self.signals.finished.emit(count)
+        except Exception as exc:  # pragma: no cover - defensive
+            self.signals.error.emit(str(exc))
+

@@ -10,7 +10,7 @@ import random
 import hashlib
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Optional, Set, Callable
 from core.settings import settings
 from core.user_data import user_data
 from dataclasses import dataclass, asdict, field
@@ -335,13 +335,40 @@ class ImageDatabase:
         Returns:
             Number of images updated.
         """
-        if not tag_name:
+        return self.remove_tags({tag_name})
+
+    def remove_tags(
+        self,
+        tag_names: Set[str],
+        progress: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """
+        Remove several tags from every image that has them (single DB save).
+
+        Args:
+            tag_names: Tags to remove.
+            progress: Optional callback ``(current_index, total_images)`` while scanning.
+
+        Returns:
+            Number of images updated.
+        """
+        tag_names = {t for t in tag_names if t}
+        if not tag_names:
             return 0
+        items = list(self._images.values())
+        total = len(items)
+        if progress:
+            progress(0, max(1, total))
         count = 0
-        for metadata in self._images.values():
-            if tag_name in metadata.tags:
-                metadata.tags.discard(tag_name)
+        emit_every = 25
+        for index, metadata in enumerate(items, start=1):
+            if metadata.tags & tag_names:
+                metadata.tags -= tag_names
                 count += 1
+            if progress and (
+                index % emit_every == 0 or index == total
+            ):
+                progress(index, total)
         if count:
             self._request_save()
         return count

@@ -89,7 +89,7 @@ from gui.thumbnail_fitting import FitMode
 from gui.tag_widgets import DraggableTagChip
 from gui.add_tag_dialog import AddTagDialog, IconPickerDialog
 from gui.add_shelf_dialog import AddShelfDialog
-from gui.tag_apply_worker import TagApplyWorker
+from gui.tag_apply_worker import TagApplyWorker, TagLibraryDeleteWorker
 from gui.tag_panel_overlay import TagPanelOverlay
 from gui.tag_shelves import (
     MISCELLANEOUS_SHELF,
@@ -3719,10 +3719,37 @@ class MainWindow(QMainWindow):
         if reply != QMessageBox.Ok:
             return
 
-        images_updated = 0
-        for tag in tags_to_delete:
-            images_updated += self.image_manager.db.remove_tag(tag)
+        self._set_busy_cursor(True)
+        progress_bar = self._create_status_progress_bar()
+        progress_bar.setFormat(f"Deleting tags: {label}...")
+        self.statusBar().showMessage(f"Deleting tags: {label}...")
 
+        worker = TagLibraryDeleteWorker(
+            self.image_manager, sorted(tags_to_delete)
+        )
+        worker.signals.progress.connect(
+            lambda cur, tot: self._handle_tag_delete_progress(label, cur, tot),
+            Qt.QueuedConnection,
+        )
+        worker.signals.finished.connect(
+            lambda count: self._handle_tag_delete_finished(
+                tags_to_delete, count
+            ),
+            Qt.QueuedConnection,
+        )
+        worker.signals.error.connect(
+            self._handle_tag_delete_error, Qt.QueuedConnection
+        )
+        self.current_worker = worker
+        self.thread_pool.start(worker)
+
+    def _finalize_user_tags_deleted(self, tags_to_delete: Set[str]) -> None:
+        """
+        Update tag library config and UI after tags were removed from images.
+
+        Args:
+            tags_to_delete: Tag names that were deleted.
+        """
         cfg = self._user_tags_config
         placements = dict(cfg.get("placements", {}))
         icons = dict(cfg.get("icons", {}))
@@ -3755,12 +3782,67 @@ class MainWindow(QMainWindow):
         self._update_tag_search_completer()
         self._apply_category_filters()
         self._sync_tag_grid_state()
-        if images_updated:
-            QMessageBox.information(
-                self,
-                "Delete tags",
-                f"Removed from {images_updated} image(s).",
+
+    def _handle_tag_delete_progress(
+        self, label: str, current: int, total: int
+    ) -> None:
+        """Update status while deleting tags from the library."""
+        if total <= 0:
+            return
+        progress = int(current * 100 / total)
+        if self.status_progress_bar is not None:
+            self.status_progress_bar.setValue(progress)
+            self.status_progress_bar.setFormat(
+                f"Deleting tags ({label}): {current}/{total} ({progress}%)"
             )
+        if self.dev_mode:
+            self.update_dev_progress_bar(progress)
+            self.update_dev_progress_label(
+                f"Deleting tags: {current}/{total} images scanned"
+            )
+
+    def _handle_tag_delete_finished(
+        self, tags_to_delete: Set[str], images_updated: int
+    ) -> None:
+        """Complete tag deletion: config, grid refresh, progress cleanup."""
+        try:
+            self._finalize_user_tags_deleted(tags_to_delete)
+            if self.status_progress_bar is not None:
+                self.status_progress_bar.setValue(100)
+                self.status_progress_bar.setFormat("Deleting tags: completed")
+                self.status_progress_bar.repaint()
+            self._cleanup_progress_bars()
+            self.statusBar().showMessage("Ready")
+            self._set_busy_cursor(False)
+            if images_updated:
+                QMessageBox.information(
+                    self,
+                    "Delete tags",
+                    f"Removed from {images_updated} image(s).",
+                )
+        except Exception:
+            self._cleanup_progress_bars()
+            self.statusBar().showMessage("Ready")
+            self._set_busy_cursor(False)
+
+    def _handle_tag_delete_error(self, error_msg: str) -> None:
+        """Handle failure while deleting tags from images."""
+        self._cleanup_progress_bars()
+        self._set_busy_cursor(False)
+        self.statusBar().showMessage("Ready")
+        self.add_log_message(f"Error while deleting tags: {error_msg}", "ERROR")
+
+    def _set_busy_cursor(self, busy: bool) -> None:
+        """
+        Show or hide the global wait cursor during long operations.
+
+        Args:
+            busy: True to show Qt.WaitCursor, False to restore.
+        """
+        if busy:
+            QApplication.setOverrideCursor(QCursor(Qt.WaitCursor))
+        else:
+            QApplication.restoreOverrideCursor()
 
     def _enter_parent_select_mode(self, tags_to_parent: Set[str]) -> None:
         """Enter 'Parent to tag...' mode: gray given tags, show bar to select parent, OK/Cancel."""
