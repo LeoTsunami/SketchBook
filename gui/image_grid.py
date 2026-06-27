@@ -3,6 +3,7 @@ Image grid component for displaying image thumbnails in a scrollable grid layout
 """
 
 from pathlib import Path
+import time
 from typing import Callable, List, Optional, Dict, Set, Tuple
 from collections import deque
 from qtpy.QtWidgets import (
@@ -76,8 +77,10 @@ class ImageGrid(QScrollArea):
     VIRTUALIZED_POOL_EXTRA_ROWS = (
         10  # Rows above/below viewport so more images load ahead
     )
-    SCROLL_FAST_THRESHOLD = 104
+    SCROLL_FAST_THRESHOLD_PX_PER_MS = 250.0
+    SCROLL_PREVIEW_ARM_MS = 700
     SCROLL_PREVIEW_HIDE_MS = 650
+    USER_IDLE_MS = 500
     EXTRACT_STEP_FACTOR = 4
     EXTRACT_LOAD_SIZE = 240
     EXTRACT_PRELOAD_PER_TICK = 2
@@ -133,6 +136,15 @@ class ImageGrid(QScrollArea):
         self._tag_popover = TagHoverPopover(self.viewport())
         self._tag_popover.raise_()
         self._last_scroll_value = 0
+        self._last_scroll_time = 0.0
+        self._last_scroll_speed = 0.0
+        self._scroll_speed_at_arm = 0.0
+        self._scroll_preview_arm_timer = QTimer(self)
+        self._scroll_preview_arm_timer.setSingleShot(True)
+        self._scroll_preview_arm_timer.setInterval(self.SCROLL_PREVIEW_ARM_MS)
+        self._scroll_preview_arm_timer.timeout.connect(
+            self._confirm_scroll_preview_show
+        )
         self._overlay_hide_timer = QTimer(self)
         self._overlay_hide_timer.setSingleShot(True)
         self._overlay_hide_timer.setInterval(self.SCROLL_PREVIEW_HIDE_MS)
@@ -147,6 +159,10 @@ class ImageGrid(QScrollArea):
         self._extract_preload_timer.setSingleShot(False)
         self._extract_preload_timer.setInterval(55)
         self._extract_preload_timer.timeout.connect(self._process_extract_preload)
+        self._user_idle_timer = QTimer(self)
+        self._user_idle_timer.setSingleShot(True)
+        self._user_idle_timer.setInterval(self.USER_IDLE_MS)
+        self._user_idle_timer.timeout.connect(self._on_user_idle)
 
         # Import drop: file/folder drops on grid (or forwarded from thumbnail) trigger this callback
         self._import_drop_callback: Optional[Callable[[List[QUrl]], None]] = None
@@ -263,16 +279,54 @@ class ImageGrid(QScrollArea):
         """Rebuild the O(1) image-id-to-index mapping after any change to ``all_images``."""
         self._image_id_to_index = {m.id: i for i, m in enumerate(self.all_images)}
 
+    def _note_user_activity(self) -> None:
+        """Pause extract preloading while the user interacts with the grid."""
+        self._extract_preload_timer.stop()
+        self._user_idle_timer.start()
+
+    def _on_user_idle(self) -> None:
+        """Resume background extract preloading after a quiet period."""
+        if self._extract_pending_indices:
+            self._extract_preload_timer.start()
+
+    def _sample_scroll_speed(self, value: int) -> float:
+        """
+        Measure scroll speed from the latest scrollbar step.
+
+        Args:
+            value: Current scrollbar value.
+
+        Returns:
+            Speed in pixels per millisecond.
+        """
+        now = time.monotonic()
+        delta = abs(value - self._last_scroll_value)
+        if self._last_scroll_time > 0.0:
+            dt_ms = max((now - self._last_scroll_time) * 1000.0, 1.0)
+            speed = delta / dt_ms
+        else:
+            speed = 0.0
+        self._last_scroll_value = value
+        self._last_scroll_time = now
+        self._last_scroll_speed = speed
+        return speed
+
     def _on_scroll(self, value):
         """Handle scroll events. Visibility check is debounced via visibility_timer."""
-        delta = abs(value - self._last_scroll_value)
-        if delta >= self.SCROLL_FAST_THRESHOLD:
-            self._show_scroll_preview(value)
-            self._overlay_hide_timer.start()
-        elif self._scroll_preview.isVisible():
+        speed = self._sample_scroll_speed(value)
+        self._prioritize_extract_for_scroll()
+
+        if speed >= self.SCROLL_FAST_THRESHOLD_PX_PER_MS:
+            self._scroll_speed_at_arm = speed
+            self._scroll_preview_arm_timer.start(self.SCROLL_PREVIEW_ARM_MS)
+        elif not self._scroll_preview.isVisible():
+            self._scroll_preview_arm_timer.stop()
+
+        if self._scroll_preview.isVisible():
             self._update_scroll_preview_position()
             self._update_scroll_preview_image()
-        self._last_scroll_value = value
+            self._overlay_hide_timer.start()
+
         self.visibility_timer.start()
         viewport_bottom = value + self.viewport().height()
         content_bottom = self.content.height()
@@ -284,6 +338,132 @@ class ImageGrid(QScrollArea):
             self._load_next_batch()
 
         self._tag_popover.refresh_position()
+
+    def _confirm_scroll_preview_show(self) -> None:
+        """Show scroll preview when arm-time and current speeds average above threshold."""
+        smoothed = (self._scroll_speed_at_arm + self._last_scroll_speed) / 2.0
+        if smoothed < self.SCROLL_FAST_THRESHOLD_PX_PER_MS:
+            return
+        self._show_scroll_preview(self.verticalScrollBar().value())
+        self._overlay_hide_timer.start()
+
+    def _viewport_top_image_index(self) -> int:
+        """
+        Index in ``all_images`` for the first cell on the topmost visible row.
+
+        Returns:
+            Clamped image index (0 .. len-1).
+        """
+        if not self.all_images:
+            return 0
+        scroll_y = self.verticalScrollBar().value()
+        spacing = self.grid.spacing()
+        margins = self.grid.contentsMargins()
+        mt = margins.top()
+        _, row_height = self._calculate_optimal_dimensions()
+        row_h = row_height + spacing
+        if row_h <= 0:
+            return 0
+        adj_top = max(0, scroll_y - mt)
+        first_row = adj_top // row_h
+        top_index = first_row * self.columns
+        return min(top_index, len(self.all_images) - 1)
+
+    def _scroll_preview_target_extract_index(self) -> int:
+        """
+        Extract-strip index closest to the topmost visible grid row.
+
+        Returns:
+            Index into ``_extract_indices``.
+        """
+        if not self._extract_indices:
+            return 0
+        target_img = self._viewport_top_image_index()
+        return min(
+            range(len(self._extract_indices)),
+            key=lambda i: abs(self._extract_indices[i] - target_img),
+        )
+
+    def _nearest_extract_pixmap(self, target_extract_i: int) -> Optional[QPixmap]:
+        """
+        Return the loaded extract pixmap closest to the target strip index.
+
+        Args:
+            target_extract_i: Desired extract index for the current scroll ratio.
+
+        Returns:
+            Nearest available pixmap, or None if the strip cache is empty.
+        """
+        if not self._extract_pixmaps:
+            return None
+        nearest_i = min(
+            self._extract_pixmaps.keys(),
+            key=lambda i: abs(i - target_extract_i),
+        )
+        pixmap = self._extract_pixmaps[nearest_i]
+        if pixmap is None or pixmap.isNull():
+            return None
+        return pixmap
+
+    def _nearest_grid_pixmap_for_scroll(self) -> Optional[QPixmap]:
+        """
+        Fallback: nearest already-loaded grid thumbnail to the scroll target.
+
+        Returns:
+            QPixmap from the main grid cache, or None.
+        """
+        if not self.pixmap_cache:
+            return None
+        target_img_idx = self._viewport_top_image_index()
+        best_pixmap: Optional[QPixmap] = None
+        best_dist: Optional[int] = None
+        for image_id, pixmap in self.pixmap_cache.items():
+            if pixmap is None or pixmap.isNull():
+                continue
+            img_idx = self._image_id_to_index.get(image_id)
+            if img_idx is None:
+                continue
+            dist = abs(img_idx - target_img_idx)
+            if best_dist is None or dist < best_dist:
+                best_dist = dist
+                best_pixmap = pixmap
+        return best_pixmap
+
+    def _scroll_preview_pixmap_for_current_scroll(self) -> Optional[QPixmap]:
+        """
+        Return the best available preview image for the current scroll position.
+
+        Prefers the exact extract slot, then the nearest loaded extract, then the
+        nearest visible grid thumbnail.
+
+        Returns:
+            QPixmap when any candidate is loaded, else None.
+        """
+        if not self._extract_indices:
+            return self._nearest_grid_pixmap_for_scroll()
+        target_i = self._scroll_preview_target_extract_index()
+        exact = self._extract_pixmaps.get(target_i)
+        if exact is not None and not exact.isNull():
+            return exact
+        nearest_extract = self._nearest_extract_pixmap(target_i)
+        if nearest_extract is not None:
+            return nearest_extract
+        return self._nearest_grid_pixmap_for_scroll()
+
+    def _prioritize_extract_for_scroll(self) -> None:
+        """Bump the extract slot for the current scroll position to the preload queue."""
+        if not self._extract_indices:
+            return
+        target_i = self._scroll_preview_target_extract_index()
+        if target_i in self._extract_pixmaps:
+            return
+        try:
+            self._extract_pending_indices.remove(target_i)
+        except ValueError:
+            pass
+        self._extract_pending_indices.insert(0, target_i)
+        if not self._extract_preload_timer.isActive():
+            self._extract_preload_timer.start()
 
     def _update_scroll_preview_position(self) -> None:
         """Update overlay position to follow the scrollbar thumb."""
@@ -323,7 +503,8 @@ class ImageGrid(QScrollArea):
         if self._extract_pending_indices:
             self._extract_preload_timer.start()
 
-    def _build_balanced_extract_order(self, count: int) -> List[int]:
+    @staticmethod
+    def _build_balanced_extract_order(count: int) -> List[int]:
         """Return indices [0..count-1] in a hierarchical Debut/Fin/Milieu, quarts, 1/8, 1/16... order.
 
         Idée:
@@ -388,7 +569,7 @@ class ImageGrid(QScrollArea):
             if img_idx >= len(self.all_images):
                 continue
             meta = self.all_images[img_idx]
-            if meta.id in self._extract_pixmaps or meta.id in self._extract_loading:
+            if extract_i in self._extract_pixmaps or meta.id in self._extract_loading:
                 continue
             self._extract_loading.add(meta.id)
             path = self.image_manager.image_dir / meta.path
@@ -406,29 +587,21 @@ class ImageGrid(QScrollArea):
             self._extract_preload_timer.stop()
 
     def _update_scroll_preview_image(self) -> None:
-        """Set overlay image from preloaded extract corresponding to current scroll position.
-        Use index+1 so the preview matches what appears slightly below center in the grid.
-        """
-        if not self._extract_indices or not self._scroll_preview.isVisible():
+        """Update overlay image using the nearest loaded preview candidate."""
+        if not self._scroll_preview.isVisible():
             return
-        v = self.verticalScrollBar()
-        scroll_max = max(1, v.maximum())
-        ratio = v.value() / scroll_max
-        n = len(self._extract_indices)
-        base_i = int(ratio * (n - 1)) if n > 1 else 0
-        extract_i = max(0, min(n - 1, base_i + 1))
-        pixmap = self._extract_pixmaps.get(extract_i)
-        if pixmap is not None and not pixmap.isNull():
+        pixmap = self._scroll_preview_pixmap_for_current_scroll()
+        if pixmap is not None:
             self._scroll_preview.set_image(pixmap)
-        else:
-            self._scroll_preview.clear_image()
 
     def _show_scroll_preview(self, scroll_value: int) -> None:
-        """Show the scroll preview overlay with fade-in and set its image from extract strip."""
+        """Show the scroll preview overlay (nearest loaded image when possible)."""
         self._update_scroll_preview_position()
+        pixmap = self._scroll_preview_pixmap_for_current_scroll()
+        if pixmap is not None:
+            self._scroll_preview.set_image(pixmap)
         self._scroll_preview.show_animated()
         self._scroll_preview.raise_()
-        self._update_scroll_preview_image()
 
     def _hide_scroll_preview(self) -> None:
         """Hide the scroll preview overlay with fade-out (called when scroll has slowed or stopped)."""
@@ -849,6 +1022,8 @@ class ImageGrid(QScrollArea):
         self.visibility_timer.stop()
         self.load_ticker_timer.stop()
         self._overlay_hide_timer.stop()
+        self._scroll_preview_arm_timer.stop()
+        self._user_idle_timer.stop()
         self._scroll_preview.hide_immediate()
         self._tag_popover.hide_popover()
         self._extract_preload_timer.stop()
@@ -1138,6 +1313,11 @@ class ImageGrid(QScrollArea):
             self._extract_pixmaps[extract_i] = pixmap
             if self._scroll_preview.isVisible():
                 self._update_scroll_preview_image()
+            elif (
+                self._scroll_preview_arm_timer.isActive()
+                or self._last_scroll_speed >= self.SCROLL_FAST_THRESHOLD_PX_PER_MS
+            ):
+                self._confirm_scroll_preview_show()
             self.pixmap_cache[image_id] = pixmap
             if (
                 image_id in self.thumbnails
@@ -1193,6 +1373,7 @@ class ImageGrid(QScrollArea):
 
     def mousePressEvent(self, event):
 
+        self._note_user_activity()
         if event.button() == Qt.LeftButton:
             # Convert viewport coordinates to content coordinates
             content_pos = self.content.mapFrom(self, event.pos())
@@ -1288,11 +1469,16 @@ class ImageGrid(QScrollArea):
         super().mouseDoubleClickEvent(event)
 
     def mouseMoveEvent(self, event):
+        self._note_user_activity()
         if self.is_selecting:
             # Update rubber band geometry with proper coordinates
             selection_rect = QRect(self.selection_start, event.pos()).normalized()
             self.rubber_band.setGeometry(selection_rect)
         super().mouseMoveEvent(event)
+
+    def wheelEvent(self, event):
+        """Let wheel events reach the scroll area (preload is not paused on scroll)."""
+        super().wheelEvent(event)
 
     def mouseReleaseEvent(self, event):
         self._log_debug("Mouse release event")
