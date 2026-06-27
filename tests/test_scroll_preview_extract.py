@@ -18,14 +18,15 @@ def test_balanced_extract_order_covers_all_indices():
     assert set(order) == set(range(12))
 
 
-def test_scroll_preview_target_uses_nearest_extract_to_viewport_top():
-    """Preview should track the top visible row, not a global scroll ratio."""
+def test_scroll_preview_target_uses_nearest_extract_to_preview_row():
+    """Preview should track one row below the viewport top."""
     grid = ImageGrid.__new__(ImageGrid)
     grid.all_images = [None] * 100
     grid.columns = 4
+    grid.SCROLL_PREVIEW_ROW_OFFSET = 1
     grid._extract_indices = [0, 16, 32, 48, 64, 80, 96]
-    grid._viewport_top_image_index = lambda: 20
-    assert grid._scroll_preview_target_extract_index() == 1
+    grid._scroll_preview_target_image_index = lambda: 28
+    assert grid._scroll_preview_target_extract_index() == 2
 
 
 def test_vicinity_load_order_prefers_viewport_then_neighbors():

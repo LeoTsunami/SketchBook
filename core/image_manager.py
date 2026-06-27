@@ -3,6 +3,7 @@ Image management system for handling imports and processing.
 """
 
 import os
+import threading
 from datetime import datetime
 from pathlib import Path
 from typing import List, Optional, Tuple, Set
@@ -26,9 +27,38 @@ class ImageManager:
         # Use user data directory for images
         self.image_dir = user_data.get_images_dir()
         ensure_dir(self.image_dir)
-        self.db = ImageDatabase()
-        # Reason: import_date backfill scans the whole DB; run after first frame via
-        # `run_import_date_backfill()` so startup stays responsive on large libraries.
+        self._db: Optional[ImageDatabase] = None
+        self._db_preload_thread: Optional[threading.Thread] = None
+        # Reason: images.json is loaded on first `.db` access (or via `start_db_preload`)
+        # so the main window can paint before parsing a large library.
+
+    @property
+    def db(self) -> ImageDatabase:
+        """Return the image metadata database, loading from disk on first access."""
+        if self._db_preload_thread is not None:
+            self._db_preload_thread.join()
+            self._db_preload_thread = None
+        if self._db is None:
+            self._db = ImageDatabase()
+        return self._db
+
+    def start_db_preload(self) -> None:
+        """
+        Begin loading images.json on a background thread.
+
+        Overlaps DB I/O with main-window UI construction so the first `.db`
+        access after show is often already complete.
+        """
+        if self._db is not None or self._db_preload_thread is not None:
+            return
+
+        def _worker() -> None:
+            self._db = ImageDatabase()
+
+        self._db_preload_thread = threading.Thread(
+            target=_worker, name="ImageDbPreload", daemon=True
+        )
+        self._db_preload_thread.start()
 
     def run_import_date_backfill(self) -> None:
         """

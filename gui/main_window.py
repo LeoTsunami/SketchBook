@@ -652,8 +652,9 @@ class MainWindow(QMainWindow):
         """Initialize the main window."""
         super().__init__()
 
-        # Initialize managers
+        # Initialize managers (DB preload overlaps with UI build below)
         self.image_manager = ImageManager()
+        self.image_manager.start_db_preload()
         self.session_manager = SessionManager()
         self.thread_pool = QThreadPool()
         self._startup_sort_signals = StartupSortSignals()
@@ -1623,7 +1624,7 @@ class MainWindow(QMainWindow):
         self.or_zone.tag_dropped.connect(self._on_tag_filter_changed)
         self.or_zone.tags_modified.connect(self._on_tag_filter_changed)
         self.tag_search_input = QLineEdit()
-        self._update_tag_search_completer()
+        # Completer is filled when the tag library loads (see _load_tags_into_grid).
 
         vp.installEventFilter(self)
         self._tag_panel_overlay.panel_did_hide.connect(
@@ -2459,6 +2460,7 @@ class MainWindow(QMainWindow):
             self.tags_grid_layout.setRowStretch(max_row + 1, 1)
         if not skip_sync:
             self._sync_tag_grid_state()
+        self._update_tag_search_completer()
         QTimer.singleShot(0, self._apply_tag_library_cell_widths)
 
     def _tag_library_content_width(self) -> int:

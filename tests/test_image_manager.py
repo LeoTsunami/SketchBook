@@ -12,19 +12,6 @@ from core.image_manager import ImageManager
 
 
 @pytest.fixture
-def image_manager(tmp_path):
-    """Create an ImageManager instance with temporary storage."""
-    manager = ImageManager()
-    manager.image_dir = tmp_path / "images"
-    # Ensure the image directory exists
-    manager.image_dir.mkdir(parents=True, exist_ok=True)
-    manager.db._db_path = tmp_path / "db" / "images.json"
-    # Ensure the database directory exists
-    manager.db._db_path.parent.mkdir(parents=True, exist_ok=True)
-    return manager
-
-
-@pytest.fixture
 def sample_image(tmp_path):
     """Create a sample test image."""
     image_path = tmp_path / "test.jpg"

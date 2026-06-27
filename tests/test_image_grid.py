@@ -11,30 +11,15 @@ from PIL import Image
 from qtpy.QtCore import QTimer, QSize, Qt
 from qtpy.QtGui import QResizeEvent
 from gui.image_grid import ImageGrid
-from core.image_manager import ImageManager
 from core.image_db import ImageMetadata
 
 
 @pytest.fixture
-def image_manager(tmp_path):
-    """ImageManager with temporary storage and one image."""
-    manager = ImageManager()
-    manager.image_dir = tmp_path / "images"
-    manager.image_dir.mkdir(parents=True, exist_ok=True)
-    manager.db._db_path = tmp_path / "db" / "images.json"
-    manager.db._db_path.parent.mkdir(parents=True, exist_ok=True)
-    img_path = tmp_path / "test.jpg"
-    Image.new("RGB", (100, 100), color="red").save(img_path)
-    manager.import_image(img_path)
-    return manager
-
-
-@pytest.fixture
-def image_grid(qtbot, image_manager):
+def image_grid(qtbot, image_manager_with_image):
     """ImageGrid with one image loaded."""
-    grid = ImageGrid(image_manager)
+    grid = ImageGrid(image_manager_with_image)
     qtbot.addWidget(grid)
-    images = image_manager.db.list_images()
+    images = image_manager_with_image.db.list_images()
     grid.load_images_from_list(images, filter_key=("list",))
     # Let layout and visibility timers run
     qtbot.wait(200)

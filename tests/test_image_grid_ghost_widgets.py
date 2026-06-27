@@ -7,22 +7,7 @@ from PIL import Image
 from qtpy.QtWidgets import QApplication, QFrame
 
 from gui.image_grid import ImageGrid
-from core.image_manager import ImageManager
 from core.image_db import ImageMetadata
-
-
-@pytest.fixture
-def image_manager(tmp_path):
-    """ImageManager with isolated DB and one real image."""
-    manager = ImageManager()
-    manager.image_dir = tmp_path / "images"
-    manager.image_dir.mkdir(parents=True, exist_ok=True)
-    manager.db._db_path = tmp_path / "db" / "images.json"
-    manager.db._db_path.parent.mkdir(parents=True, exist_ok=True)
-    img_path = tmp_path / "seed.jpg"
-    Image.new("RGB", (100, 100), color="red").save(img_path)
-    manager.import_image(img_path)
-    return manager
 
 
 def _fake_metadata(count: int) -> list:

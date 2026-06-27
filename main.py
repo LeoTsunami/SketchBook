@@ -9,7 +9,6 @@ from pathlib import Path
 
 from qtpy.QtWidgets import QApplication
 from qtpy.QtGui import QFontDatabase, QFont
-from gui.main_window import MainWindow
 from core.settings import settings
 from core.user_data import user_data
 
@@ -84,6 +83,9 @@ def main():
 
     backup_thread = threading.Thread(target=run_config_backup, daemon=True)
     backup_thread.start()
+
+    # Reason: defer heavy GUI imports until after QApplication + theme are ready.
+    from gui.main_window import MainWindow
 
     window = MainWindow()
     window.show()

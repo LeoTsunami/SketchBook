@@ -80,6 +80,7 @@ class ImageGrid(QScrollArea):
     SCROLL_IDLE_MS = 120
     USER_IDLE_MS = 600
     VIEWPORT_BUFFER_ROWS = 3
+    SCROLL_PREVIEW_ROW_OFFSET = 1
     GRID_EXTENDED_ROWS = 5
     IDLE_REFRESH_INTERVAL_MS = 120
     IDLE_MAX_LOADS_PER_TICK = 4
@@ -760,16 +761,30 @@ class ImageGrid(QScrollArea):
         first_row, _ = self._viewport_row_range(0)
         return min(first_row * self.columns, len(self.all_images) - 1)
 
+    def _scroll_preview_target_image_index(self) -> int:
+        """
+        Image index shown in the scroll preview (viewport top + row offset).
+
+        Returns:
+            Clamped image index (0 .. len-1).
+        """
+        if not self.all_images:
+            return 0
+        first_row, _ = self._viewport_row_range(0)
+        total_rows = (len(self.all_images) + self.columns - 1) // self.columns
+        target_row = min(first_row + self.SCROLL_PREVIEW_ROW_OFFSET, total_rows - 1)
+        return min(target_row * self.columns, len(self.all_images) - 1)
+
     def _scroll_preview_target_extract_index(self) -> int:
         """
-        Extract-strip index closest to the topmost visible grid row.
+        Extract-strip index closest to the scroll-preview target row.
 
         Returns:
             Index into ``_extract_indices``.
         """
         if not self._extract_indices:
             return 0
-        target_img = self._viewport_top_image_index()
+        target_img = self._scroll_preview_target_image_index()
         return min(
             range(len(self._extract_indices)),
             key=lambda i: abs(self._extract_indices[i] - target_img),
@@ -805,7 +820,7 @@ class ImageGrid(QScrollArea):
         """
         if not self.pixmap_cache:
             return None
-        target_img_idx = self._viewport_top_image_index()
+        target_img_idx = self._scroll_preview_target_image_index()
         best_pixmap: Optional[QPixmap] = None
         best_dist: Optional[int] = None
         for image_id, pixmap in self.pixmap_cache.items():
