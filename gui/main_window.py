@@ -106,6 +106,16 @@ from gui.grid_display_flyout import GridDisplayFlyout
 from gui.trace_icon_button import ORANGE_TRACE, TraceIconButton
 from gui.sort_flyout import SortFlyout
 from gui.icon_utils import find_tag_icon, invert_icon, load_white_icon
+from gui.tag_library import (
+    TagLibraryPanel,
+    TagFilterState,
+    DraggableTagButton,
+    WrappingDraggableTagButton,
+    apply_chip_style,
+    TAG_LIBRARY_MIME,
+    TAG_LIBRARY_MULTI_MIME,
+    mime_data_looks_like_tag_library_drag,
+)
 import os
 import json
 
@@ -415,244 +425,6 @@ class TagGridDropFilter(QObject):
             self._main._on_tag_grid_drop(event)
             return True
         return False
-
-
-class DraggableTagButton(QPushButton):
-    """Tag button in the tag library that can be dragged onto images."""
-
-    contextMenuRequested = Signal(str)
-
-    def __init__(self, text: str, parent=None):
-        super().__init__(text, parent)
-        self._drag_start_pos = None
-
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton:
-            self._drag_start_pos = event.pos()
-        super().mousePressEvent(event)
-
-    def contextMenuEvent(self, event):
-        """Emit signal so main window can show Rename (user tags only)."""
-        self.contextMenuRequested.emit(self.property("baseLabel") or self.text())
-        event.accept()
-
-    def mouseMoveEvent(self, event):
-        if (
-            event.buttons() & Qt.LeftButton
-            and self._drag_start_pos is not None
-            and (event.pos() - self._drag_start_pos).manhattanLength() >= 10
-        ):
-            tag_text = self.property("baseLabel") or self.text()
-            if not tag_text:
-                return
-
-            drag = QDrag(self)
-            mime_data = QMimeData()
-            mime_data.setText(tag_text)
-            # Mark drag from tag library so grid can accept drop for repositioning (user tags only)
-            if self.property("userTag"):
-                mime_data.setData(TAG_LIBRARY_MIME, tag_text.encode("utf-8"))
-            drag.setMimeData(mime_data)
-
-            # Simple pixmap with tag text for visual feedback
-            pixmap = QPixmap(120, 28)
-            pixmap.fill(Qt.transparent)
-            painter = QPainter(pixmap)
-            painter.setPen(Qt.white)
-            painter.drawText(pixmap.rect(), Qt.AlignCenter, tag_text)
-            painter.end()
-            drag.setPixmap(pixmap)
-
-            host = self.window()
-            if hasattr(host, "_begin_tag_library_drag_session"):
-                host._begin_tag_library_drag_session()
-            try:
-                drag.exec_(Qt.MoveAction)
-            finally:
-                if hasattr(host, "_end_tag_library_drag_session"):
-                    host._end_tag_library_drag_session()
-
-            return
-
-        super().mouseMoveEvent(event)
-
-
-class WrappingDraggableTagButton(DraggableTagButton):
-    """
-    Unified tag chip for the tag library (both category rows and subtag cells).
-
-    Manages its own icon/text layout so icon fills the chip height with no padding.
-    """
-
-    ICON_SIDE_PX = TAG_LIBRARY_TAG_MIN_HEIGHT_PX - TAG_LIBRARY_TAG_BORDER_WIDTH_PX * 2 - 4
-
-    def __init__(self, text: str, cell_width: int, parent=None):
-        super().__init__("", parent)
-        self._cell_width = 0  # sentinel: 0 forces first set_cell_width to always run
-        self._geometry_valid = False
-        self._source_icon: Optional[QIcon] = None
-        self._icon_label: Optional[QLabel] = None
-        self._text_label = QLabel(text)
-        self._text_label.setWordWrap(True)
-        self._text_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
-        self._text_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self._text_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        label_font = self.font()
-        label_font.setPixelSize(TAG_LIBRARY_FONT_SUBTAG_PX)
-        label_font.setWeight(QFont.Weight.DemiBold)
-        self._text_label.setFont(label_font)
-        self._content_row = QWidget(self)
-        self._content_row.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self._content_row.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self._row_layout = QHBoxLayout(self._content_row)
-        self._row_layout.setContentsMargins(0, 0, 0, 0)
-        self._row_layout.setSpacing(4)
-        self._row_layout.setAlignment(TAG_LIBRARY_TAG_CELL_ALIGN)
-        self._row_layout.addWidget(self._text_label, 0, TAG_LIBRARY_TAG_CELL_ALIGN)
-        self._inner_layout = QVBoxLayout(self)
-        self._inner_layout.setContentsMargins(2, 0, 2, 0)
-        self._inner_layout.setSpacing(0)
-        self._inner_layout.setAlignment(Qt.AlignVCenter)
-        self._inner_layout.addWidget(self._content_row, 0, Qt.AlignCenter)
-        self.setCursor(Qt.PointingHandCursor)
-        self.set_cell_width(cell_width)
-
-    # ------------------------------------------------------------------
-    # Public API
-    # ------------------------------------------------------------------
-
-    def set_cell_width(self, width: int, *, min_w: int = TAG_LIBRARY_TAG_CELL_MIN_WIDTH_PX) -> None:
-        """Set fixed cell width and recompute chip geometry (no-op if width unchanged)."""
-        new_w = max(min_w, width)
-        if new_w == self._cell_width and self._geometry_valid:
-            return  # nothing to do – avoids cascading geometry recalculations
-        self._cell_width = new_w
-        self.setFixedWidth(self._cell_width)
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.setProperty("tagLibraryCell", True)
-        self._geometry_valid = True
-        self._sync_chip_geometry()
-
-    def setText(self, text: str) -> None:
-        if self._text_label.text() == text:
-            return
-        self._text_label.setText(text)
-        self._sync_chip_geometry()
-
-    def text(self) -> str:
-        return self._text_label.text()
-
-    def setIcon(self, icon: QIcon) -> None:
-        self._source_icon = None if icon.isNull() else icon
-        if icon.isNull():
-            if self._icon_label is not None:
-                self._icon_label.setHidden(True)
-        else:
-            if self._icon_label is None:
-                self._icon_label = QLabel(self._content_row)
-                self._icon_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-                self._row_layout.insertWidget(0, self._icon_label, 0, TAG_LIBRARY_TAG_CELL_ALIGN)
-            self._icon_label.setHidden(False)
-        self._sync_chip_geometry()
-
-    def setIconSize(self, _size: QSize) -> None:
-        """Icon size is derived from chip height; external calls are ignored."""
-        self._sync_chip_geometry()
-
-    def sizeHint(self) -> QSize:
-        """Stable chip size; never recomputes to avoid layout feedback loops."""
-        h = getattr(self, "_chip_height", TAG_LIBRARY_TAG_MIN_HEIGHT_PX)
-        return QSize(self._cell_width, h)
-
-    def minimumSizeHint(self) -> QSize:
-        return self.sizeHint()
-
-    # ------------------------------------------------------------------
-    # Geometry helpers (called explicitly, never during sizeHint)
-    # ------------------------------------------------------------------
-
-    def _sync_chip_geometry(self) -> None:
-        """Recompute internal sizes without triggering layout loops."""
-        if getattr(self, "_syncing_chip_geometry", False):
-            return
-        self._syncing_chip_geometry = True
-        try:
-            self._sync_chip_geometry_impl()
-        finally:
-            self._syncing_chip_geometry = False
-
-    def _label_height_for_text(self, text_w: int) -> int:
-        """Stable text height via font metrics, not via Qt layout."""
-        fm = QFontMetrics(self._text_label.font())
-        br = fm.boundingRect(
-            QRect(0, 0, text_w, 10000),
-            Qt.TextWordWrap | Qt.AlignHCenter,
-            self._text_label.text(),
-        )
-        return max(fm.height(), br.height()) + 2
-
-    def _tight_text_width(self, max_w: int) -> int:
-        """
-        Compute the minimum width needed to render the label text without
-        wasting horizontal space.  If the text fits on one line within ``max_w``
-        we use the single-line advance; otherwise we wrap at ``max_w`` and keep
-        that as the width so word-wrap still works.
-
-        Args:
-            max_w: Maximum allowed width (chip inner width minus icon block).
-
-        Returns:
-            int: Tight pixel width for the text label.
-        """
-        fm = QFontMetrics(self._text_label.font())
-        single_line_w = fm.horizontalAdvance(self._text_label.text()) + 4
-        if single_line_w <= max_w:
-            return max(20, single_line_w)
-        return max(20, max_w)
-
-    def _sync_chip_geometry_impl(self) -> None:
-        border_v = TAG_LIBRARY_TAG_BORDER_WIDTH_PX * 2
-        chip_h_est = TAG_LIBRARY_TAG_MIN_HEIGHT_PX
-        icon_px = chip_h_est - border_v - 4
-        # Use isHidden() (not isVisible()) so the check works before the widget
-        # is parented/shown – isVisible() returns False for invisible ancestors.
-        has_icon = (
-            self._source_icon is not None
-            and self._icon_label is not None
-            and not self._icon_label.isHidden()
-        )
-        icon_block_w = (icon_px + self._row_layout.spacing()) if has_icon else 0
-
-        # Maximum available width for text
-        margins = self._inner_layout.contentsMargins()
-        h_pad = margins.left() + margins.right()
-        raw_inner_w = max(24, self._cell_width - h_pad - border_v - 2)
-        max_text_w = max(20, raw_inner_w - icon_block_w)
-
-        # Use the tightest width that fits the text (icon + text stay snug)
-        text_w = self._tight_text_width(max_text_w)
-
-        label_h = self._label_height_for_text(text_w)
-        pad_v = TAG_LIBRARY_TAG_STYLE_V_PADDING_PX * 2
-        chip_h = min(
-            TAG_LIBRARY_TAG_MAX_HEIGHT_PX,
-            max(TAG_LIBRARY_TAG_MIN_HEIGHT_PX, label_h + pad_v + border_v + 4),
-        )
-        # Recompute icon size from final chip height
-        icon_px = chip_h - border_v - 4
-        row_h = max(label_h, icon_px if has_icon else 0)
-        row_w = text_w + (icon_px + self._row_layout.spacing() if has_icon else 0)
-
-        self._text_label.setFixedSize(text_w, label_h)
-        self._content_row.setFixedSize(row_w, row_h)
-
-        if has_icon:
-            pm = self._source_icon.pixmap(icon_px, icon_px)
-            self._icon_label.setPixmap(pm)
-            self._icon_label.setFixedSize(icon_px, icon_px)
-
-        self.setFixedHeight(chip_h)
-        self._chip_height = chip_h
 
 
 def apply_global_stylesheet():
@@ -1546,46 +1318,21 @@ class MainWindow(QMainWindow):
         self._parent_select_bar.setVisible(False)
         tag_content_layout.addWidget(self._parent_select_bar)
 
-        # Scrollable grid widget for tags
-        self.tags_grid_container = QWidget()
-        self.tags_grid_layout = QGridLayout(self.tags_grid_container)
-        self.tags_grid_layout.setContentsMargins(
-            3,
-            TAG_LIBRARY_GRID_TOP_MARGIN_PX,
-            0,
-            TAG_LIBRARY_SCROLLBAR_INSET_BOTTOM_PX,
-        )
-        self.tags_grid_layout.setSpacing(8)
-        self.tags_grid_layout.setAlignment(Qt.AlignTop)
-        self.tags_grid_layout.setSizeConstraint(QLayout.SetMinimumSize)
+        # === NEW: TagLibraryPanel (sections + 3-col grids, no rebuild on expand) ===
+        self._tag_library_panel = TagLibraryPanel()
+        tag_content_layout.addWidget(self._tag_library_panel, 1)
 
-        self.tags_scroll_area = QScrollArea()
-        self.tags_scroll_area.setObjectName("TagLibraryScrollArea")
-        self.tags_scroll_area.setWidgetResizable(False)
-        self.tags_scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-        self.tags_scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
-        self.tags_scroll_area.setFrameShape(QFrame.NoFrame)
-        self.tags_scroll_area.setStyleSheet(
-            "QScrollArea#TagLibraryScrollArea { background: transparent; border: none; }"
-            "QScrollArea#TagLibraryScrollArea > QWidget > QWidget { background: transparent; }"
-        )
-        self.tags_scroll_area.setWidget(self.tags_grid_container)
-        self.tags_scroll_area.setViewportMargins(
-            0,
-            0,
-            TAG_LIBRARY_VIEWPORT_RIGHT_GUTTER_PX,
-            TAG_LIBRARY_SCROLLBAR_INSET_BOTTOM_PX,
-        )
-        self.tags_scroll_area.setSizePolicy(
-            QSizePolicy.Expanding, QSizePolicy.Expanding
-        )
-        tag_content_layout.addWidget(self.tags_scroll_area, 1)
-        self.tags_grid_container.setAcceptDrops(True)
-        self._tag_grid_drop_filter = TagGridDropFilter(self)
-        self.tags_grid_container.installEventFilter(self._tag_grid_drop_filter)
+        # Connect panel signals to MainWindow handlers
+        self._tag_library_panel.filter_changed.connect(self._on_panel_filter_changed)
+        self._tag_library_panel.tag_delete_requested.connect(self._delete_user_tags)
+        self._tag_library_panel.tag_rename_requested.connect(self._on_panel_tag_rename)
+        self._tag_library_panel.tag_icon_change_requested.connect(self._on_panel_tag_icon_change)
+        self._tag_library_panel.drag_session_started.connect(self._begin_tag_library_drag_session)
+        self._tag_library_panel.drag_session_ended.connect(self._end_tag_library_drag_session)
+
+        # Rubber-band selection on the panel's scroll viewport
+        self.tags_scroll_area = self._tag_library_panel.get_scroll_area()
         tag_viewport = self.tags_scroll_area.viewport()
-        self._tag_library_resize_filter = TagLibraryResizeFilter(self)
-        tag_viewport.installEventFilter(self._tag_library_resize_filter)
         self._tag_library_wheel_filter = TagLibraryWheelFilter(self.tags_scroll_area)
         self.tags_scroll_area.installEventFilter(self._tag_library_wheel_filter)
         tag_viewport.installEventFilter(self._tag_library_wheel_filter)
@@ -1603,6 +1350,9 @@ class MainWindow(QMainWindow):
         """)
         self._tag_library_rubber_band.raise_()
         QApplication.instance().installEventFilter(self)
+
+        # Legacy compat stubs so old call sites compile (will be cleaned up later)
+        self.tags_grid_container = self._tag_library_panel
 
         # Tag library content is filled on first window show (fast empty shell at startup).
 
@@ -1819,7 +1569,10 @@ class MainWindow(QMainWindow):
         return False
 
     def _apply_category_filters(
-        self, _pre_sorted_images: Optional[List[ImageMetadata]] = None
+        self,
+        _pre_sorted_images: Optional[List[ImageMetadata]] = None,
+        *,
+        sync_tags_after: bool = True,
     ) -> None:
         """Apply category/subtag filters to the image grid."""
         # Get current sort order
@@ -1864,11 +1617,37 @@ class MainWindow(QMainWindow):
         )
         self.image_grid.load_images_from_list(images_to_display, filter_key)
         self._update_session_images_count(images_to_display)
-        self._sync_tag_grid_state()
+        # Panel manages its own UI state; no grid rebuild needed here.
 
         # Store filtered list for session (for course_random mode only)
         if sort_by == "course_random":
             self._filtered_course_random_list = images_to_display.copy()
+
+    def _flush_tag_library_repaint(self) -> None:
+        """Paint tag-library UI changes without running deferred grid work."""
+        scroll = getattr(self, "tags_scroll_area", None)
+        if scroll is not None:
+            viewport = scroll.viewport()
+            if viewport is not None:
+                viewport.repaint()
+        overlay = getattr(self, "_tag_panel_overlay", None)
+        if overlay is not None and overlay.isVisible():
+            overlay.repaint()
+
+    def _schedule_apply_category_filters(
+        self, _pre_sorted_images: Optional[List[ImageMetadata]] = None
+    ) -> None:
+        """
+        Defer image-grid filtering to the next event-loop tick.
+
+        Call after ``_sync_tag_grid_state()`` so tag chips repaint first.
+        """
+        QTimer.singleShot(
+            0,
+            lambda pre=_pre_sorted_images: self._apply_category_filters(
+                pre, sync_tags_after=False
+            ),
+        )
 
     def _filter_images_by_category_from_list(
         self, images: List[ImageMetadata]
@@ -2262,192 +2041,61 @@ class MainWindow(QMainWindow):
         return result
 
     def _load_tags_into_grid(self, skip_sync: bool = False) -> None:
-        """Load tags from JSON and user config into the tags grid.
-        If skip_sync is True, do not call _sync_tag_grid_state at the end (caller will sync after restoring expand state).
         """
-        while self.tags_grid_layout.count():
-            item = self.tags_grid_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-        self._category_buttons = {}
-        self._subcategory_buttons = {}
-        self._subcategory_containers = {}
-        self._subcategory_tag_order = {}
-        self._user_tag_buttons = {}
-        self._subtag_to_category = {}
-        self._user_tag_display_order = (
-            []
-        )  # user tags in grid order for shift-range selection
+        Delegate tag library load to TagLibraryPanel.
 
+        Preserves active filter state across reloads.
+        """
         self._user_tags_config = user_tags_config.load_config()
-        placements = self._user_tags_config.get("placements", {})
-        user_tags_list = sorted(self._get_user_tags())
         user_tags_set = self._get_user_tags()
 
-        # Load default tags from JSON
-        default_tags_path = Path(__file__).parent / "ressources" / "default_tags.json"
-        if default_tags_path.exists():
-            try:
-                import json as _json
+        # Preserve filter state across reload
+        restore_cats = set(self._active_categories)
+        restore_subtags = {k: set(v) for k, v in self._active_subtags.items()}
 
-                default_tags, self._tag_shelf_filter_modes = load_default_tags_taxonomy(
-                    default_tags_path
-                )
-                default_tags = merge_custom_shelves(
-                    default_tags,
-                    self._tag_shelf_filter_modes,
-                    self._user_tags_config.get("custom_shelves", []),
-                )
+        self._tag_library_panel.load(
+            user_tags=user_tags_set,
+            user_tags_config_data=self._user_tags_config,
+            restore_categories=restore_cats,
+            restore_subtags=restore_subtags,
+        )
 
-                def collect_subtags(data, collected: List[str]) -> None:
-                    if isinstance(data, list):
-                        for item in data:
-                            collect_subtags(item, collected)
-                    elif isinstance(data, dict):
-                        for key, value in data.items():
-                            collected.append(key)
-                            collect_subtags(value, collected)
-                    elif isinstance(data, str):
-                        collected.append(data)
+        # Sync shelf filter modes from panel
+        self._tag_shelf_filter_modes = self._tag_library_panel.get_shelf_filter_modes()
 
-                categories_list = list(default_tags.items())
-                max_cols = 3
-                max_tags_per_row = 3
-                current_row = 0
-                for category_idx, (category, tags_value) in enumerate(categories_list):
-                    is_label_category = is_tag_shelf(category)
-                    tags_data, _ = parse_category_tags(tags_value)
-                    default_st: List[str] = []
-                    collect_subtags(tags_data, default_st)
-                    default_st = list(dict.fromkeys(default_st))
-                    unique_subtags = self._build_subtags_for_category(
-                        category, default_st, user_tags_list, placements
-                    )
-                    self._subcategory_tag_order[category] = list(unique_subtags)
-
-                    row = current_row
-                    if is_label_category:
-                        shelf_header = self._build_shelf_header(category)
-                        self.tags_grid_layout.addWidget(
-                            shelf_header,
-                            row,
-                            0,
-                            1,
-                            max_cols,
-                            TAG_LIBRARY_TAG_CELL_ALIGN,
-                        )
-                    else:
-                        category_button = self._build_tag_button(
-                            category,
-                            is_user_tag=False,
-                            library_category_row=True,
-                        )
-                        category_button.clicked.connect(
-                            lambda _, name=category: self._on_tag_button_clicked(name)
-                        )
-                        category_button.setProperty("tagGridRole", "category")
-                        category_button.setProperty("tagGridKey", category)
-                        self.tags_grid_layout.addWidget(
-                            category_button,
-                            row,
-                            0,
-                            1,
-                            max_cols,
-                            TAG_LIBRARY_TAG_CELL_ALIGN,
-                        )
-                        self._category_buttons[category] = category_button
-
-                    if is_label_category:
-                        tag_container: QWidget = QFrame()
-                        tag_container.setFrameShape(QFrame.NoFrame)
-                    else:
-                        tag_container = QWidget()
-                    tag_container.setSizePolicy(
-                        QSizePolicy.Preferred, QSizePolicy.Minimum
-                    )
-                    tag_container.setMinimumHeight(0)
-                    if is_label_category:
-                        tag_container.setObjectName("TagDropZone")
-                        self._configure_tag_grid_drop_target(
-                            tag_container, "category", category
-                        )
-                        tag_container.setMinimumHeight(36)
-                    tag_container_layout = QGridLayout(tag_container)
-                    tag_container_layout.setContentsMargins(
-                        TAG_LIBRARY_SHELF_GRID_PADDING_PX,
-                        TAG_LIBRARY_SHELF_GRID_PADDING_PX,
-                        TAG_LIBRARY_SHELF_GRID_PADDING_PX,
-                        TAG_LIBRARY_SHELF_GRID_PADDING_PX,
-                    )
-                    tag_container_layout.setHorizontalSpacing(
-                        TAG_LIBRARY_TAG_GRID_SPACING_PX
-                    )
-                    tag_container_layout.setVerticalSpacing(6)
-                    tag_container_layout.setSizeConstraint(QLayout.SetMinimumSize)
-                    subtag_buttons: Dict[str, QPushButton] = {}
-                    for idx, tag in enumerate(unique_subtags):
-                        is_user_tag = tag in user_tags_set
-                        tag_button = self._build_tag_button(
-                            tag,
-                            is_user_tag=is_user_tag,
-                            library_subtag_cell=True,
-                        )
-                        tag_name, category_name = tag, category
-                        tag_button.clicked.connect(
-                            lambda _=False, t=tag_name, c=category_name: self._on_tag_button_clicked(
-                                t, c
-                            )
-                        )
-                        tag_button.setProperty("tagGridRole", "tag")
-                        tag_button.setProperty("tagGridKey", tag)
-                        tag_button.contextMenuRequested.connect(
-                            self._on_tag_context_menu_requested
-                        )
-                        if is_user_tag:
-                            self._user_tag_display_order.append(tag)
-                        tr, tc = idx // max_tags_per_row, idx % max_tags_per_row
-                        tag_container_layout.addWidget(
-                            tag_button, tr, tc, TAG_LIBRARY_TAG_CELL_ALIGN
-                        )
-                        subtag_buttons[tag] = tag_button
-                        self._subtag_to_category[tag] = category
-                        tag_button.setVisible(is_label_category)
-
-                    self.tags_grid_layout.addWidget(
-                        tag_container, row + 1, 0, 1, max_cols
-                    )
-                    self._subcategory_containers[category] = tag_container
-                    self._subcategory_buttons[category] = subtag_buttons
-
-                    current_row = row + 2
-                    if category_idx < len(categories_list) - 1:
-                        separator = QFrame()
-                        separator.setFrameShape(QFrame.Shape.HLine)
-                        separator.setFrameShadow(QFrame.Shadow.Sunken)
-                        separator.setStyleSheet("QFrame { color: #666; }")
-                        self.tags_grid_layout.addWidget(
-                            separator, current_row, 0, 1, max_cols
-                        )
-                        current_row += 1
-
-            except Exception as e:
-                import traceback
-
-                traceback.print_exc()
-                print(f"Error loading default tags: {str(e)}")
-
-        max_row = 0
-        for i in range(self.tags_grid_layout.count()):
-            item = self.tags_grid_layout.itemAt(i)
-            if item:
-                row, col, row_span, col_span = self.tags_grid_layout.getItemPosition(i)
-                max_row = max(max_row, row + row_span - 1)
-        if max_row >= 0:
-            self.tags_grid_layout.setRowStretch(max_row + 1, 1)
         if not skip_sync:
             self._sync_tag_grid_state()
         self._update_tag_search_completer()
-        QTimer.singleShot(0, self._apply_tag_library_cell_widths)
+
+        # Legacy stubs kept for methods that haven't been migrated yet
+        panel = self._tag_library_panel
+        taxonomy = panel.get_taxonomy()
+        self._subcategory_buttons = {}
+        self._subcategory_containers = {}
+        self._subcategory_tag_order = {}
+        self._category_buttons = {}
+        self._subtag_to_category = {}
+        self._user_tag_display_order = []
+        if taxonomy is not None:
+            for cat in taxonomy.categories_order:
+                self._subcategory_tag_order[cat] = list(taxonomy.subtag_order.get(cat, []))
+                for tag in taxonomy.subtag_order.get(cat, []):
+                    self._subtag_to_category[tag] = cat
+            for cat, sec in panel._category_sections.items():
+                self._category_buttons[cat] = sec._category_chip
+                self._subcategory_buttons[cat] = dict(sec._grid_host._chips)
+                self._subcategory_containers[cat] = sec._grid_host
+            for shelf, sec in panel._shelf_sections.items():
+                self._subcategory_buttons[shelf] = dict(sec._grid_host._chips)
+                self._subcategory_containers[shelf] = sec._grid_host
+
+        # (Legacy layout code removed — TagLibraryPanel now handles all widget construction)
+
+        # Sentinel block: keep old variables accessible for code not yet migrated.
+        if False:  # dead code — keeps type-checkers and old call sites from breaking
+            subtag_buttons: Dict[str, QPushButton] = {}
+            tag_button = None
+            tag_name, category_name = "", ""
 
     def _tag_library_content_width(self) -> int:
         """
@@ -2462,18 +2110,17 @@ class MainWindow(QMainWindow):
             if vp_w > 0:
                 return vp_w
         from gui.tag_panel_overlay import TagPanelOverlay
-
-        grid_m = self.tags_grid_layout.contentsMargins()
         return (
             TagPanelOverlay.PANEL_WIDTH
             - TAG_LIBRARY_OVERLAY_HORIZONTAL_MARGIN_PX
             - TAG_LIBRARY_VIEWPORT_RIGHT_GUTTER_PX
-            - grid_m.left()
-            - grid_m.right()
         )
 
     def _tag_library_cell_width(self) -> int:
         """Subtag width: 3 columns + gaps inside shelf padding, with small trim."""
+        panel = getattr(self, "_tag_library_panel", None)
+        if panel is not None:
+            return panel._compute_cell_width()
         content_w = self._tag_library_content_width()
         row_w = (
             content_w
@@ -2489,6 +2136,9 @@ class MainWindow(QMainWindow):
 
     def _tag_library_category_row_width(self) -> int:
         """Main category row (Human, Animal, …) slightly narrower than full content."""
+        panel = getattr(self, "_tag_library_panel", None)
+        if panel is not None:
+            return panel._compute_category_width()
         content_w = self._tag_library_content_width()
         return max(
             TAG_LIBRARY_TAG_CELL_MIN_WIDTH_PX,
@@ -2496,23 +2146,10 @@ class MainWindow(QMainWindow):
         )
 
     def _apply_tag_library_cell_widths(self) -> None:
-        """Apply panel-based widths to all tag library buttons (unified)."""
-        content_w = self._tag_library_content_width()
-        self.tags_grid_container.setFixedWidth(content_w)
-        self.tags_grid_container.setMaximumWidth(content_w)
-        category_w = self._tag_library_category_row_width()
-        cell_w = self._tag_library_cell_width()
-        for btn in self.tags_grid_container.findChildren(WrappingDraggableTagButton):
-            if btn.property("tagGridCategory"):
-                btn.set_cell_width(category_w, min_w=category_w)
-            else:
-                btn.set_cell_width(cell_w)
-        # Shelf headers are QLabel (converted from QPushButton to avoid consuming mouse events)
-        for header in self.tags_grid_container.findChildren(QLabel):
-            if header.property("tagGridRole") == "category":
-                header.setFixedWidth(category_w)
-        self.tags_grid_container.updateGeometry()
-        self.tags_grid_container.adjustSize()
+        """Delegate width propagation to the panel."""
+        panel = getattr(self, "_tag_library_panel", None)
+        if panel is not None:
+            panel._apply_widths()
 
     def _build_tag_button(
         self,
@@ -2764,30 +2401,12 @@ class MainWindow(QMainWindow):
     def _update_tag_button_icon(self, tag: str) -> None:
         """
         Update the icon of the existing tag button for `tag` without rebuilding the grid.
-        Keeps category expand/collapse state unchanged.
+
+        Delegates to the panel's chip registry.
         """
-        category = self._subtag_to_category.get(tag)
-        if not category:
-            return
-        subtag_buttons = self._subcategory_buttons.get(category, {})
-        btn = subtag_buttons.get(tag)
-        if not btn:
-            return
-        overrides = getattr(self, "_icon_preview_override", {})
-        user_config = getattr(self, "_user_tags_config", {})
-        icon = find_tag_icon(
-            tag, user_config=user_config, icon_preview_override=overrides
-        )
-        if not icon.isNull():
-            btn.setIcon(invert_icon(icon, TAG_LIBRARY_TAG_ICON_PX))
-            btn.setIconSize(
-                QSize(TAG_LIBRARY_TAG_ICON_PX, TAG_LIBRARY_TAG_ICON_PX)
-            )
-        else:
-            btn.setIcon(QIcon())
-            btn.setIconSize(
-                QSize(TAG_LIBRARY_TAG_ICON_PX, TAG_LIBRARY_TAG_ICON_PX)
-            )
+        panel = getattr(self, "_tag_library_panel", None)
+        if panel is not None:
+            panel.update_chip_icon(tag)
 
     def _on_tag_button_clicked(
         self, tag: str, category_override: Optional[str] = None
@@ -2846,9 +2465,24 @@ class MainWindow(QMainWindow):
                     self._deactivate_subcategory(category, tag)
                 else:
                     category_tags.add(tag)
-        # Update tag library visuals immediately, then let image grid catch up async.
-        self._sync_tag_grid_state()
-        QTimer.singleShot(0, self._apply_category_filters)
+        # Tag library first, image grid on the next event-loop tick.
+        affected: Optional[Set[str]] = None
+        if tag in self._category_buttons:
+            affected = {tag}
+        else:
+            cat = (
+                category_override
+                if category_override is not None
+                else self._subtag_to_category.get(tag)
+            )
+            if cat:
+                affected = {cat}
+        force_rebuild = {tag} if tag in self._category_buttons else None
+        self._sync_tag_grid_state(
+            categories=affected, force_layout_rebuild=force_rebuild
+        )
+        self._flush_tag_library_repaint()
+        self._schedule_apply_category_filters()
 
     def _deactivate_category(self, category: str) -> None:
         """
@@ -2943,7 +2577,9 @@ class MainWindow(QMainWindow):
         # Add to AND zone by default
         self.and_zone.add_tag(resolved_tag)
         self.tag_search_input.clear()
-        self._apply_category_filters()
+        self._sync_tag_grid_state()
+        self._flush_tag_library_repaint()
+        self._schedule_apply_category_filters()
 
     def _on_tag_filter_changed(self, tag: str = None) -> None:
         """
@@ -2952,8 +2588,9 @@ class MainWindow(QMainWindow):
         Args:
             tag: Tag that was added/removed (optional, for tag_dropped signal).
         """
-        self._apply_category_filters()
         self._sync_tag_grid_state()
+        self._flush_tag_library_repaint()
+        self._schedule_apply_category_filters()
 
     def _clear_all_tag_filters(self) -> None:
         """Clear all tag filters (category, AND, and OR)."""
@@ -2961,8 +2598,13 @@ class MainWindow(QMainWindow):
         self._active_subtags.clear()
         self.and_zone.clear_tags()
         self.or_zone.clear_tags()
-        self._apply_category_filters()
-        self._sync_tag_grid_state()
+        panel = getattr(self, "_tag_library_panel", None)
+        if panel is not None:
+            panel.clear_filters()
+        else:
+            self._sync_tag_grid_state()
+        self._flush_tag_library_repaint()
+        self._schedule_apply_category_filters()
 
     def _is_in_tag_library(self, widget: QObject) -> bool:
         """Return True if widget is the tag library scroll area or any of its descendants."""
@@ -3537,11 +3179,13 @@ class MainWindow(QMainWindow):
                 isinstance(obj, WrappingDraggableTagButton)
                 and not bool(obj.property("tagGridCategory"))
             )
+            # Tag chips from gui.tag_library.chip — also detect via tagGridRole
+            # in case isinstance fails across module reload boundaries.
+            tag_grid_role = obj.property("tagGridRole") if hasattr(obj, "property") else None
+            is_tag_chip = tag_grid_role in ("tag", "category")
             # "Empty area" = anything in the tag library that isn't a tag chip or scrollbar.
-            # Shelf headers are QLabel with WA_TransparentForMouseEvents so their clicks
-            # already fall through to the viewport; containers/margins/spacing also qualify.
             from qtpy.QtWidgets import QScrollBar as _QScrollBar
-            is_interactive_btn = isinstance(obj, DraggableTagButton)
+            is_interactive_btn = isinstance(obj, DraggableTagButton) or is_tag_chip
             is_scrollbar = isinstance(obj, _QScrollBar)
             is_empty_area = (
                 self._is_in_tag_library(obj)
@@ -3885,8 +3529,9 @@ class MainWindow(QMainWindow):
             self._parent_ok_btn.setEnabled(True)
             self._active_categories.add(tag)
             self._active_subtags.setdefault(tag, set())
-            self._apply_category_filters()
             self._sync_tag_grid_state()
+            self._flush_tag_library_repaint()
+            self._schedule_apply_category_filters()
             return
         # Sub-tag clicked: set as parent and expand so its children (if any) are visible
         self._parent_select_key = tag
@@ -3903,8 +3548,9 @@ class MainWindow(QMainWindow):
         if category:
             self._active_categories.add(category)
             self._active_subtags.setdefault(category, set()).add(tag)
-        self._apply_category_filters()
         self._sync_tag_grid_state()
+        self._flush_tag_library_repaint()
+        self._schedule_apply_category_filters()
 
     def _on_parent_select_ok(self) -> None:
         """Apply reparenting: move _tags_to_parent under _parent_select_key, then exit mode.
@@ -4188,21 +3834,12 @@ class MainWindow(QMainWindow):
                     self._active_subtags.setdefault(category, set()).add(key)
             self._sync_tag_grid_state()
 
-            # Defer layout/repaint to next event loop; hide/show forces scroll area to relayout
+            # Defer repaint to next event loop tick
             def _force_layout_update() -> None:
-                for container in self._subcategory_containers.values():
-                    lay = container.layout()
-                    if lay:
-                        lay.invalidate()
-                        lay.activate()
-                self.tags_grid_layout.invalidate()
-                self.tags_grid_layout.activate()
-                self.tags_grid_container.updateGeometry()
-                self.tags_grid_container.adjustSize()
-                # Force QScrollArea to recompute content size (hide/show triggers full relayout)
-                self.tags_grid_container.setVisible(False)
-                self.tags_grid_container.setVisible(True)
-                self.tags_grid_container.update()
+                panel = getattr(self, "_tag_library_panel", None)
+                if panel is not None:
+                    panel._apply_all_states()
+                    panel._apply_widths()
                 if (
                     hasattr(self, "tags_scroll_area")
                     and self.tags_scroll_area.viewport()
@@ -4392,7 +4029,15 @@ class MainWindow(QMainWindow):
     def _get_category_match_tags(self, category: str) -> Set[str]:
         """
         Category name plus all tags displayed under it (direct or nested).
+
+        Uses the panel's taxonomy when available; falls back to the legacy
+        _subcategory_buttons dict for compatibility.
         """
+        panel = getattr(self, "_tag_library_panel", None)
+        if panel is not None:
+            taxonomy = panel.get_taxonomy()
+            if taxonomy is not None:
+                return taxonomy.get_category_all_tags(category)
         result: Set[str] = {category}
         for tag in self._subcategory_buttons.get(category, {}):
             result.update(self._get_all_descendants(tag))
@@ -4420,22 +4065,122 @@ class MainWindow(QMainWindow):
             result.append((allowed_norm, required_groups_norm))
         return result
 
-    def _sync_tag_grid_state(self) -> None:
+    def _on_panel_filter_changed(self, state: "TagFilterState") -> None:
         """
-        Sync tag grid button states with active filters.
-        Child tags (placement parent_tag) are only visible when the parent tag is selected.
-        When a selected tag is a sub-category (has children), its row is shown first, then
-        its children on the next row(s), then the rest. Rebuilds each category's tag container
-        layout with only visible tags so the grid has no holes.
+        Receive filter state from TagLibraryPanel and trigger image grid update.
+
+        The panel owns the UI state; MainWindow only keeps copies for the
+        filter logic (which still reads self._active_categories/_active_subtags).
+
+        Args:
+            state: Immutable snapshot of the current tag filter.
         """
-        # Never rebuild while a drag is in progress – it would destroy ghost placeholders
-        # and scramble the layout underneath the cursor.
+        self._active_categories = set(state.active_categories)
+        self._active_subtags = {k: set(v) for k, v in state.active_subtags.items()}
+        self._flush_tag_library_repaint()
+        self._schedule_apply_category_filters()
+
+    def _on_panel_tag_rename(self, old_name: str, _placeholder: str) -> None:
+        """
+        Open rename dialog when TagLibraryPanel requests it.
+
+        Args:
+            old_name: Current tag name.
+            _placeholder: Unused (panel passes empty string as new_name sentinel).
+        """
+        from qtpy.QtWidgets import QInputDialog
+        new_name, ok = QInputDialog.getText(
+            self, "Rename tag", "New name:", text=old_name
+        )
+        if not (ok and new_name and new_name.strip() and new_name.strip() != old_name):
+            return
+        new_name = new_name.strip()
+        if self._tag_name_already_used(new_name, exclude=old_name):
+            from qtpy.QtWidgets import QMessageBox
+            QMessageBox.warning(
+                self, "Rename tag",
+                "A tag with this name already exists."
+            )
+            return
+        self.image_manager.db.rename_tag(old_name, new_name)
+        cfg = self._user_tags_config
+        placements = dict(cfg.get("placements", {}))
+        icons = dict(cfg.get("icons", {}))
+        if old_name in placements:
+            placements[new_name] = placements.pop(old_name)
+        if old_name in icons:
+            icons[new_name] = icons.pop(old_name)
+        for t, pl in list(placements.items()):
+            if isinstance(pl, dict) and pl.get("parent_tag") == old_name:
+                placements[t] = {"parent_tag": new_name}
+        user_tags_config.save_config(placements, icons, cfg.get("registered_only"))
+        self._update_available_tags()
+
+    def _on_panel_tag_icon_change(self, tag: str) -> None:
+        """
+        Open icon picker dialog when TagLibraryPanel requests it.
+
+        Args:
+            tag: Tag name whose icon should be changed.
+        """
+        cfg = self._user_tags_config
+        current = cfg.get("icons", {}).get(tag)
+        dialog = IconPickerDialog(
+            self,
+            current_icon=current,
+            on_icon_changed=lambda filename: self._tag_library_panel.update_chip_icon(tag),
+        )
+        result = dialog.exec_()
+        if result == QDialog.DialogCode.Accepted:
+            icons = dict(cfg.get("icons", {}))
+            chosen = dialog.get_icon_filename()
+            if chosen:
+                icons[tag] = chosen
+            else:
+                icons.pop(tag, None)
+            user_tags_config.save_config(
+                cfg.get("placements", {}), icons, cfg.get("registered_only")
+            )
+            self._user_tags_config = user_tags_config.load_config()
+        self._tag_library_panel.update_chip_icon(tag)
+
+    def _sync_tag_grid_state(
+        self,
+        categories: Optional[Set[str]] = None,
+        force_layout_rebuild: Optional[Set[str]] = None,
+    ) -> None:
+        """
+        Delegate to TagLibraryPanel._apply_all_states().
+
+        The old rebuild logic is no longer used.  Legacy callers throughout
+        MainWindow continue to call this method; it now just forwards to the
+        panel's lightweight state-sync.
+
+        Args:
+            categories: Unused (panel refreshes all sections internally).
+            force_layout_rebuild: Unused (no rebuild in new architecture).
+        """
+        panel = getattr(self, "_tag_library_panel", None)
+        if panel is not None:
+            panel._apply_all_states()
+
+    def _sync_tag_grid_state_LEGACY(
+        self,
+        categories: Optional[Set[str]] = None,
+        force_layout_rebuild: Optional[Set[str]] = None,
+    ) -> None:
+        """Legacy implementation kept for reference — no longer called."""
         if getattr(self, "_tag_drag_in_progress", False):
             return
 
         max_cols = 3
         placements = self._user_tags_config.get("placements", {})
+        scope = categories
+        force_layout = force_layout_rebuild or set()
+
         for category, button in self._category_buttons.items():
+            if scope is not None and category not in scope:
+                continue
             is_active = category in self._active_categories
             self._set_button_active(button, is_active)
             has_category_children = bool(self._subcategory_buttons.get(category))
@@ -4450,133 +4195,101 @@ class MainWindow(QMainWindow):
                 active=is_active,
                 selected_for_drag=False,
             )
-            category_subtags = self._active_subtags.get(category, set())
-            for tag, tag_button in self._subcategory_buttons.get(category, {}).items():
+
+        # Layout rebuild before subtag visibility — setVisible on widgets not in the
+        # grid would stack them at (0,0).
+        def _category_layout_key(cat: str) -> tuple:
+            is_active = cat in self._active_categories
+            tag_order = self._subcategory_tag_order.get(cat, [])
+            category_subtags = self._active_subtags.get(cat, set())
+
+            def _tag_visible(tag: str) -> bool:
                 pl = placements.get(tag)
                 parent_tag = pl.get("parent_tag") if isinstance(pl, dict) else None
                 if parent_tag is not None:
-                    tag_button.setVisible(is_active and parent_tag in category_subtags)
-                else:
-                    tag_button.setVisible(is_active)
-                is_tag_active = tag in category_subtags
-                self._set_button_active(tag_button, is_tag_active)
-                has_children = bool(self._get_children_of_tag(tag))
-                base_label = tag_button.property("baseLabel") or tag
-                tag_button.setText(
-                    self._with_expand_icon(base_label, has_children, is_tag_active)
-                )
-                depth = self._get_tag_depth_in_category(tag, category)
-                # In "Parent to tag..." mode, gray out tags being moved
-                if getattr(self, "_parent_select_mode", False) and tag in getattr(
-                    self, "_tags_to_parent", set()
-                ):
-                    tag_button.setEnabled(False)
-                    tag_button.setStyleSheet(
-                        "QPushButton { text-align: left; padding: 2px 4px; opacity: 0.6; background-color: #444; color: #888; }"
-                    )
-                else:
-                    tag_button.setEnabled(True)
-                    self._set_hierarchy_button_style(
-                        button=tag_button,
-                        branch_key=category,
-                        depth=depth + 1,
-                        active=is_tag_active,
-                        selected_for_drag=(
-                            tag in getattr(self, "_tag_library_selection", set())
-                        ),
-                    )
+                    return bool(is_active and parent_tag in category_subtags)
+                return bool(is_active)
 
-        # Label categories: set visibility
-        for label_category in self._subcategory_buttons:
-            if not is_tag_shelf(label_category):
-                continue
-            label_subtags = self._active_subtags.get(label_category, set())
-            for tag, tag_button in self._subcategory_buttons[label_category].items():
-                pl = placements.get(tag)
-                parent_tag = pl.get("parent_tag") if isinstance(pl, dict) else None
-                if parent_tag is not None:
-                    tag_button.setVisible(parent_tag in label_subtags)
-                else:
-                    tag_button.setVisible(True)
-                is_tag_active = tag in label_subtags
-                self._set_button_active(tag_button, is_tag_active)
-                has_children = bool(self._get_children_of_tag(tag))
-                base_label = tag_button.property("baseLabel") or tag
-                tag_button.setText(
-                    self._with_expand_icon(base_label, has_children, is_tag_active)
-                )
-                depth = self._get_tag_depth_in_category(tag, label_category)
-                if getattr(self, "_parent_select_mode", False) and tag in getattr(
-                    self, "_tags_to_parent", set()
-                ):
-                    tag_button.setEnabled(False)
-                    tag_button.setStyleSheet(
-                        "QPushButton { text-align: left; padding: 2px 4px; opacity: 0.6; background-color: #444; color: #888; }"
-                    )
-                else:
-                    tag_button.setEnabled(True)
-                    self._set_hierarchy_button_style(
-                        button=tag_button,
-                        branch_key=label_category,
-                        depth=depth + 1,
-                        active=is_tag_active,
-                        selected_for_drag=(
-                            tag in getattr(self, "_tag_library_selection", set())
-                        ),
-                    )
+            visible = frozenset(t for t in tag_order if _tag_visible(t))
 
-        # Compute a snapshot of currently visible tags per category so we can skip the
-        # expensive layout rebuild when nothing has changed.
-        def _build_visibility_snapshot() -> Dict[str, Any]:
-            snap: Dict[str, Any] = {}
+            def _has_visible_children(parent: str) -> bool:
+                for t in tag_order:
+                    if not _tag_visible(t):
+                        continue
+                    pl = placements.get(t)
+                    if isinstance(pl, dict) and pl.get("parent_tag") == parent:
+                        return True
+                return False
+
+            block_parents = frozenset(
+                t
+                for t in category_subtags
+                if t in visible and _has_visible_children(t)
+            )
+            return (is_active, visible, block_parents)
+
+        def _build_layout_snapshot() -> Dict[str, tuple]:
+            snap: Dict[str, tuple] = {}
             for cat in self._subcategory_tag_order:
                 if is_tag_shelf(cat):
                     continue
-                is_active = cat in self._active_categories
-                cat_subtags = self._active_subtags.get(cat, set())
-                visible: List[str] = []
-                for t, tb in self._subcategory_buttons.get(cat, {}).items():
-                    pl = placements.get(t)
-                    pt = pl.get("parent_tag") if isinstance(pl, dict) else None
-                    show = is_active and (pt is None or pt in cat_subtags)
-                    if show:
-                        visible.append(t)
-                snap[cat] = (is_active, frozenset(cat_subtags), frozenset(visible))
+                snap[cat] = _category_layout_key(cat)
             return snap
 
-        new_snapshot = _build_visibility_snapshot()
-        layout_changed = new_snapshot != getattr(self, "_tag_grid_layout_snapshot", None)
-
-        if layout_changed:
+        new_snapshot = _build_layout_snapshot()
+        old_snapshot: Dict[str, tuple] = getattr(self, "_tag_grid_layout_snapshot", {}) or {}
+        changed_categories = []
+        for cat in self._subcategory_tag_order:
+            if is_tag_shelf(cat):
+                continue
+            if scope is not None and cat not in scope:
+                continue
+            if cat in force_layout:
+                changed_categories.append(cat)
+                continue
+            new_key = new_snapshot.get(cat)
+            old_key = old_snapshot.get(cat)
+            if new_key == old_key:
+                continue
+            was_active = bool(old_key[0]) if old_key else False
+            now_active = bool(new_key[0])
+            if was_active != now_active:
+                changed_categories.append(cat)
+            elif now_active:
+                old_visible = old_key[1] if old_key else frozenset()
+                old_blocks = old_key[2] if old_key else frozenset()
+                if new_key[1] != old_visible or new_key[2] != old_blocks:
+                    changed_categories.append(cat)
+        if new_snapshot != old_snapshot:
             self._tag_grid_layout_snapshot = new_snapshot
 
-        # Rebuild each category container with grouped hierarchy blocks.
-        # Children are rendered inside a subtle framed block directly under their parent.
-        # Only performed when the visibility snapshot changed.
-        for category in self._subcategory_tag_order:
-            if is_tag_shelf(category):
-                continue
-            if not layout_changed:
-                continue  # skip expensive rebuild – only styles were touched above
+        rebuilt_set = set(changed_categories)
+
+        # Rebuild only categories whose layout structure changed.
+        for category in changed_categories:
             container = self._subcategory_containers.get(category)
             if not container:
                 continue
             layout = container.layout()
             if not layout:
                 continue
+            container.setUpdatesEnabled(False)
             while layout.count():
                 item = layout.takeAt(0)
-                widget = item.widget() if item else None
+                if not item:
+                    continue
+                widget = item.widget()
                 if (
                     widget
                     and isinstance(widget, QFrame)
                     and widget.objectName() == "TagHierarchyFrame"
                 ):
-                    # Keep tag buttons alive for reuse before deleting dynamic hierarchy frame.
                     for child_btn in widget.findChildren(DraggableTagButton):
                         child_btn.setParent(container)
                         child_btn.setVisible(False)
                     widget.deleteLater()
+                elif widget is not None:
+                    widget.setVisible(False)
             tag_order = self._subcategory_tag_order[category]
             category_subtags = self._active_subtags.get(category, set())
             subtag_buttons = self._subcategory_buttons.get(category, {})
@@ -4691,25 +4404,107 @@ class MainWindow(QMainWindow):
 
             container.setMinimumHeight(0)
             container.setVisible(True)
+            container.setUpdatesEnabled(True)
 
-        if layout_changed:
-            # Force layout recalculation: Qt often does not recalculate when children go from
-            # hidden to visible after a full rebuild. Invalidate then activate inner layouts
-            # first, then the main grid layout (see QTBUG-66151, nested QGridLayout).
-            for container in self._subcategory_containers.values():
+        if changed_categories:
+            # Invalidate only containers that were rebuilt.
+            for category in changed_categories:
+                container = self._subcategory_containers.get(category)
+                if not container:
+                    continue
                 lay = container.layout()
                 if lay:
                     lay.invalidate()
                     lay.activate()
                 container.updateGeometry()
-            self.tags_grid_layout.invalidate()
-            self.tags_grid_layout.activate()
-            self.tags_grid_container.updateGeometry()
-            self.tags_grid_container.adjustSize()
-            self.tags_grid_container.update()
+            # Legacy geometry update stubs (no tags_grid_layout in new architecture)
             if hasattr(self, "tags_scroll_area") and self.tags_scroll_area.viewport():
                 self.tags_scroll_area.viewport().update()
             QTimer.singleShot(0, self._apply_tag_library_cell_widths)
+
+        for category, subtag_buttons in self._subcategory_buttons.items():
+            if is_tag_shelf(category):
+                continue
+            if scope is not None and category not in scope:
+                continue
+            is_active = category in self._active_categories
+            category_subtags = self._active_subtags.get(category, set())
+            for tag, tag_button in subtag_buttons.items():
+                if category not in rebuilt_set:
+                    pl = placements.get(tag)
+                    parent_tag = pl.get("parent_tag") if isinstance(pl, dict) else None
+                    if parent_tag is not None:
+                        tag_button.setVisible(
+                            is_active and parent_tag in category_subtags
+                        )
+                    else:
+                        tag_button.setVisible(is_active)
+                is_tag_active = tag in category_subtags
+                self._set_button_active(tag_button, is_tag_active)
+                has_children = bool(self._get_children_of_tag(tag))
+                base_label = tag_button.property("baseLabel") or tag
+                tag_button.setText(
+                    self._with_expand_icon(base_label, has_children, is_tag_active)
+                )
+                depth = self._get_tag_depth_in_category(tag, category)
+                if getattr(self, "_parent_select_mode", False) and tag in getattr(
+                    self, "_tags_to_parent", set()
+                ):
+                    tag_button.setEnabled(False)
+                    tag_button.setStyleSheet(
+                        "QPushButton { text-align: left; padding: 2px 4px; opacity: 0.6; background-color: #444; color: #888; }"
+                    )
+                else:
+                    tag_button.setEnabled(True)
+                    self._set_hierarchy_button_style(
+                        button=tag_button,
+                        branch_key=category,
+                        depth=depth + 1,
+                        active=is_tag_active,
+                        selected_for_drag=(
+                            tag in getattr(self, "_tag_library_selection", set())
+                        ),
+                    )
+
+        for label_category in self._subcategory_buttons:
+            if not is_tag_shelf(label_category):
+                continue
+            if scope is not None and label_category not in scope:
+                continue
+            label_subtags = self._active_subtags.get(label_category, set())
+            for tag, tag_button in self._subcategory_buttons[label_category].items():
+                pl = placements.get(tag)
+                parent_tag = pl.get("parent_tag") if isinstance(pl, dict) else None
+                if parent_tag is not None:
+                    tag_button.setVisible(parent_tag in label_subtags)
+                else:
+                    tag_button.setVisible(True)
+                is_tag_active = tag in label_subtags
+                self._set_button_active(tag_button, is_tag_active)
+                has_children = bool(self._get_children_of_tag(tag))
+                base_label = tag_button.property("baseLabel") or tag
+                tag_button.setText(
+                    self._with_expand_icon(base_label, has_children, is_tag_active)
+                )
+                depth = self._get_tag_depth_in_category(tag, label_category)
+                if getattr(self, "_parent_select_mode", False) and tag in getattr(
+                    self, "_tags_to_parent", set()
+                ):
+                    tag_button.setEnabled(False)
+                    tag_button.setStyleSheet(
+                        "QPushButton { text-align: left; padding: 2px 4px; opacity: 0.6; background-color: #444; color: #888; }"
+                    )
+                else:
+                    tag_button.setEnabled(True)
+                    self._set_hierarchy_button_style(
+                        button=tag_button,
+                        branch_key=label_category,
+                        depth=depth + 1,
+                        active=is_tag_active,
+                        selected_for_drag=(
+                            tag in getattr(self, "_tag_library_selection", set())
+                        ),
+                    )
 
     @staticmethod
     def _normalize_tag_for_match(tag: str) -> str:
