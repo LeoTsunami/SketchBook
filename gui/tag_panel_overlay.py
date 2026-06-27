@@ -12,6 +12,7 @@ from qtpy.QtWidgets import (
     QFrame,
     QVBoxLayout,
     QGraphicsDropShadowEffect,
+    QScrollArea,
 )
 from qtpy.QtCore import (
     Qt,
@@ -40,7 +41,7 @@ class TagPanelOverlay(QFrame):
     panel_did_hide = Signal()
 
     PANEL_WIDTH = 504  # 420px + 20% for roomier tag grid (3 columns)
-    PANEL_EXTRA_HEIGHT = 55
+    VIEWPORT_MARGIN_PX = 10
     ANIM_DURATION_MS = 200
 
     def __init__(
@@ -48,7 +49,7 @@ class TagPanelOverlay(QFrame):
     ) -> None:
         super().__init__(parent)
         self._panel_width = width
-        self._top_inset = top_inset
+        self._top_inset = max(top_inset, self.VIEWPORT_MARGIN_PX)
         self._is_showing = False
         self._anim: QPropertyAnimation | None = None
         self._dismiss_locked = False
@@ -209,6 +210,23 @@ class TagPanelOverlay(QFrame):
             return
         self._leave_hide_timer.start(50)
 
+    def wheelEvent(self, event) -> None:
+        """Consume wheel at scroll limits so the image grid does not scroll underneath."""
+        scroll = self.findChild(QScrollArea, "TagLibraryScrollArea")
+        if scroll is not None:
+            bar = scroll.verticalScrollBar()
+            if bar is not None:
+                delta = event.angleDelta().y()
+                if delta == 0 and hasattr(event, "pixelDelta"):
+                    delta = event.pixelDelta().y()
+                if delta != 0:
+                    at_top = bar.value() <= bar.minimum()
+                    at_bottom = bar.value() >= bar.maximum()
+                    if (delta > 0 and at_top) or (delta < 0 and at_bottom):
+                        event.accept()
+                        return
+        super().wheelEvent(event)
+
     # ------------------------------------------------------------------
     # Internal helpers
     # ------------------------------------------------------------------
@@ -230,19 +248,18 @@ class TagPanelOverlay(QFrame):
         self.move(-self._panel_width, self._top_inset)
 
     def _update_height(self) -> None:
-        """Match the panel height to the parent minus top inset (below logo)."""
-        if self.parentWidget():
-            h = max(
-                1,
-                self.parentWidget().height()
-                - self._top_inset
-                + self.PANEL_EXTRA_HEIGHT,
-            )
-            self.setFixedHeight(h)
+        """Fit panel height inside the parent viewport with uniform margins."""
+        parent = self.parentWidget()
+        if not parent:
+            return
+        m = self.VIEWPORT_MARGIN_PX
+        top = max(self._top_inset, m)
+        h = max(1, parent.height() - top - m)
+        self.setFixedHeight(h)
 
     def set_top_inset(self, inset: int) -> None:
         """Update vertical offset reserved at the top (e.g. floating logo)."""
-        self._top_inset = max(0, inset)
+        self._top_inset = max(inset, self.VIEWPORT_MARGIN_PX)
         self._update_height()
         if self._is_showing:
             self.move(0, self._top_inset)

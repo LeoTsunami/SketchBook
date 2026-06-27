@@ -161,7 +161,7 @@ class TagChip(QFrame):
 class ImageThumbnail(QFrame):
     """Widget representing a single image thumbnail."""
 
-    CONTENT_INSET = 8  # layout margins: 4 px on each side
+    CONTENT_INSET = 0  # image fills the cell; selection border is drawn on the frame
 
     clicked = Signal(str)  # Emits image ID when clicked
     tag_removed = Signal(str, str)  # Emits (image_id, tag) when a tag is removed
@@ -218,11 +218,12 @@ class ImageThumbnail(QFrame):
 
         # Create layout
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(4, 4, 4, 4)
-        layout.setSpacing(0)  # Reduced spacing since we don't have labels anymore
+        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setSpacing(0)
 
         # Create graphics view for better image rendering
         self.graphics_view = QGraphicsView()
+        self.graphics_view.setFrameShape(QFrame.NoFrame)
         self.graphics_view.setStyleSheet("""
             QGraphicsView {
                 background: transparent;
@@ -255,9 +256,9 @@ class ImageThumbnail(QFrame):
 
         # Subtle depth on transparent thumbnails.
         self._shadow_effect = QGraphicsDropShadowEffect(self)
-        self._shadow_effect.setBlurRadius(12)
+        self._shadow_effect.setBlurRadius(6)
         self._shadow_effect.setOffset(0, 0)
-        self._shadow_effect.setColor(QColor(0, 0, 0, 85))
+        self._shadow_effect.setColor(QColor(0, 0, 0, 60))
         self.image_container.setGraphicsEffect(self._shadow_effect)
 
         layout.addWidget(self.image_container, 1)  # Give image container stretch factor

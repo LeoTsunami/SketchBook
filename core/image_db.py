@@ -325,6 +325,27 @@ class ImageDatabase:
             self._request_save()
         return count
 
+    def remove_tag(self, tag_name: str) -> int:
+        """
+        Remove a tag from every image that has it.
+
+        Args:
+            tag_name: Tag to remove.
+
+        Returns:
+            Number of images updated.
+        """
+        if not tag_name:
+            return 0
+        count = 0
+        for metadata in self._images.values():
+            if tag_name in metadata.tags:
+                metadata.tags.discard(tag_name)
+                count += 1
+        if count:
+            self._request_save()
+        return count
+
     def list_images(self, sort_by: str = "import_date_desc") -> List[ImageMetadata]:
         """
         Get list of all image metadata, optionally sorted.

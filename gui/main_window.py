@@ -340,6 +340,36 @@ class TagLibraryResizeFilter(QObject):
         return False
 
 
+class TagLibraryWheelFilter(QObject):
+    """Block wheel propagation to the image grid when tag scroll is at an edge."""
+
+    def __init__(self, scroll_area: QScrollArea):
+        super().__init__(scroll_area)
+        self._scroll = scroll_area
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        try:
+            wheel_type = QEvent.Type.Wheel
+        except AttributeError:
+            wheel_type = QEvent.Wheel
+        if event.type() != wheel_type:
+            return False
+        bar = self._scroll.verticalScrollBar()
+        if bar is None:
+            return False
+        delta = event.angleDelta().y()
+        if delta == 0 and hasattr(event, "pixelDelta"):
+            delta = event.pixelDelta().y()
+        if delta == 0:
+            return False
+        at_top = bar.value() <= bar.minimum()
+        at_bottom = bar.value() >= bar.maximum()
+        if (delta > 0 and at_top) or (delta < 0 and at_bottom):
+            event.accept()
+            return True
+        return False
+
+
 class TagGridDropFilter(QObject):
     """Event filter to accept tag-library drag/drop on the tag grid container."""
 
@@ -814,7 +844,7 @@ class MainWindow(QMainWindow):
         m = 8
         self._logo_label.move(m, m)
         self._logo_label.raise_()
-        self._grid_viewport_top_inset = 2
+        self._grid_viewport_top_inset = TagPanelOverlay.VIEWPORT_MARGIN_PX
         if hasattr(self, "_tag_panel_overlay"):
             self._tag_panel_overlay.set_top_inset(self._grid_viewport_top_inset)
 
@@ -1406,11 +1436,6 @@ class MainWindow(QMainWindow):
 
         vp = self.image_grid.viewport()
 
-        # Bottom fade overlay (subtle 30px opacity gradient over the grid content).
-        self._grid_bottom_fade = QWidget(vp)
-        self._grid_bottom_fade.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self._refresh_grid_bottom_fade_style()
-
         # Floating control: session button on image viewport.
         self.session_settings_btn = SessionTraceButton("Start session", vp)
         shadow = QGraphicsDropShadowEffect(self.session_settings_btn)
@@ -1561,6 +1586,9 @@ class MainWindow(QMainWindow):
         tag_viewport = self.tags_scroll_area.viewport()
         self._tag_library_resize_filter = TagLibraryResizeFilter(self)
         tag_viewport.installEventFilter(self._tag_library_resize_filter)
+        self._tag_library_wheel_filter = TagLibraryWheelFilter(self.tags_scroll_area)
+        self.tags_scroll_area.installEventFilter(self._tag_library_wheel_filter)
+        tag_viewport.installEventFilter(self._tag_library_wheel_filter)
         try:
             rb_shape = QRubberBand.Shape.Rectangle
         except AttributeError:
@@ -1649,40 +1677,6 @@ class MainWindow(QMainWindow):
             self._left_panel_expanded = True
         QTimer.singleShot(0, self._position_floating_grid_overlays)
 
-    def _grid_fade_rgb(self) -> tuple[int, int, int]:
-        """Return a theme-aligned RGB color used for the bottom fade overlay."""
-        if hasattr(self, "image_grid"):
-            viewport = self.image_grid.viewport()
-            if viewport is not None:
-                bg = viewport.palette().color(viewport.backgroundRole())
-                if bg.isValid() and bg.alpha() > 0:
-                    return (bg.red(), bg.green(), bg.blue())
-        theme = settings.get("ui.theme", "dark")
-        by_theme: dict[str, tuple[int, int, int]] = {
-            "dark": (23, 18, 32),
-            "light": (248, 248, 248),
-            "midnight_ocean": (7, 24, 34),
-            "sunset_glass": (44, 24, 48),
-            "neon_night": (11, 16, 32),
-        }
-        return by_theme.get(theme, by_theme["dark"])
-
-    def _refresh_grid_bottom_fade_style(self) -> None:
-        """Apply a theme-colored opacity fade at the bottom of the grid."""
-        if not hasattr(self, "_grid_bottom_fade"):
-            return
-        r, g, b = self._grid_fade_rgb()
-        self._grid_bottom_fade.setStyleSheet(f"""
-            QWidget {{
-                background: qlineargradient(
-                    x1: 0, y1: 0, x2: 0, y2: 1,
-                    stop: 0 rgba({r}, {g}, {b}, 0),
-                    stop: 0.55 rgba({r}, {g}, {b}, 72),
-                    stop: 1 rgba({r}, {g}, {b}, 148)
-                );
-            }}
-            """)
-
     def _position_floating_grid_overlays(self) -> None:
         """Place floating overlays (session button, tag trigger, tag panel) on image viewport."""
         if not hasattr(self, "image_grid"):
@@ -1691,7 +1685,9 @@ class MainWindow(QMainWindow):
         if not viewport:
             return
         margin = 10
-        top_inset = int(getattr(self, "_grid_viewport_top_inset", 100))
+        bottom_margin = 4  # closer to viewport bottom (shuffle + start session)
+        tag_margin = TagPanelOverlay.VIEWPORT_MARGIN_PX
+        top_inset = max(int(getattr(self, "_grid_viewport_top_inset", 0)), tag_margin)
         panel_open = (
             hasattr(self, "_tag_panel_overlay") and self._tag_panel_overlay.isVisible()
         )
@@ -1701,28 +1697,18 @@ class MainWindow(QMainWindow):
                 btn.hide()
             else:
                 btn.show()
-                h = max(1, viewport.height() - top_inset + 55)
+                h = max(1, viewport.height() - top_inset - tag_margin)
                 btn.setFixedHeight(h)
                 btn.move(0, top_inset)
                 btn.raise_()
         if hasattr(self, "_tag_panel_overlay"):
             self._tag_panel_overlay.reposition()
-        if hasattr(self, "_grid_bottom_fade"):
-            fade_h = 30
-            self._refresh_grid_bottom_fade_style()
-            self._grid_bottom_fade.setGeometry(
-                0,
-                max(0, viewport.height() - fade_h),
-                viewport.width(),
-                min(fade_h, viewport.height()),
-            )
-            self._grid_bottom_fade.raise_()
         # Start session stays above tag rail, overlay, and tag popover
         session_btn = getattr(self, "session_settings_btn", None)
         shuffle_btn = getattr(self, "shuffle_button", None)
         if session_btn is not None:
             session_hint = session_btn.sizeHint()
-            y = max(margin, viewport.height() - session_hint.height() - margin)
+            y = max(margin, viewport.height() - session_hint.height() - bottom_margin)
             shuffle_gap = 12
             if shuffle_btn is not None and shuffle_btn.isVisible():
                 shuffle_hint = shuffle_btn.sizeHint()
@@ -3617,7 +3603,18 @@ class MainWindow(QMainWindow):
             rename_action = menu.addAction("Rename...")
             change_icon_action = menu.addAction("Change icon...")
             parent_to_tag_action = menu.addAction("Parent to tag...")
+            delete_action = menu.addAction("Delete...")
             action = menu.exec_(QCursor.pos())
+            if action == delete_action:
+                tags_to_delete = (
+                    set(self._tag_library_selection)
+                    if tag_text in self._tag_library_selection
+                    else {tag_text}
+                )
+                tags_to_delete = {t for t in tags_to_delete if t in user_tags}
+                if tags_to_delete:
+                    self._delete_user_tags(tags_to_delete)
+                return
             if action == parent_to_tag_action:
                 tags_to_parent = (
                     set(self._tag_library_selection)
@@ -3699,6 +3696,71 @@ class MainWindow(QMainWindow):
         finally:
             if overlay is not None:
                 overlay.lock_dismiss(False)
+
+    def _delete_user_tags(self, tags: Set[str]) -> None:
+        """
+        Remove user-defined tags from images and from the tag library config.
+
+        Args:
+            tags: Tag names to delete (non-default user tags only).
+        """
+        user_tags = self._get_user_tags()
+        tags_to_delete = {t for t in tags if t in user_tags}
+        if not tags_to_delete:
+            return
+        label = ", ".join(sorted(tags_to_delete))
+        reply = QMessageBox.question(
+            self,
+            "Delete tags",
+            f"Delete tags: {label}?",
+            QMessageBox.Ok | QMessageBox.Cancel,
+            QMessageBox.Cancel,
+        )
+        if reply != QMessageBox.Ok:
+            return
+
+        images_updated = 0
+        for tag in tags_to_delete:
+            images_updated += self.image_manager.db.remove_tag(tag)
+
+        cfg = self._user_tags_config
+        placements = dict(cfg.get("placements", {}))
+        icons = dict(cfg.get("icons", {}))
+        registered = [
+            t for t in cfg.get("registered_only", []) if t not in tags_to_delete
+        ]
+        for tag in tags_to_delete:
+            placements.pop(tag, None)
+            icons.pop(tag, None)
+        for tag, placement in list(placements.items()):
+            if (
+                isinstance(placement, dict)
+                and placement.get("parent_tag") in tags_to_delete
+            ):
+                placements.pop(tag, None)
+        user_tags_config.save_config(
+            placements,
+            icons,
+            registered,
+            cfg.get("custom_shelves"),
+        )
+        self._user_tags_config = user_tags_config.load_config()
+        self._tag_library_selection -= tags_to_delete
+        for tag in tags_to_delete:
+            self.and_zone.remove_tag(tag)
+            self.or_zone.remove_tag(tag)
+            for category, subtags in list(self._active_subtags.items()):
+                subtags.discard(tag)
+        self._load_tags_into_grid()
+        self._update_tag_search_completer()
+        self._apply_category_filters()
+        self._sync_tag_grid_state()
+        if images_updated:
+            QMessageBox.information(
+                self,
+                "Delete tags",
+                f"Removed from {images_updated} image(s).",
+            )
 
     def _enter_parent_select_mode(self, tags_to_parent: Set[str]) -> None:
         """Enter 'Parent to tag...' mode: gray given tags, show bar to select parent, OK/Cancel."""
