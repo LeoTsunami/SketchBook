@@ -1,6 +1,6 @@
 """
 Overlay widget drawn above the image grid, attached to the scrollbar.
-Shown when scrolling fast, hidden when scrolling slowly. Displays one image (e.g. center of view).
+Shown while viewport thumbnails are still loading.
 Uses fade-in on show and fade-out on hide.
 """
 from qtpy.QtWidgets import QFrame, QVBoxLayout, QLabel, QGraphicsOpacityEffect
@@ -11,7 +11,7 @@ from qtpy.QtGui import QPixmap
 class ScrollPreviewOverlay(QFrame):
     """
     Panel attached to the scrollbar area, drawn above the grid.
-    Hidden by default; parent controls visibility based on scroll speed.
+    Hidden by default; parent shows it while viewport images are loading.
     Displays a single image with fade-in / fade-out.
     """
 
@@ -63,6 +63,13 @@ class ScrollPreviewOverlay(QFrame):
         self._opacity_effect.setOpacity(0.0)
         self.clear_image()
 
+    def show_immediate(self) -> None:
+        """Show overlay instantly (no fade-in) while scrolling through unloaded areas."""
+        self._fade_in_anim.stop()
+        self._fade_out_anim.stop()
+        self._opacity_effect.setOpacity(1.0)
+        self.show()
+
     def show_animated(self) -> None:
         """Show overlay with fade-in. Stops any running fade-out."""
         self._fade_out_anim.stop()
@@ -91,17 +98,18 @@ class ScrollPreviewOverlay(QFrame):
         self.hide()
         self.clear_image()
 
-    def set_image(self, pixmap: QPixmap) -> None:
+    def set_image(self, pixmap: QPixmap, *, fast: bool = False) -> None:
         """Display the given pixmap filling the overlay (no margin), center-cropped to overlay size."""
         if pixmap.isNull():
             self._image_label.clear()
             return
         w, h = self.OVERLAY_WIDTH, self.OVERLAY_HEIGHT
+        mode = Qt.FastTransformation if fast else Qt.SmoothTransformation
         scaled = pixmap.scaled(
             w,
             h,
             Qt.KeepAspectRatioByExpanding,
-            Qt.SmoothTransformation,
+            mode,
         )
         if scaled.width() > w or scaled.height() > h:
             x = (scaled.width() - w) // 2

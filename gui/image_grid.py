@@ -3,7 +3,6 @@ Image grid component for displaying image thumbnails in a scrollable grid layout
 """
 
 from pathlib import Path
-import time
 from typing import Callable, List, Optional, Dict, Set, Tuple
 from collections import deque
 from qtpy.QtWidgets import (
@@ -69,7 +68,7 @@ class ImageGrid(QScrollArea):
     BASE_BATCH_SIZE = (
         10  # Reason: smaller batches = less lag per batch, load more often
     )
-    MIN_ROWS_LOADED = 2
+    MIN_ROWS_LOADED = 3
     MIN_THUMBNAIL_HEIGHT = 150
     MIN_WINDOW_WIDTH = 800
     ASPECT_RATIO = 1.2
@@ -77,13 +76,23 @@ class ImageGrid(QScrollArea):
     VIRTUALIZED_POOL_EXTRA_ROWS = (
         10  # Rows above/below viewport so more images load ahead
     )
-    SCROLL_FAST_THRESHOLD_PX_PER_MS = 250.0
-    SCROLL_PREVIEW_ARM_MS = 700
-    SCROLL_PREVIEW_HIDE_MS = 650
-    USER_IDLE_MS = 500
-    EXTRACT_STEP_FACTOR = 4
+    SCROLL_PREVIEW_LOAD_CHECK_MS = 150
+    SCROLL_IDLE_MS = 120
+    USER_IDLE_MS = 600
+    VIEWPORT_BUFFER_ROWS = 3
+    GRID_EXTENDED_ROWS = 5
+    IDLE_REFRESH_INTERVAL_MS = 120
+    IDLE_MAX_LOADS_PER_TICK = 4
+    EXTRACT_VICINITY_COUNT = 30
+    EXTRACT_STEP_FACTOR = 2
     EXTRACT_LOAD_SIZE = 240
-    EXTRACT_PRELOAD_PER_TICK = 2
+    EXTRACT_PRELOAD_PER_TICK = 4
+    EXTRACT_PRELOAD_PER_TICK_SCROLL = 3
+    EXTRACT_PRELOAD_PER_TICK_PREVIEW = 8
+    PHASE_GRID_CORE = 1
+    PHASE_EXTRACT_VICINITY = 2
+    PHASE_GRID_EXTENDED = 3
+    PHASE_EXTRACT_BALANCED = 4
     RESIZE_COARSE_INTERVAL_MS = 16
     RESIZE_FINALIZE_MS = 140
 
@@ -129,40 +138,44 @@ class ImageGrid(QScrollArea):
         # Ensure rubber band is always on top
         self.rubber_band.raise_()
 
-        # Scroll preview overlay: above grid, follows scrollbar thumb; shown when scrolling fast
+        # Scroll preview overlay: shown while viewport thumbnails are still loading
         self._scroll_preview = ScrollPreviewOverlay(self.viewport())
         self._scroll_preview.raise_()
         # Tag hover popover: floating panel below hovered thumbnail, shows full tag names
         self._tag_popover = TagHoverPopover(self.viewport())
         self._tag_popover.raise_()
-        self._last_scroll_value = 0
-        self._last_scroll_time = 0.0
-        self._last_scroll_speed = 0.0
-        self._scroll_speed_at_arm = 0.0
-        self._scroll_preview_arm_timer = QTimer(self)
-        self._scroll_preview_arm_timer.setSingleShot(True)
-        self._scroll_preview_arm_timer.setInterval(self.SCROLL_PREVIEW_ARM_MS)
-        self._scroll_preview_arm_timer.timeout.connect(
-            self._confirm_scroll_preview_show
+        self._scroll_preview_load_check_timer = QTimer(self)
+        self._scroll_preview_load_check_timer.setInterval(
+            self.SCROLL_PREVIEW_LOAD_CHECK_MS
         )
-        self._overlay_hide_timer = QTimer(self)
-        self._overlay_hide_timer.setSingleShot(True)
-        self._overlay_hide_timer.setInterval(self.SCROLL_PREVIEW_HIDE_MS)
-        self._overlay_hide_timer.timeout.connect(self._hide_scroll_preview)
+        self._scroll_preview_load_check_timer.timeout.connect(
+            self._on_scroll_preview_load_check
+        )
+        self._scroll_idle_timer = QTimer(self)
+        self._scroll_idle_timer.setSingleShot(True)
+        self._scroll_idle_timer.setInterval(self.SCROLL_IDLE_MS)
+        self._scroll_idle_timer.timeout.connect(self._on_scroll_idle)
+        self._scroll_preview_frame_key: Optional[Tuple[int, int]] = None
         # Extract strip for scroll preview: indices into all_images (1 every N), preloaded in background
         self._extract_indices: List[int] = []
         self._image_id_to_extract_index: Dict[str, int] = {}
         self._extract_pixmaps: Dict[int, QPixmap] = {}  # extract list index -> pixmap
-        self._extract_pending_indices: List[int] = []
+        self._extract_balanced_pending: List[int] = []
+        self._extract_vicinity_pending: List[int] = []
+        self._extract_vicinity_slot_set: Set[int] = set()
         self._extract_loading: Set[str] = set()
         self._extract_preload_timer = QTimer(self)
         self._extract_preload_timer.setSingleShot(False)
-        self._extract_preload_timer.setInterval(55)
+        self._extract_preload_timer.setInterval(40)
         self._extract_preload_timer.timeout.connect(self._process_extract_preload)
         self._user_idle_timer = QTimer(self)
         self._user_idle_timer.setSingleShot(True)
         self._user_idle_timer.setInterval(self.USER_IDLE_MS)
         self._user_idle_timer.timeout.connect(self._on_user_idle)
+        self._idle_refresh_timer = QTimer(self)
+        self._idle_refresh_timer.setInterval(self.IDLE_REFRESH_INTERVAL_MS)
+        self._idle_refresh_timer.timeout.connect(self._on_idle_refresh_tick)
+        self._bg_idle_mode = False
 
         # Import drop: file/folder drops on grid (or forwarded from thumbnail) trigger this callback
         self._import_drop_callback: Optional[Callable[[List[QUrl]], None]] = None
@@ -180,6 +193,7 @@ class ImageGrid(QScrollArea):
         self._image_id_to_index: Dict[str, int] = {}
         self.loaded_count = 0
         self.loading_images: Set[str] = set()  # Track images being loaded
+        self._load_failed_images: Set[str] = set()
         self.pixmap_cache: Dict[str, QPixmap] = {}  # Cache loaded pixmaps
         self.columns = 4  # Default number of columns
         self.needs_relayout = False  # Flag to track if relayout is needed
@@ -191,10 +205,9 @@ class ImageGrid(QScrollArea):
         self.thread_pool = QThreadPool.globalInstance()
         self.thread_pool.setMaxThreadCount(8)
 
-        # Separate, low-concurrency pool for scroll preview extracts so it never
-        # blocks the main grid loading; both run in parallel.
+        # Separate pool for scroll-preview extracts; runs in parallel with grid loads.
         self.extract_thread_pool = QThreadPool(self)
-        self.extract_thread_pool.setMaxThreadCount(1)
+        self.extract_thread_pool.setMaxThreadCount(4)
 
         # Set up unified timer for all layout updates with shorter interval
         self.layout_timer = QTimer(self)
@@ -210,8 +223,9 @@ class ImageGrid(QScrollArea):
         )  # Faster reaction on scroll; fires shortly after last scroll event
         self.visibility_timer.timeout.connect(self._check_visible_thumbnails)
 
-        # Pending pixmap loads: process several per tick for snappy feel with virtualization
-        self.pending_load_queue: deque = deque()
+        # Tiered pixmap load queues (priority: viewport core > extract head > idle extra > extract tail)
+        self._tier0_queue: deque = deque()
+        self._tier3_queue: deque = deque()
         self.load_ticker_timer = QTimer(self)
         self.load_ticker_timer.setSingleShot(False)
         self.load_ticker_timer.setInterval(
@@ -279,73 +293,460 @@ class ImageGrid(QScrollArea):
         """Rebuild the O(1) image-id-to-index mapping after any change to ``all_images``."""
         self._image_id_to_index = {m.id: i for i, m in enumerate(self.all_images)}
 
-    def _note_user_activity(self) -> None:
-        """Pause extract preloading while the user interacts with the grid."""
-        self._extract_preload_timer.stop()
+    def _schedule_idle_resume(self) -> None:
+        """Pause low-priority grid preloads until the next idle window."""
+        self._bg_idle_mode = False
+        self._idle_refresh_timer.stop()
+        self._tier3_queue.clear()
         self._user_idle_timer.start()
 
-    def _on_user_idle(self) -> None:
-        """Resume background extract preloading after a quiet period."""
-        if self._extract_pending_indices:
+    def _has_extract_pending(self) -> bool:
+        """Return True if any scroll-preview extract slot is still queued."""
+        return bool(self._extract_vicinity_pending or self._extract_balanced_pending)
+
+    def _is_scrolling(self) -> bool:
+        """Return True while scroll events are still arriving (idle timer running)."""
+        return self._scroll_idle_timer.isActive()
+
+    def _pause_background_work_for_scroll(self) -> None:
+        """Stop background timers so scroll stays on the main thread."""
+        self.load_ticker_timer.stop()
+        self._scroll_preview_load_check_timer.stop()
+        if not self._extract_vicinity_pending:
+            self._extract_preload_timer.stop()
+
+    def _ensure_extract_preload_running(self) -> None:
+        """Keep extract loads active (scroll preview depends on them)."""
+        if self._is_scrolling():
+            if not self._extract_vicinity_pending:
+                return
+        elif not self._has_extract_pending():
+            return
+        if not self._extract_preload_timer.isActive():
             self._extract_preload_timer.start()
 
-    def _sample_scroll_speed(self, value: int) -> float:
+    def _ensure_load_ticker_running(self) -> None:
+        """Start the grid load ticker when a grid phase has work."""
+        if self._is_scrolling():
+            return
+        if self._current_post_scroll_load_phase() in (
+            self.PHASE_GRID_CORE,
+            self.PHASE_GRID_EXTENDED,
+        ):
+            self.load_ticker_timer.start()
+
+    def _note_user_activity(self) -> None:
+        """Pause idle background preloads while the user interacts with the grid."""
+        self._schedule_idle_resume()
+
+    def _on_user_idle(self) -> None:
+        """Resume low-priority preloads after a short quiet period."""
+        if self._is_scrolling():
+            self._user_idle_timer.start()
+            return
+        self._bg_idle_mode = True
+        self._merge_into_load_queue(self._tier3_queue, self._grid_extended_load_order())
+        self._rebuild_extract_balanced_pending()
+        self._ensure_extract_preload_running()
+        self._ensure_load_ticker_running()
+        self._idle_refresh_timer.start()
+
+    def _on_idle_refresh_tick(self) -> None:
+        """Top up extended-grid and balanced-extract loads during sustained inactivity."""
+        if not self._bg_idle_mode or self._is_scrolling():
+            return
+        self._merge_into_load_queue(self._tier3_queue, self._grid_extended_load_order())
+        self._rebuild_extract_balanced_pending()
+        self._ensure_load_ticker_running()
+
+    def _viewport_row_range(self, extra_rows: int) -> tuple[int, int]:
         """
-        Measure scroll speed from the latest scrollbar step.
+        Return the first/last visible row in the viewport, expanded by *extra_rows*.
 
         Args:
-            value: Current scrollbar value.
+            extra_rows: Rows to include above and below the visible band.
 
         Returns:
-            Speed in pixels per millisecond.
+            Tuple ``(first_row, last_row)`` inclusive, clamped to the grid.
         """
-        now = time.monotonic()
-        delta = abs(value - self._last_scroll_value)
-        if self._last_scroll_time > 0.0:
-            dt_ms = max((now - self._last_scroll_time) * 1000.0, 1.0)
-            speed = delta / dt_ms
+        if not self.all_images:
+            return (0, 0)
+        scroll_y = self.verticalScrollBar().value()
+        viewport_h = self.viewport().height()
+        spacing = self.grid.spacing()
+        margins = self.grid.contentsMargins()
+        mt = margins.top()
+        _, row_height = self._calculate_optimal_dimensions()
+        row_h = row_height + spacing
+        if row_h <= 0:
+            return (0, 0)
+        total_rows = (len(self.all_images) + self.columns - 1) // self.columns
+        adj_top = max(0, scroll_y - mt)
+        adj_bottom = scroll_y + viewport_h - mt
+        core_first = max(0, adj_top // row_h)
+        core_last = min(total_rows - 1, adj_bottom // row_h)
+        first_row = max(0, core_first - extra_rows)
+        last_row = min(total_rows - 1, core_last + extra_rows)
+        return first_row, last_row
+
+    def _viewport_image_index_range(self, extra_rows: int) -> tuple[int, int]:
+        """
+        Return ``[start, end)`` image indices around the viewport.
+
+        Args:
+            extra_rows: Rows to include above and below the visible band.
+
+        Returns:
+            Half-open index range into ``all_images``.
+        """
+        first_row, last_row = self._viewport_row_range(extra_rows)
+        start_index = first_row * self.columns
+        end_index = min(len(self.all_images), (last_row + 1) * self.columns)
+        return start_index, end_index
+
+    def _vicinity_load_order(
+        self, start: int, end: int, buffer_rows: int
+    ) -> List[str]:
+        """
+        Build a load order that prioritises the viewport, then expands up/down.
+
+        Args:
+            start: First image index (inclusive).
+            end: End image index (exclusive).
+            buffer_rows: Rows to include above and below the visible band.
+
+        Returns:
+            Image ids to load, closest to the viewport first.
+        """
+        if start >= end or not self.all_images:
+            return []
+        core_first, core_last = self._viewport_row_range(0)
+        min_row = start // self.columns
+        max_row = min(
+            (len(self.all_images) - 1) // self.columns, (end - 1) // self.columns
+        )
+        ordered_ids: List[str] = []
+        seen: Set[str] = set()
+
+        def append_row(row: int) -> None:
+            if row < min_row or row > max_row:
+                return
+            row_start = row * self.columns
+            row_end = min(len(self.all_images), row_start + self.columns)
+            for idx in range(max(start, row_start), min(end, row_end)):
+                image_id = self.all_images[idx].id
+                if image_id in seen:
+                    continue
+                if image_id in self.loading_images or image_id in self.pixmap_cache:
+                    continue
+                seen.add(image_id)
+                ordered_ids.append(image_id)
+
+        for row in range(core_first, core_last + 1):
+            append_row(row)
+        for offset in range(1, buffer_rows + 1):
+            append_row(core_first - offset)
+            append_row(core_last + offset)
+        return ordered_ids
+
+    def _viewport_core_load_order(self) -> List[str]:
+        """Priority 1: viewport plus ``VIEWPORT_BUFFER_ROWS`` above and below."""
+        start, end = self._viewport_image_index_range(self.VIEWPORT_BUFFER_ROWS)
+        return self._vicinity_load_order(start, end, self.VIEWPORT_BUFFER_ROWS)
+
+    def _grid_extended_load_order(self) -> List[str]:
+        """Phase 3: ``GRID_EXTENDED_ROWS`` beyond the viewport core buffer."""
+        if not self.all_images:
+            return []
+        core_first, core_last = self._viewport_row_range(0)
+        total_rows = (len(self.all_images) + self.columns - 1) // self.columns
+        outer_start, outer_end = self._viewport_image_index_range(
+            self.VIEWPORT_BUFFER_ROWS + self.GRID_EXTENDED_ROWS
+        )
+        min_row = outer_start // self.columns
+        max_row = min(total_rows - 1, (outer_end - 1) // self.columns)
+        ordered_ids: List[str] = []
+        seen: Set[str] = set()
+
+        def append_row(row: int) -> None:
+            if row < min_row or row > max_row:
+                return
+            row_start = row * self.columns
+            row_end = min(len(self.all_images), row_start + self.columns)
+            for idx in range(row_start, row_end):
+                image_id = self.all_images[idx].id
+                if image_id in seen:
+                    continue
+                if image_id in self.loading_images or image_id in self.pixmap_cache:
+                    continue
+                seen.add(image_id)
+                ordered_ids.append(image_id)
+
+        for offset in range(
+            self.VIEWPORT_BUFFER_ROWS + 1,
+            self.VIEWPORT_BUFFER_ROWS + self.GRID_EXTENDED_ROWS + 1,
+        ):
+            append_row(core_first - offset)
+            append_row(core_last + offset)
+        return ordered_ids
+
+    def _idle_extra_load_order(self) -> List[str]:
+        """Backward-compatible alias for the extended grid band."""
+        return self._grid_extended_load_order()
+
+    def _merge_into_load_queue(
+        self, queue: deque, image_ids: List[str], *, front: bool = False
+    ) -> None:
+        """Append image ids to a load queue, skipping duplicates and in-flight loads."""
+        existing = set(queue)
+        for image_id in image_ids:
+            if image_id in existing:
+                continue
+            if image_id in self.loading_images or image_id in self.pixmap_cache:
+                continue
+            if front:
+                queue.appendleft(image_id)
+            else:
+                queue.append(image_id)
+            existing.add(image_id)
+
+    def _pop_next_load_id(self, queue: deque) -> Optional[str]:
+        """Pop the next loadable image id from a tier queue."""
+        while queue:
+            image_id = queue.popleft()
+            if image_id in self.loading_images or image_id in self.pixmap_cache:
+                continue
+            return image_id
+        return None
+
+    def _refresh_tier0_queue(self) -> None:
+        """Rebuild phase-1 viewport loads from the current scroll position."""
+        if not self.all_images:
+            self._tier0_queue.clear()
+            return
+        order = self._viewport_core_load_order()
+        if self._is_virtualized():
+            order = [image_id for image_id in order if image_id in self.thumbnails]
+        self._tier0_queue.clear()
+        self._merge_into_load_queue(self._tier0_queue, order)
+
+    def _band_image_ids_need_work(self, image_ids: List[str]) -> bool:
+        """Return True when any image in the band still lacks a displayed pixmap."""
+        for image_id in image_ids:
+            if image_id in self._load_failed_images:
+                continue
+            if image_id not in self.pixmap_cache:
+                return True
+            thumb = self.thumbnails.get(image_id)
+            if thumb is not None and thumb.pixmap_item is None:
+                return True
+            if not self._is_virtualized() and thumb is None:
+                return True
+        return False
+
+    def _extract_slots_need_work(self, extract_slots: List[int]) -> bool:
+        """Return True when any extract slot in the list is not yet available."""
+        for extract_i in extract_slots:
+            if extract_i in self._extract_pixmaps:
+                continue
+            if extract_i >= len(self._extract_indices):
+                continue
+            meta = self.all_images[self._extract_indices[extract_i]]
+            if meta.id in self._extract_loading:
+                return True
+            return True
+        return False
+
+    def _planned_vicinity_extract_indices(self) -> List[int]:
+        """Phase-2 extract slots: ``EXTRACT_VICINITY_COUNT`` nearest the scroll target."""
+        if not self._extract_indices:
+            return []
+        target_i = self._scroll_preview_target_extract_index()
+        order = self._build_extract_vicinity_order(
+            target_i,
+            len(self._extract_indices),
+            self.EXTRACT_VICINITY_COUNT,
+        )
+        return order[: self.EXTRACT_VICINITY_COUNT]
+
+    def _current_post_scroll_load_phase(self) -> int:
+        """
+        Return the active step in the post-scroll load sequence (1..4), or 5 when done.
+
+        Sequence:
+            1. Viewport + ``VIEWPORT_BUFFER_ROWS``
+            2. ``EXTRACT_VICINITY_COUNT`` nearest preview extracts
+            3. ``GRID_EXTENDED_ROWS`` beyond the core buffer
+            4. Remaining preview extracts (balanced / dyadic order)
+        """
+        core_ids = self._viewport_core_load_order()
+        if self._is_virtualized():
+            core_ids = [i for i in core_ids if i in self.thumbnails]
+        if self._tier0_queue or self._band_image_ids_need_work(core_ids):
+            return self.PHASE_GRID_CORE
+        vicinity_slots = list(self._extract_vicinity_slot_set)
+        if self._extract_vicinity_pending or self._extract_slots_need_work(
+            vicinity_slots
+        ):
+            return self.PHASE_EXTRACT_VICINITY
+        extended_ids = self._grid_extended_load_order()
+        if self._is_virtualized():
+            extended_ids = [i for i in extended_ids if i in self.thumbnails]
+        if self._tier3_queue or self._band_image_ids_need_work(extended_ids):
+            return self.PHASE_GRID_EXTENDED
+        if self._extract_balanced_pending or self._extract_slots_need_work(
+            self._extract_balanced_pending
+        ):
+            return self.PHASE_EXTRACT_BALANCED
+        return 5
+
+    def _rebuild_extract_balanced_pending(self) -> None:
+        """Phase 4: hierarchical strip order excluding phase-2 vicinity slots."""
+        if not self._extract_indices:
+            self._extract_balanced_pending.clear()
+            return
+        full_order = self._build_balanced_extract_order(len(self._extract_indices))
+        skip = set(self._extract_vicinity_slot_set)
+        balanced: List[int] = []
+        for extract_i in full_order:
+            if extract_i in skip or extract_i in self._extract_pixmaps:
+                continue
+            if extract_i in self._extract_vicinity_pending:
+                continue
+            balanced.append(extract_i)
+        self._extract_balanced_pending = balanced
+
+    def _rebuild_post_scroll_load_plan(self) -> None:
+        """Rebuild all four post-scroll load queues for the current scroll position."""
+        if not self.all_images:
+            return
+        self._refresh_tier0_queue()
+        self._tier3_queue.clear()
+        extended = self._grid_extended_load_order()
+        if self._is_virtualized():
+            extended = [i for i in extended if i in self.thumbnails]
+        self._merge_into_load_queue(self._tier3_queue, extended)
+        self._queue_extracts_near_scroll(max_count=self.EXTRACT_VICINITY_COUNT)
+        self._rebuild_extract_balanced_pending()
+
+    def _ensure_thumbnail_widgets_near_viewport(self) -> None:
+        """Create thumbnail widgets up to the extended preload horizon (non-virtualized)."""
+        if self._is_virtualized() or not self.all_images:
+            return
+        _, end_index = self._viewport_image_index_range(
+            self.VIEWPORT_BUFFER_ROWS + self.GRID_EXTENDED_ROWS
+        )
+        while self.loaded_count < end_index and self.loaded_count < len(self.all_images):
+            self._load_next_batch()
+
+    def _viewport_has_unloaded_images(self) -> bool:
+        """
+        Return True when any image index in the visible viewport lacks a pixmap.
+
+        Uses index/cache state so detection works before virtualized widgets are
+        reassigned on scroll (no debounce wait).
+
+        Returns:
+            bool: True if at least one viewport image still needs loading.
+        """
+        if not self.all_images:
+            return False
+        start, end = self._viewport_image_index_range(0)
+        for idx in range(start, end):
+            image_id = self.all_images[idx].id
+            if image_id in self._load_failed_images:
+                continue
+            if image_id not in self.pixmap_cache:
+                return True
+            thumb = self.thumbnails.get(image_id)
+            if thumb is not None and thumb.pixmap_item is None:
+                return True
+            if not self._is_virtualized() and thumb is None:
+                return True
+        return False
+
+    def _apply_pixmap_to_thumbnail(self, image_id: str, pixmap) -> None:
+        """Paint a loaded pixmap on its thumbnail when not scrolling."""
+        if self._is_scrolling():
+            return
+        thumb = self.thumbnails.get(image_id)
+        if thumb and thumb.image_id == image_id:
+            thumb.set_image(pixmap)
+
+    def _update_scroll_preview_during_scroll(self) -> None:
+        """Keep preview position and image aligned with scroll while the grid loads."""
+        if not self.all_images or not self._viewport_has_unloaded_images():
+            return
+        self._queue_extracts_near_scroll(max_count=self.EXTRACT_VICINITY_COUNT)
+        self._ensure_extract_preload_running()
+        if not self._scroll_preview.isVisible():
+            self._show_scroll_preview(
+                self.verticalScrollBar().value(), immediate=True
+            )
         else:
-            speed = 0.0
-        self._last_scroll_value = value
-        self._last_scroll_time = now
-        self._last_scroll_speed = speed
-        return speed
-
-    def _on_scroll(self, value):
-        """Handle scroll events. Visibility check is debounced via visibility_timer."""
-        speed = self._sample_scroll_speed(value)
-        self._prioritize_extract_for_scroll()
-
-        if speed >= self.SCROLL_FAST_THRESHOLD_PX_PER_MS:
-            self._scroll_speed_at_arm = speed
-            self._scroll_preview_arm_timer.start(self.SCROLL_PREVIEW_ARM_MS)
-        elif not self._scroll_preview.isVisible():
-            self._scroll_preview_arm_timer.stop()
-
-        if self._scroll_preview.isVisible():
             self._update_scroll_preview_position()
             self._update_scroll_preview_image()
-            self._overlay_hide_timer.start()
 
-        self.visibility_timer.start()
-        viewport_bottom = value + self.viewport().height()
+    def _sync_scroll_preview_with_viewport_loads(self) -> None:
+        """Show preview while the viewport is waiting on pixmaps; hide when ready."""
+        if not self.all_images:
+            return
+        if self._viewport_has_unloaded_images():
+            self._queue_extracts_near_scroll()
+            self._ensure_extract_preload_running()
+            immediate = self._is_scrolling()
+            if not self._scroll_preview.isVisible():
+                self._show_scroll_preview(
+                    self.verticalScrollBar().value(), immediate=immediate
+                )
+            else:
+                self._update_scroll_preview_position()
+                self._update_scroll_preview_image()
+            if not self._scroll_preview_load_check_timer.isActive():
+                self._scroll_preview_load_check_timer.start()
+        elif self._scroll_preview.isVisible() and not self._is_scrolling():
+            self._on_scroll_preview_load_check()
+
+    def _maybe_extend_non_virtualized_grid(self) -> None:
+        """Create more thumbnail widgets when nearing the bottom (non-virtualized)."""
+        if self._is_virtualized() or not self.all_images:
+            return
+        viewport_bottom = (
+            self.verticalScrollBar().value() + self.viewport().height()
+        )
         content_bottom = self.content.height()
         if (
-            not self._is_virtualized()
-            and content_bottom - viewport_bottom < 1200
+            content_bottom - viewport_bottom < 1200
             and self.loaded_count < len(self.all_images)
         ):
             self._load_next_batch()
 
-        self._tag_popover.refresh_position()
+    def _on_scroll_idle(self) -> None:
+        """After scroll stops: relayout visible cells, resume loads, sync preview."""
+        self._check_visible_thumbnails()
+        self._maybe_extend_non_virtualized_grid()
 
-    def _confirm_scroll_preview_show(self) -> None:
-        """Show scroll preview when arm-time and current speeds average above threshold."""
-        smoothed = (self._scroll_speed_at_arm + self._last_scroll_speed) / 2.0
-        if smoothed < self.SCROLL_FAST_THRESHOLD_PX_PER_MS:
+    def _on_scroll_preview_load_check(self) -> None:
+        """Poll while preview is open; hide once viewport is ready and scroll has stopped."""
+        if not self._scroll_preview.isVisible():
+            self._scroll_preview_load_check_timer.stop()
             return
-        self._show_scroll_preview(self.verticalScrollBar().value())
-        self._overlay_hide_timer.start()
+        self._update_scroll_preview_position()
+        if self._viewport_has_unloaded_images():
+            self._update_scroll_preview_image()
+            return
+        if self._is_scrolling():
+            return
+        self._scroll_preview_load_check_timer.stop()
+        self._hide_scroll_preview()
+
+    def _on_scroll(self, value):
+        """Handle scroll events; defer heavy work until scrolling stops."""
+        self._schedule_idle_resume()
+        self._pause_background_work_for_scroll()
+        self._scroll_idle_timer.start()
+        self._update_scroll_preview_during_scroll()
+        self._tag_popover.refresh_position()
 
     def _viewport_top_image_index(self) -> int:
         """
@@ -356,18 +757,8 @@ class ImageGrid(QScrollArea):
         """
         if not self.all_images:
             return 0
-        scroll_y = self.verticalScrollBar().value()
-        spacing = self.grid.spacing()
-        margins = self.grid.contentsMargins()
-        mt = margins.top()
-        _, row_height = self._calculate_optimal_dimensions()
-        row_h = row_height + spacing
-        if row_h <= 0:
-            return 0
-        adj_top = max(0, scroll_y - mt)
-        first_row = adj_top // row_h
-        top_index = first_row * self.columns
-        return min(top_index, len(self.all_images) - 1)
+        first_row, _ = self._viewport_row_range(0)
+        return min(first_row * self.columns, len(self.all_images) - 1)
 
     def _scroll_preview_target_extract_index(self) -> int:
         """
@@ -429,6 +820,34 @@ class ImageGrid(QScrollArea):
                 best_pixmap = pixmap
         return best_pixmap
 
+    def _resolve_scroll_preview_frame(self) -> Tuple[Optional[QPixmap], int, int]:
+        """
+        Pick the best preview pixmap for the current scroll position.
+
+        Returns:
+            Tuple of (pixmap, target_extract_index, source_extract_index).
+            ``source_extract_index`` is -1 for grid fallback when no extract strip exists.
+        """
+        target_i = (
+            self._scroll_preview_target_extract_index()
+            if self._extract_indices
+            else 0
+        )
+        if not self._extract_indices:
+            return self._nearest_grid_pixmap_for_scroll(), target_i, -1
+        exact = self._extract_pixmaps.get(target_i)
+        if exact is not None and not exact.isNull():
+            return exact, target_i, target_i
+        if self._extract_pixmaps:
+            nearest_i = min(
+                self._extract_pixmaps.keys(),
+                key=lambda i: abs(i - target_i),
+            )
+            pixmap = self._extract_pixmaps[nearest_i]
+            if pixmap is not None and not pixmap.isNull():
+                return pixmap, target_i, nearest_i
+        return self._nearest_grid_pixmap_for_scroll(), target_i, -1
+
     def _scroll_preview_pixmap_for_current_scroll(self) -> Optional[QPixmap]:
         """
         Return the best available preview image for the current scroll position.
@@ -439,31 +858,69 @@ class ImageGrid(QScrollArea):
         Returns:
             QPixmap when any candidate is loaded, else None.
         """
-        if not self._extract_indices:
-            return self._nearest_grid_pixmap_for_scroll()
-        target_i = self._scroll_preview_target_extract_index()
-        exact = self._extract_pixmaps.get(target_i)
-        if exact is not None and not exact.isNull():
-            return exact
-        nearest_extract = self._nearest_extract_pixmap(target_i)
-        if nearest_extract is not None:
-            return nearest_extract
-        return self._nearest_grid_pixmap_for_scroll()
+        pixmap, _, _ = self._resolve_scroll_preview_frame()
+        return pixmap
 
     def _prioritize_extract_for_scroll(self) -> None:
-        """Bump the extract slot for the current scroll position to the preload queue."""
-        if not self._extract_indices:
-            return
-        target_i = self._scroll_preview_target_extract_index()
-        if target_i in self._extract_pixmaps:
-            return
+        """Queue extract slots around the current scroll position (highest priority)."""
+        self._queue_extracts_near_scroll()
+
+    @staticmethod
+    def _build_extract_vicinity_order(
+        target_i: int, count: int, radius: int
+    ) -> List[int]:
+        """
+        Build extract-slot order: target first, then expanding ±1, ±2, …
+
+        Args:
+            target_i: Center extract index for the current scroll position.
+            count: Total number of extract slots.
+            radius: How many slots to include on each side of the target.
+
+        Returns:
+            Ordered extract indices to preload.
+        """
+        if count <= 0:
+            return []
+        target_i = max(0, min(count - 1, target_i))
+        order: List[int] = [target_i]
+        seen: Set[int] = {target_i}
+        for delta in range(1, radius + 1):
+            for candidate in (target_i + delta, target_i - delta):
+                if 0 <= candidate < count and candidate not in seen:
+                    seen.add(candidate)
+                    order.append(candidate)
+        return order
+
+    def _detach_extract_from_pending(self, extract_i: int) -> None:
+        """Remove an extract slot from the balanced queue (vicinity owns it)."""
         try:
-            self._extract_pending_indices.remove(target_i)
+            self._extract_balanced_pending.remove(extract_i)
         except ValueError:
             pass
-        self._extract_pending_indices.insert(0, target_i)
-        if not self._extract_preload_timer.isActive():
-            self._extract_preload_timer.start()
+
+    def _queue_extracts_near_scroll(self, max_count: Optional[int] = None) -> None:
+        """Fill phase-2 vicinity queue with extracts closest to the viewport."""
+        if not self._extract_indices:
+            return
+        limit = max_count if max_count is not None else self.EXTRACT_VICINITY_COUNT
+        target_i = self._scroll_preview_target_extract_index()
+        order = self._build_extract_vicinity_order(
+            target_i, len(self._extract_indices), limit
+        )[:limit]
+        self._extract_vicinity_slot_set = set(order)
+        vicinity: List[int] = []
+        for extract_i in order:
+            if extract_i in self._extract_pixmaps:
+                continue
+            self._detach_extract_from_pending(extract_i)
+            vicinity.append(extract_i)
+        if not vicinity:
+            self._extract_vicinity_pending.clear()
+            return
+        seen = set(vicinity)
+        tail = [i for i in self._extract_vicinity_pending if i not in seen]
+        self._extract_vicinity_pending = vicinity + tail
 
     def _update_scroll_preview_position(self) -> None:
         """Update overlay position to follow the scrollbar thumb."""
@@ -483,7 +940,9 @@ class ImageGrid(QScrollArea):
         self._extract_indices.clear()
         self._image_id_to_extract_index.clear()
         if not self.all_images:
-            self._extract_pending_indices.clear()
+            self._extract_balanced_pending.clear()
+            self._extract_vicinity_pending.clear()
+            self._extract_vicinity_slot_set.clear()
             return
         step = max(1, self.EXTRACT_STEP_FACTOR * self.columns)
         idx = 0
@@ -493,14 +952,12 @@ class ImageGrid(QScrollArea):
                 len(self._extract_indices) - 1
             )
             idx += step
-        # Build a "global to detailed" load order for the scroll preview:
-        # first center of strip, then sub-centers, etc. This gives a rough global
-        # overview quickly, then refines progressively instead of loading strictly
-        # from top to bottom.
-        self._extract_pending_indices = self._build_balanced_extract_order(
+        self._extract_balanced_pending = self._build_balanced_extract_order(
             len(self._extract_indices)
         )
-        if self._extract_pending_indices:
+        self._extract_vicinity_pending.clear()
+        self._extract_vicinity_slot_set.clear()
+        if self._has_extract_pending():
             self._extract_preload_timer.start()
 
     @staticmethod
@@ -556,21 +1013,32 @@ class ImageGrid(QScrollArea):
         return order
 
     def _process_extract_preload(self) -> None:
-        """Start loading a few extract images per tick."""
-        for _ in range(self.EXTRACT_PRELOAD_PER_TICK):
-            if not self._extract_pending_indices or not self.all_images:
-                if not self._extract_pending_indices:
-                    self._extract_preload_timer.stop()
+        """Start extract loads following the post-scroll phase sequence."""
+        scrolling = self._is_scrolling()
+        if scrolling:
+            per_tick = self.EXTRACT_PRELOAD_PER_TICK_SCROLL
+            pending = self._extract_vicinity_pending
+        else:
+            phase = self._current_post_scroll_load_phase()
+            if phase == self.PHASE_EXTRACT_VICINITY:
+                pending = self._extract_vicinity_pending
+            elif phase == self.PHASE_EXTRACT_BALANCED:
+                pending = self._extract_balanced_pending
+            else:
+                return
+            per_tick = (
+                self.EXTRACT_PRELOAD_PER_TICK_PREVIEW
+                if self._scroll_preview.isVisible()
+                else self.EXTRACT_PRELOAD_PER_TICK
+            )
+        for _ in range(per_tick):
+            if not self.all_images:
                 break
-            extract_i = self._extract_pending_indices.pop(0)
-            if extract_i >= len(self._extract_indices):
-                continue
-            img_idx = self._extract_indices[extract_i]
-            if img_idx >= len(self.all_images):
-                continue
-            meta = self.all_images[img_idx]
-            if extract_i in self._extract_pixmaps or meta.id in self._extract_loading:
-                continue
+            extract_i = self._pop_from_extract_pending(pending)
+            if extract_i is None:
+                self._extract_preload_timer.stop()
+                break
+            meta = self.all_images[self._extract_indices[extract_i]]
             self._extract_loading.add(meta.id)
             path = self.image_manager.image_dir / meta.path
             worker = ImageLoaderWorker(
@@ -583,29 +1051,63 @@ class ImageGrid(QScrollArea):
             worker.signals.finished.connect(self._on_image_loaded)
             worker.signals.error.connect(self._on_image_error)
             self.extract_thread_pool.start(worker)
-        if not self._extract_pending_indices:
+        if not scrolling and self._current_post_scroll_load_phase() in (
+            self.PHASE_EXTRACT_VICINITY,
+            self.PHASE_EXTRACT_BALANCED,
+        ):
+            self._extract_preload_timer.start()
+        elif not self._has_extract_pending():
             self._extract_preload_timer.stop()
 
+    def _pop_from_extract_pending(self, pending: List[int]) -> Optional[int]:
+        """Pop the next valid extract index from a pending list."""
+        while pending:
+            extract_i = pending.pop(0)
+            if extract_i >= len(self._extract_indices):
+                continue
+            img_idx = self._extract_indices[extract_i]
+            if img_idx >= len(self.all_images):
+                continue
+            meta = self.all_images[img_idx]
+            if extract_i in self._extract_pixmaps or meta.id in self._extract_loading:
+                continue
+            return extract_i
+        return None
+
     def _update_scroll_preview_image(self) -> None:
-        """Update overlay image using the nearest loaded preview candidate."""
+        """Update overlay image to match the current scroll position."""
         if not self._scroll_preview.isVisible():
             return
-        pixmap = self._scroll_preview_pixmap_for_current_scroll()
-        if pixmap is not None:
-            self._scroll_preview.set_image(pixmap)
+        pixmap, target_i, source_i = self._resolve_scroll_preview_frame()
+        if pixmap is None:
+            return
+        frame_key = (target_i, source_i)
+        if frame_key == self._scroll_preview_frame_key:
+            return
+        self._scroll_preview_frame_key = frame_key
+        self._scroll_preview.set_image(pixmap, fast=self._is_scrolling())
 
-    def _show_scroll_preview(self, scroll_value: int) -> None:
+    def _show_scroll_preview(self, scroll_value: int, *, immediate: bool = False) -> None:
         """Show the scroll preview overlay (nearest loaded image when possible)."""
+        self._scroll_preview_frame_key = None
         self._update_scroll_preview_position()
-        pixmap = self._scroll_preview_pixmap_for_current_scroll()
+        pixmap, target_i, source_i = self._resolve_scroll_preview_frame()
         if pixmap is not None:
-            self._scroll_preview.set_image(pixmap)
-        self._scroll_preview.show_animated()
+            self._scroll_preview_frame_key = (target_i, source_i)
+            self._scroll_preview.set_image(
+                pixmap, fast=immediate or self._is_scrolling()
+            )
+        if immediate:
+            self._scroll_preview.show_immediate()
+        else:
+            self._scroll_preview.show_animated()
         self._scroll_preview.raise_()
 
     def _hide_scroll_preview(self) -> None:
-        """Hide the scroll preview overlay with fade-out (called when scroll has slowed or stopped)."""
+        """Hide the scroll preview overlay once viewport thumbnails are ready."""
+        self._scroll_preview_frame_key = None
         self._scroll_preview.hide_animated()
+        self._ensure_load_ticker_running()
 
     def _is_virtualized(self) -> bool:
         """True when we have too many images and use a fixed pool of widgets."""
@@ -745,20 +1247,6 @@ class ImageGrid(QScrollArea):
             if not thumb.isVisible():
                 thumb.show()
             self.thumbnails[meta.id] = thumb
-
-        # Enqueue pixmap loads for visible range
-        self.pending_load_queue.clear()
-        for idx in range(start_index, end_index):
-            if idx >= len(self.all_images):
-                break
-            image_id = self.all_images[idx].id
-            if (
-                image_id not in self.loading_images
-                and image_id not in self.pixmap_cache
-            ):
-                self.pending_load_queue.append(image_id)
-        if self.pending_load_queue:
-            self.load_ticker_timer.start()
 
         # Keep pixmap cache bounded (Reason: 20k images = avoid OOM)
         if len(self.pixmap_cache) > 400:
@@ -1021,19 +1509,25 @@ class ImageGrid(QScrollArea):
         self._coarse_throttle_started = False
         self.visibility_timer.stop()
         self.load_ticker_timer.stop()
-        self._overlay_hide_timer.stop()
-        self._scroll_preview_arm_timer.stop()
+        self._scroll_preview_load_check_timer.stop()
+        self._scroll_idle_timer.stop()
         self._user_idle_timer.stop()
         self._scroll_preview.hide_immediate()
         self._tag_popover.hide_popover()
         self._extract_preload_timer.stop()
+        self._idle_refresh_timer.stop()
+        self._bg_idle_mode = False
         self._extract_indices.clear()
         self._image_id_to_extract_index.clear()
         self._extract_pixmaps.clear()
-        self._extract_pending_indices.clear()
+        self._extract_balanced_pending.clear()
+        self._extract_vicinity_pending.clear()
+        self._extract_vicinity_slot_set.clear()
         self._extract_loading.clear()
-        self.pending_load_queue.clear()
+        self._tier0_queue.clear()
+        self._tier3_queue.clear()
         self.loading_images.clear()
+        self._load_failed_images.clear()
         # Reason: always drain the layout so virtual ↔ non-virtual transitions never
         # leave stale QGridLayout cells (visible as non-interactive fragments in gutters).
         self._drain_thumbnail_grid_layout()
@@ -1088,6 +1582,7 @@ class ImageGrid(QScrollArea):
         if not self._is_virtualized():
             self._load_next_batch()
         self.layout_timer.start()
+        self._user_idle_timer.start()
 
     def _calculate_batch_size(self) -> int:
         """Calculate the batch size based on current number of columns."""
@@ -1185,46 +1680,42 @@ class ImageGrid(QScrollArea):
 
     def _check_visible_thumbnails(self):
         """Compute which thumbnails are visible and enqueue their pixmap loads (or update virtualized view)."""
+        if self._is_scrolling():
+            return
         if self._is_virtualized():
             self._update_virtualized_view()
-            return
-        viewport_rect = QRect(
-            self.horizontalScrollBar().value(),
-            self.verticalScrollBar().value(),
-            self.viewport().width(),
-            self.viewport().height(),
-        )
-        margin = 400  # Preload a bit above/below viewport
-        viewport_rect.adjust(-margin, -margin, margin, margin)
-
-        to_load: List[str] = []
-        for image_id, thumbnail in self.thumbnails.items():
-            if not viewport_rect.intersects(self._get_widget_geometry(thumbnail)):
-                continue
-            if image_id in self.loading_images or image_id in self.pixmap_cache:
-                continue
-            to_load.append(image_id)
-
-        # Replace queue with currently visible items (prioritize what user sees)
-        self.pending_load_queue.clear()
-        for image_id in to_load[: self.PENDING_QUEUE_MAX]:
-            self.pending_load_queue.append(image_id)
-
-        if self.pending_load_queue:
-            self.load_ticker_timer.start()
+        else:
+            self._ensure_thumbnail_widgets_near_viewport()
+        self._rebuild_post_scroll_load_plan()
+        self._ensure_load_ticker_running()
+        self._ensure_extract_preload_running()
+        self._sync_scroll_preview_with_viewport_loads()
 
     def _process_pending_loads(self):
-        """Process a few pending pixmap loads per tick to avoid main-thread lag."""
-        for _ in range(self.MAX_LOADS_PER_TICK):
-            if not self.pending_load_queue:
-                self.load_ticker_timer.stop()
-                return
-            image_id = self.pending_load_queue.popleft()
-            # Re-check: might already be loading or cached (e.g. from another batch)
-            if image_id in self.loading_images or image_id in self.pixmap_cache:
-                continue
+        """Process grid loads for the active post-scroll phase (core, then extended)."""
+        if self._is_scrolling():
+            return
+        phase = self._current_post_scroll_load_phase()
+        if phase == self.PHASE_GRID_CORE:
+            queue = self._tier0_queue
+            per_tick = self.MAX_LOADS_PER_TICK
+        elif phase == self.PHASE_GRID_EXTENDED:
+            queue = self._tier3_queue
+            per_tick = self.IDLE_MAX_LOADS_PER_TICK
+        else:
+            self.load_ticker_timer.stop()
+            return
+        for _ in range(per_tick):
+            image_id = self._pop_next_load_id(queue)
+            if image_id is None:
+                break
             self._load_thumbnail_image(image_id)
-        if not self.pending_load_queue:
+        if self._current_post_scroll_load_phase() in (
+            self.PHASE_GRID_CORE,
+            self.PHASE_GRID_EXTENDED,
+        ):
+            self.load_ticker_timer.start()
+        else:
             self.load_ticker_timer.stop()
 
     def _is_thumbnail_visible(self, thumbnail: QWidget) -> bool:
@@ -1251,6 +1742,8 @@ class ImageGrid(QScrollArea):
 
     def _load_thumbnail_image(self, image_id: str):
         """Load image for a thumbnail asynchronously. When virtualized, may load for cache only (thumbnail not visible)."""
+        if self._is_scrolling():
+            return
         if image_id in self.loading_images:
             return
         idx = self._image_id_to_index.get(image_id)
@@ -1300,7 +1793,9 @@ class ImageGrid(QScrollArea):
             return
         thumb = self.thumbnails.get(image_id)
         if thumb and thumb.image_id == image_id and thumb.pixmap_item is None:
-            thumb.set_image(pixmap)
+            self._apply_pixmap_to_thumbnail(image_id, pixmap)
+        if not self._is_scrolling():
+            self._sync_scroll_preview_with_viewport_loads()
 
     def _on_image_loaded(self, image_id: str, pixmap):
         """Handle loaded HQ image and update cache + display."""
@@ -1311,33 +1806,32 @@ class ImageGrid(QScrollArea):
         if image_id in self._image_id_to_extract_index:
             extract_i = self._image_id_to_extract_index[image_id]
             self._extract_pixmaps[extract_i] = pixmap
+            self.pixmap_cache[image_id] = pixmap
+            self._apply_pixmap_to_thumbnail(image_id, pixmap)
+            self._scroll_preview_frame_key = None
             if self._scroll_preview.isVisible():
                 self._update_scroll_preview_image()
-            elif (
-                self._scroll_preview_arm_timer.isActive()
-                or self._last_scroll_speed >= self.SCROLL_FAST_THRESHOLD_PX_PER_MS
-            ):
-                self._confirm_scroll_preview_show()
-            self.pixmap_cache[image_id] = pixmap
-            if (
-                image_id in self.thumbnails
-                and self.thumbnails[image_id].image_id == image_id
-            ):
-                self.thumbnails[image_id].set_image(pixmap)
+            if not self._is_scrolling():
+                self._ensure_load_ticker_running()
+                self._ensure_extract_preload_running()
+                self._sync_scroll_preview_with_viewport_loads()
             return
         self.pixmap_cache[image_id] = pixmap
-        if (
-            image_id in self.thumbnails
-            and self.thumbnails[image_id].image_id == image_id
-        ):
-            self.thumbnails[image_id].set_image(pixmap)
+        self._apply_pixmap_to_thumbnail(image_id, pixmap)
+        if not self._is_scrolling():
+            self._ensure_load_ticker_running()
+            self._ensure_extract_preload_running()
+            self._sync_scroll_preview_with_viewport_loads()
 
     def _on_image_error(self, image_id: str, error_msg: str):
         """Handle image loading error."""
         self.loading_images.discard(image_id)
         self._extract_loading.discard(image_id)
-        if image_id in self.thumbnails:
+        self._load_failed_images.add(image_id)
+        if image_id in self.thumbnails and not self._is_scrolling():
             self.thumbnails[image_id].set_error(error_msg)
+        if not self._is_scrolling():
+            self._sync_scroll_preview_with_viewport_loads()
 
     def resizeEvent(self, event):
         """Handle resize events to adjust grid layout."""
@@ -1945,6 +2439,7 @@ class ImageGrid(QScrollArea):
             self._load_next_batch()
         self.layout_timer.start()
         self.visibility_timer.start()
+        self._user_idle_timer.start()
         self.grid.update()
         self.content.update()
         self.viewport().update()

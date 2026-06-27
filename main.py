@@ -6,6 +6,7 @@ SketchBook - A desktop application for timed life drawing sessions.
 import sys
 import threading
 from pathlib import Path
+
 from qtpy.QtWidgets import QApplication
 from qtpy.QtGui import QFontDatabase, QFont
 from gui.main_window import MainWindow

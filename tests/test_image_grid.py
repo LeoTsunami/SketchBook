@@ -41,57 +41,58 @@ def image_grid(qtbot, image_manager):
     return grid
 
 
-def test_scroll_starts_visibility_timer(image_grid):
-    """Scroll should start the debounce timer, not call _check_visible_thumbnails directly."""
+def test_scroll_defers_visibility_check_until_idle(image_grid):
+    """Scroll should defer thumbnail/load work until the scroll-idle timer fires."""
     with patch.object(image_grid, "_check_visible_thumbnails") as mock_check:
         image_grid.verticalScrollBar().valueChanged.emit(50)
-        # Debounce: timer started, _check_visible_thumbnails not called yet
-        assert image_grid.visibility_timer.isActive()
+        assert image_grid._scroll_idle_timer.isActive()
         mock_check.assert_not_called()
+        assert not image_grid.load_ticker_timer.isActive()
 
 
 def test_check_visible_thumbnails_enqueues_and_starts_ticker(image_grid):
-    """_check_visible_thumbnails should fill pending queue and start load ticker."""
-    image_grid.pending_load_queue.clear()
+    """_check_visible_thumbnails should fill tier-0 queue and start load ticker."""
+    image_grid._tier0_queue.clear()
     image_grid.load_ticker_timer.stop()
     image_grid._check_visible_thumbnails()
-    # At least one thumbnail is in view -> queue non-empty, ticker started
-    if image_grid.pending_load_queue:
+    if image_grid._tier0_queue:
         assert image_grid.load_ticker_timer.isActive()
 
 
 def test_process_pending_loads_pops_max_per_tick(image_grid):
     """_process_pending_loads should pop at most MAX_LOADS_PER_TICK per call."""
     max_per = image_grid.MAX_LOADS_PER_TICK
-    image_grid.pending_load_queue.clear()
+    image_grid._tier0_queue.clear()
     remaining = 5
     for i in range(max_per + remaining):
-        image_grid.pending_load_queue.append(f"fake_id_{i}")
+        image_grid._tier0_queue.append(f"fake_id_{i}")
     image_grid.load_ticker_timer.start()
 
     with patch.object(image_grid, "_load_thumbnail_image"):
         image_grid._process_pending_loads()
-    assert len(image_grid.pending_load_queue) == remaining
+    assert len(image_grid._tier0_queue) == remaining
     assert image_grid.load_ticker_timer.isActive()
 
 
 def test_process_pending_loads_stops_timer_when_queue_empty(image_grid):
-    """When queue is empty, _process_pending_loads should stop the ticker."""
-    image_grid.pending_load_queue.clear()
+    """When no grid phase is active, _process_pending_loads should stop the ticker."""
+    image_grid._tier0_queue.clear()
+    image_grid._tier3_queue.clear()
     image_grid.load_ticker_timer.start()
-    image_grid._process_pending_loads()
+    with patch.object(image_grid, "_current_post_scroll_load_phase", return_value=5):
+        image_grid._process_pending_loads()
     assert not image_grid.load_ticker_timer.isActive()
 
 
 def test_clear_stops_timers_and_empties_queue(image_grid):
-    """clear() should stop visibility and load ticker timers and empty pending queue."""
-    image_grid.pending_load_queue.append("dummy")
+    """clear() should stop visibility and load ticker timers and empty load queues."""
+    image_grid._tier0_queue.append("dummy")
     image_grid.visibility_timer.start()
     image_grid.load_ticker_timer.start()
     image_grid.clear()
     assert not image_grid.visibility_timer.isActive()
     assert not image_grid.load_ticker_timer.isActive()
-    assert len(image_grid.pending_load_queue) == 0
+    assert len(image_grid._tier0_queue) == 0
 
 
 def test_resize_schedules_finalize_timer(image_grid):
