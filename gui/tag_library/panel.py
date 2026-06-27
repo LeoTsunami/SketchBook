@@ -89,6 +89,46 @@ def _collect_subtags(data: Any, collected: List[str]) -> None:
         collected.append(data)
 
 
+def _append_taxonomy_child(
+    children_map: Dict[str, List[str]], parent: str, child: str
+) -> None:
+    """
+    Append *child* under *parent* in children_map without duplicates.
+
+    Args:
+        children_map: Mutable parent → children list map.
+        parent: Parent tag name.
+        child: Child tag name.
+    """
+    children = children_map.setdefault(parent, [])
+    if child not in children:
+        children.append(child)
+
+
+def _walk_taxonomy_children(
+    data: Any, parent: Optional[str], children_map: Dict[str, List[str]]
+) -> None:
+    """
+    Record parent/child edges from nested default_tags.json values.
+
+    Args:
+        data: Category tags value (list, dict, or str).
+        parent: Parent tag name, or None at the category root.
+        children_map: Map to populate in-place.
+    """
+    if isinstance(data, list):
+        for item in data:
+            _walk_taxonomy_children(item, parent, children_map)
+    elif isinstance(data, dict):
+        for key, value in data.items():
+            if parent is not None:
+                _append_taxonomy_child(children_map, parent, key)
+            _walk_taxonomy_children(value, key, children_map)
+    elif isinstance(data, str):
+        if parent is not None:
+            _append_taxonomy_child(children_map, parent, data)
+
+
 def _build_subtags_for_category(
     category: str,
     default_subtags: List[str],
@@ -309,11 +349,12 @@ class TagLibraryPanel(QWidget):
             for tag in ordered:
                 taxonomy.subtag_to_category[tag] = category
 
-        # Build children_map from placements
+            # Parent/child edges from nested JSON + user placements
+            _walk_taxonomy_children(tags_data, None, taxonomy.children_map)
         for tag, pl in placements.items():
             if isinstance(pl, dict) and "parent_tag" in pl:
                 parent = pl["parent_tag"]
-                taxonomy.children_map.setdefault(parent, []).append(tag)
+                _append_taxonomy_child(taxonomy.children_map, parent, tag)
 
         self._taxonomy = taxonomy
 
@@ -391,13 +432,7 @@ class TagLibraryPanel(QWidget):
 
         if is_tag_shelf(category):
             # Root tags for a shelf = tags that are NOT children of another tag
-            root_tags = [
-                t for t in ordered
-                if not (
-                    isinstance(placements.get(t), dict)
-                    and placements.get(t).get("parent_tag")
-                )
-            ]
+            root_tags = [t for t in ordered if taxonomy.get_parent(t) is None]
             section = ShelfSection(
                 shelf_name=category,
                 taxonomy=taxonomy,
@@ -428,13 +463,7 @@ class TagLibraryPanel(QWidget):
                 header_chip.setIcon(invert_icon(cat_icon, src_px))
             self._header_chips[category] = header_chip
 
-            root_tags = [
-                t for t in ordered
-                if not (
-                    isinstance(placements.get(t), dict)
-                    and placements.get(t).get("parent_tag")
-                )
-            ]
+            root_tags = [t for t in ordered if taxonomy.get_parent(t) is None]
             section = CategorySection(
                 category=category,
                 taxonomy=taxonomy,
@@ -649,7 +678,8 @@ class TagLibraryPanel(QWidget):
             if section.is_expanded() != is_expanded:
                 section.set_expanded(is_expanded)
             active = self._active_subtags.get(category, set())
-            section.apply_active_subtags(active)
+            if is_expanded:
+                section.apply_active_subtags(active)
             section.update_header_chip(
                 is_active=is_expanded,
                 has_children=bool(self._taxonomy.subtag_order.get(category)),

@@ -1,33 +1,23 @@
 """
 TagGridHost – 3-column flow grid of tag chips, pre-built once at load time.
 
-Layout mirrors the legacy ``_sync_tag_grid_state`` behaviour:
+Layout follows the legacy ``_sync_tag_grid_state`` index algorithm:
 
-* Tags flow left-to-right in rows of 3.
-* When a tag with children is expanded, a ``TagHierarchyFrame`` (bordered
-  block) is inserted on the next row below the parent's row, containing a
-  nested ``TagGridHost`` for its children.
-* Expand/collapse is ``setVisible()`` on the frame only — no layout rebuild.
-
-Anatomy (root tags [Terrestrial*, Insect, Bird, …]):
-
-    Row 0: [Terrestrial] [Insect] [Bird]
-    Row 1: ┌─ TagHierarchyFrame (Terrestrial children, hidden until active) ─┐
-           │  [Felin] [Aquatic] […]                                         │
-           └──────────────────────────────────────────────────────────────────┘
-    Row 2: [Monkey] [Horse] [Elephant]
-    …
+* Tags flow left-to-right, 3 per row.
+* When an expandable tag is active, a full-width ``TagHierarchyFrame`` is
+  inserted on the next row and tags that followed are pushed down.
+* Chips and frames are repositioned in a single ``QGridLayout`` — never
+  destroyed on expand/collapse.
 """
 from __future__ import annotations
 
-from typing import Dict, List, Optional, Set
+from typing import Dict, List, Literal, Optional, Set, Tuple, Union
 
 from qtpy.QtCore import Qt, QRect
 from qtpy.QtWidgets import (
     QFrame,
     QGridLayout,
     QSizePolicy,
-    QVBoxLayout,
     QWidget,
 )
 
@@ -45,6 +35,12 @@ from gui.tag_library.state import TagLibraryTaxonomy
 
 
 COLS = TAG_LIBRARY_TAG_GRID_COLUMNS
+
+ColTag = Tuple[int, str]
+LayoutLine = Union[
+    Tuple[Literal["row"], List[ColTag]],
+    Tuple[Literal["frame"], str],
+]
 
 
 class TagGridHost(QWidget):
@@ -78,8 +74,11 @@ class TagGridHost(QWidget):
         self._chips = chips
         self._branch_key = branch_key
         self._depth_offset = depth_offset
+        self._root_tags = list(root_tags)
         self._local_tags: Set[str] = set()
-        # parent_tag → bordered frame wrapping the child TagGridHost
+        self._cell_width = 0
+        self._last_active_subtags: Set[str] = set()
+        self._cached_lines: Optional[List[LayoutLine]] = None
         self._child_frames: Dict[str, QFrame] = {}
         self._child_grids: Dict[str, "TagGridHost"] = {}
 
@@ -87,75 +86,184 @@ class TagGridHost(QWidget):
         self.setMinimumHeight(0)
 
         padding = TAG_LIBRARY_SHELF_GRID_PADDING_PX if shelf_padding else 0
-        self._layout = QVBoxLayout(self)
-        self._layout.setContentsMargins(padding, padding, padding, padding)
-        self._layout.setSpacing(6)
+        self._grid = QGridLayout(self)
+        self._grid.setContentsMargins(padding, padding, padding, padding)
+        self._grid.setHorizontalSpacing(TAG_LIBRARY_TAG_GRID_SPACING_PX)
+        self._grid.setVerticalSpacing(6)
+        for col in range(COLS):
+            self._grid.setColumnStretch(col, 1)
 
-        self._build(root_tags)
+        for tag in self._root_tags:
+            if tag in self._chips and self._taxonomy.has_children(tag):
+                self._ensure_child_frame(tag)
 
-    # ------------------------------------------------------------------
-    # Build (called once)
-    # ------------------------------------------------------------------
+        self._relayout(set())
 
-    def _build(self, root_tags: List[str]) -> None:
+    @staticmethod
+    def _chip_is_alive(chip: Optional[WrappingDraggableTagButton]) -> bool:
         """
-        Lay out *root_tags* in rows of 3 with optional hierarchy frames.
+        Return True when the Qt C++ backing object for *chip* still exists.
 
         Args:
-            root_tags: Tags to place at this level.
+            chip: Chip widget to probe.
+
+        Returns:
+            bool: False after the underlying QObject was destroyed.
         """
-        row_widget: Optional[QWidget] = None
-        row_layout: Optional[QGridLayout] = None
-        col = 0
+        if chip is None:
+            return False
+        try:
+            chip.objectName()
+            return True
+        except RuntimeError:
+            return False
 
-        def _flush_row() -> None:
-            nonlocal row_widget, row_layout, col
-            if row_widget is not None:
-                self._layout.addWidget(row_widget)
-            row_widget = None
-            row_layout = None
-            col = 0
+    def _park_widget(self, widget: QWidget) -> None:
+        """
+        Remove *widget* from the grid while keeping it alive off-layout.
 
-        def _ensure_row() -> QGridLayout:
-            nonlocal row_widget, row_layout
-            if row_layout is None:
-                row_widget = QWidget(self)
-                row_widget.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
-                row_layout = QGridLayout(row_widget)
-                row_layout.setContentsMargins(0, 0, 0, 0)
-                row_layout.setHorizontalSpacing(TAG_LIBRARY_TAG_GRID_SPACING_PX)
-                row_layout.setVerticalSpacing(0)
-            return row_layout
+        Args:
+            widget: Chip or hierarchy frame to stash on this host.
+        """
+        widget.setParent(self)
+        widget.hide()
+
+    def _clear_grid(self) -> None:
+        """Detach every item from the grid without destroying chips or frames."""
+        while self._grid.count():
+            item = self._grid.takeAt(0)
+            widget = item.widget() if item else None
+            if widget is not None:
+                self._park_widget(widget)
+
+    # ------------------------------------------------------------------
+    # Layout computation (legacy idx algorithm)
+    # ------------------------------------------------------------------
+
+    @staticmethod
+    def _compute_layout_lines(
+        root_tags: List[str],
+        taxonomy: TagLibraryTaxonomy,
+        active_subtags: Set[str],
+    ) -> List[LayoutLine]:
+        """
+        Compute row / frame sequence using the legacy virtual-index algorithm.
+
+        When a tag with children is active, the next row is reserved for its
+        hierarchy frame and following tags are pushed down by one row.
+
+        Args:
+            root_tags: Tags at this hierarchy level in display order.
+            taxonomy: Library taxonomy.
+            active_subtags: Currently expanded parent tags.
+
+        Returns:
+            Ordered list of layout lines (chip rows and frames).
+        """
+        row_buckets: Dict[int, List[Tuple[int, str]]] = {}
+        frame_rows: Dict[int, str] = {}
+        idx = 0
 
         for tag in root_tags:
-            chip = self._chips.get(tag)
-            if chip is None:
-                continue
+            row, col = divmod(idx, COLS)
+            row_buckets.setdefault(row, []).append((col, tag))
+            idx += 1
 
-            self._local_tags.add(tag)
-            grid = _ensure_row()
-            grid.addWidget(chip, 0, col, TAG_LIBRARY_TAG_CELL_ALIGN)
-            col += 1
+            if taxonomy.has_children(tag) and tag in active_subtags:
+                aligned_idx = ((idx + COLS - 1) // COLS) * COLS
+                block_row = aligned_idx // COLS
+                frame_rows[block_row] = tag
+                idx = aligned_idx + COLS
 
-            if col >= COLS:
-                _flush_row()
+        all_rows = sorted(set(row_buckets) | set(frame_rows))
+        lines: List[LayoutLine] = []
+        for row_num in all_rows:
+            if row_num in row_buckets:
+                cols = sorted(row_buckets[row_num], key=lambda x: x[0])
+                lines.append(("row", cols))
+            if row_num in frame_rows:
+                lines.append(("frame", frame_rows[row_num]))
+        return lines
 
-            if not self._taxonomy.has_children(tag):
-                continue
+    def _apply_column_widths(self) -> None:
+        """Sync grid column minimum widths with the current cell width."""
+        if self._cell_width <= 0:
+            return
+        for col in range(COLS):
+            self._grid.setColumnMinimumWidth(col, self._cell_width)
 
-            # Close the current chip row, then add a full-width hierarchy block.
-            _flush_row()
+    def _relayout(self, active_subtags: Set[str]) -> None:
+        """
+        Reposition chips and frames in the grid for the current expand state.
 
-            children = self._taxonomy.get_children(tag)
-            child_root_tags = [
-                t for t in children if self._taxonomy.get_parent(t) == tag
-            ]
-            frame, child_grid = self._make_hierarchy_frame(tag, child_root_tags)
-            self._layout.addWidget(frame)
-            self._child_frames[tag] = frame
-            self._child_grids[tag] = child_grid
+        Args:
+            active_subtags: Expanded parent tags at this category level.
+        """
+        lines = self._compute_layout_lines(
+            self._root_tags, self._taxonomy, active_subtags
+        )
+        if lines == self._cached_lines:
+            return
 
-        _flush_row()
+        self._last_active_subtags = set(active_subtags)
+        self._cached_lines = list(lines)
+        self._clear_grid()
+        self._local_tags = set()
+
+        grid_row = 0
+        for kind, payload in lines:
+            if kind == "row":
+                for col, tag in payload:
+                    if col < 0 or col >= COLS:
+                        continue
+                    chip = self._chips.get(tag)
+                    if chip is None or not self._chip_is_alive(chip):
+                        continue
+                    self._local_tags.add(tag)
+                    chip.setParent(self)
+                    chip.show()
+                    self._grid.addWidget(chip, grid_row, col, TAG_LIBRARY_TAG_CELL_ALIGN)
+                grid_row += 1
+            else:
+                parent_tag = payload
+                frame = self._ensure_child_frame(parent_tag)
+                expanded = parent_tag in active_subtags
+                frame.setParent(self)
+                frame.setVisible(expanded)
+                if expanded:
+                    frame.show()
+                self._grid.addWidget(frame, grid_row, 0, 1, COLS)
+                grid_row += 1
+                child_grid = self._child_grids.get(parent_tag)
+                if child_grid is not None:
+                    child_grid._relayout(active_subtags)
+
+        self._apply_column_widths()
+        self._grid.invalidate()
+        self.updateGeometry()
+
+    def _ensure_child_frame(self, parent_tag: str) -> QFrame:
+        """
+        Return (and create if needed) the hierarchy frame for *parent_tag*.
+
+        Args:
+            parent_tag: Parent tag name.
+
+        Returns:
+            QFrame wrapping the nested TagGridHost.
+        """
+        existing = self._child_frames.get(parent_tag)
+        if existing is not None:
+            return existing
+
+        children = self._taxonomy.get_children(parent_tag)
+        child_root_tags = [
+            t for t in children if self._taxonomy.get_parent(t) == parent_tag
+        ]
+        frame, child_grid = self._make_hierarchy_frame(parent_tag, child_root_tags)
+        self._child_frames[parent_tag] = frame
+        self._child_grids[parent_tag] = child_grid
+        return frame
 
     def _make_hierarchy_frame(
         self, parent_tag: str, child_root_tags: List[str]
@@ -175,7 +283,7 @@ class TagGridHost(QWidget):
         frame.setObjectName("TagHierarchyFrame")
         frame.setFrameShape(QFrame.StyledPanel)
         frame.setFocusPolicy(Qt.NoFocus)
-        frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
+        frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         frame.setStyleSheet(
             "QFrame#TagHierarchyFrame { "
             f"border: {min(depth, 3)}px solid rgba(255,255,255,0.45); "
@@ -184,9 +292,10 @@ class TagGridHost(QWidget):
             "background: transparent; "
             "}"
         )
-        frame_layout = QVBoxLayout(frame)
+        frame_layout = QGridLayout(frame)
         frame_layout.setContentsMargins(3, 4, 3, 4)
-        frame_layout.setSpacing(6)
+        frame_layout.setHorizontalSpacing(TAG_LIBRARY_TAG_GRID_SPACING_PX)
+        frame_layout.setVerticalSpacing(6)
 
         child_grid = TagGridHost(
             category=self._category,
@@ -198,7 +307,8 @@ class TagGridHost(QWidget):
             shelf_padding=False,
             parent=frame,
         )
-        frame_layout.addWidget(child_grid)
+        child_grid.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
+        frame_layout.addWidget(child_grid, 0, 0, 1, COLS)
         frame.setVisible(False)
         return frame, child_grid
 
@@ -224,23 +334,27 @@ class TagGridHost(QWidget):
         return 1 + self._tag_depth(parent, visited)
 
     # ------------------------------------------------------------------
-    # State update (no layout rebuild)
+    # State update
     # ------------------------------------------------------------------
 
     def apply_active_subtags(self, active_subtags: Set[str]) -> None:
         """
-        Show / hide hierarchy frames for expanded parent tags.
+        Re-layout this grid for the current expand/collapse state.
 
         Args:
             active_subtags: Active subtag names for this category.
         """
-        for tag, frame in self._child_frames.items():
-            should_show = tag in active_subtags
-            if frame.isHidden() == should_show:
-                frame.setVisible(should_show)
-            child_grid = self._child_grids.get(tag)
-            if should_show and child_grid is not None:
-                child_grid.apply_active_subtags(active_subtags)
+        self._relayout(active_subtags)
+
+    def invalidate_layout_cache(self) -> None:
+        """
+        Force the next ``apply_active_subtags`` call to reposition widgets.
+
+        Called after a full panel reload when chip instances are replaced.
+        """
+        self._cached_lines = None
+        for child_grid in self._child_grids.values():
+            child_grid.invalidate_layout_cache()
 
     def update_chip_states(
         self,
@@ -250,7 +364,7 @@ class TagGridHost(QWidget):
         tags_to_parent: Set[str],
     ) -> None:
         """
-        Refresh chip visuals for tags owned by this grid level.
+        Refresh chip visuals for tags owned by this grid tree.
 
         Args:
             active_subtags: Active filter tags.
@@ -260,7 +374,7 @@ class TagGridHost(QWidget):
         """
         for tag in self._local_tags:
             chip = self._chips.get(tag)
-            if chip is None:
+            if chip is None or not self._chip_is_alive(chip):
                 continue
             is_active = tag in active_subtags
             in_selection = tag in selection
@@ -299,17 +413,21 @@ class TagGridHost(QWidget):
 
     def apply_cell_width(self, cell_w: int) -> None:
         """
-        Set chip width for every tag placed in this grid and descendants.
+        Set chip width for every tag in this grid tree.
 
         Args:
             cell_w: Pixel width per column.
         """
-        for tag in self._local_tags:
+        if cell_w <= 0:
+            return
+        self._cell_width = cell_w
+        for tag in self._root_tags:
             chip = self._chips.get(tag)
-            if chip is not None:
+            if chip is not None and self._chip_is_alive(chip):
                 chip.set_cell_width(cell_w)
         for child_grid in self._child_grids.values():
             child_grid.apply_cell_width(cell_w)
+        self._apply_column_widths()
 
     # ------------------------------------------------------------------
     # Query helpers
@@ -325,7 +443,7 @@ class TagGridHost(QWidget):
         Returns:
             Chip widget or None.
         """
-        if tag in self._local_tags:
+        if tag in self._chips:
             return self._chips.get(tag)
         for child_grid in self._child_grids.values():
             found = child_grid.get_chip(tag)

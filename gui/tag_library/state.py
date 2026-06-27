@@ -41,6 +41,8 @@ class TagLibraryTaxonomy:
         """
         Return the direct parent tag of *tag*, or None if it is a root tag.
 
+        User placements take precedence; otherwise the JSON children_map is used.
+
         Args:
             tag: Tag name to look up.
 
@@ -48,8 +50,11 @@ class TagLibraryTaxonomy:
             str | None: Parent tag name or None.
         """
         pl = self.placements.get(tag)
-        if isinstance(pl, dict):
-            return pl.get("parent_tag")
+        if isinstance(pl, dict) and "parent_tag" in pl:
+            return pl["parent_tag"]
+        for parent, children in self.children_map.items():
+            if tag in children:
+                return parent
         return None
 
     def get_children(self, tag: str) -> List[str]:
@@ -60,9 +65,23 @@ class TagLibraryTaxonomy:
             tag: Parent tag name.
 
         Returns:
-            List[str]: Child tag names.
+            List[str]: Child tag names ordered as in subtag_order.
         """
-        return self.children_map.get(tag, [])
+        raw = self.children_map.get(tag, [])
+        if not raw:
+            return []
+        category = self.subtag_to_category.get(tag)
+        if category is None:
+            for child in raw:
+                cat = self.subtag_to_category.get(child)
+                if cat:
+                    category = cat
+                    break
+        if category is None:
+            return list(raw)
+        ordered = self.subtag_order.get(category, [])
+        child_set = set(raw)
+        return [t for t in ordered if t in child_set]
 
     def has_children(self, tag: str) -> bool:
         """
