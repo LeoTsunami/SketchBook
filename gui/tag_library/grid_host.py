@@ -278,7 +278,6 @@ class TagGridHost(QWidget):
         Returns:
             tuple: (frame, child TagGridHost).
         """
-        depth = self._depth_offset + 2
         frame = QFrame(self)
         frame.setObjectName("TagHierarchyFrame")
         frame.setFrameShape(QFrame.StyledPanel)
@@ -286,10 +285,10 @@ class TagGridHost(QWidget):
         frame.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         frame.setStyleSheet(
             "QFrame#TagHierarchyFrame { "
-            f"border: {min(depth, 3)}px solid rgba(255,255,255,0.45); "
-            "border-radius: 6px; "
+            "border: 1px solid rgba(255,255,255,0.14); "
+            "border-radius: 10px; "
             "padding: 0; "
-            "background: transparent; "
+            "background: rgba(0, 0, 0, 0.1); "
             "}"
         )
         frame_layout = QGridLayout(frame)

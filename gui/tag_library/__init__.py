@@ -22,8 +22,8 @@ from gui.tag_library.chip import (
     apply_chip_style,
     get_hierarchy_background_color,
     blend_color,
-    chip_gradient,
 )
+from gui.tag_library.theme import chip_palette
 from gui.tag_library.state import TagLibraryTaxonomy, TagFilterState
 from gui.tag_library.panel import TagLibraryPanel
 
@@ -36,7 +36,7 @@ __all__ = [
     "apply_chip_style",
     "get_hierarchy_background_color",
     "blend_color",
-    "chip_gradient",
+    "chip_palette",
     "TagLibraryTaxonomy",
     "TagFilterState",
     "TagLibraryPanel",

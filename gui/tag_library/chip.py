@@ -31,7 +31,7 @@ from qtpy.QtGui import (
     QPixmap,
 )
 
-from core.settings import settings
+from gui.icon_utils import tint_icon
 from gui.tag_library.constants import (
     TAG_LIBRARY_MIME,
     TAG_LIBRARY_TAG_MIN_HEIGHT_PX,
@@ -41,101 +41,39 @@ from gui.tag_library.constants import (
     TAG_LIBRARY_TAG_CELL_MIN_WIDTH_PX,
     TAG_LIBRARY_TAG_CELL_ALIGN,
     TAG_LIBRARY_FONT_SUBTAG_PX,
+    TAG_LIBRARY_FONT_CATEGORY_PX,
     TAG_LIBRARY_TAG_SHADOW_BLUR_PX,
     TAG_LIBRARY_TAG_SHADOW_OFFSET_PX,
     TAG_LIBRARY_TAG_SHADOW_ALPHA,
-    TAG_LIBRARY_TAG_BORDER_WIDTH_PX,
-    tag_library_idle_border_css,
+    TAG_LIBRARY_TAG_CHIP_RADIUS_PX,
+    TAG_LIBRARY_CATEGORY_CHIP_RADIUS_PX,
+    TAG_LIBRARY_CATEGORY_MIN_HEIGHT_PX,
+    TAG_LIBRARY_TAG_ICON_SLOT_PX,
+    TAG_LIBRARY_CATEGORY_ICON_SLOT_PX,
+    TAG_LIBRARY_CHIP_CONTENT_HPAD_PX,
+)
+from gui.tag_library.theme import (
+    blend_color,
+    chip_palette,
+    chip_state_palette,
+    get_hierarchy_background_color,
+    ChipPalette,
 )
 
 
+# Re-export colour helpers used by section.py and legacy call sites.
+__all__ = [
+    "get_hierarchy_background_color",
+    "blend_color",
+    "apply_chip_style",
+    "DraggableTagButton",
+    "WrappingDraggableTagButton",
+]
+
+
 # ---------------------------------------------------------------------------
-# Colour helpers (used by both chips and sections for consistent appearance)
+# Colour helpers (re-exported from theme)
 # ---------------------------------------------------------------------------
-
-def get_hierarchy_background_color(branch_key: str, depth: int) -> QColor:
-    """
-    Return a vivid depth-based colour for a tag chip.
-
-    Args:
-        branch_key: Category name used to derive a base hue.
-        depth: 0 = category, 1 = subtag, 2+ = nested subtag.
-
-    Returns:
-        QColor in HSL space.
-    """
-    norm = branch_key.lower().replace(" ", "").replace("-", "").replace("_", "")
-    if norm == "animal":
-        hue = 128
-    elif norm == "human":
-        hue = 212
-    else:
-        hue = sum(ord(c) for c in branch_key) % 360
-    dark_theme = settings.get("ui.theme", "dark") != "light"
-    if dark_theme:
-        sat_pct = min(55 + depth * 5, 80)
-        light_pct = min(28 + depth * 8, 58)
-    else:
-        sat_pct = min(50 + depth * 6, 80)
-        light_pct = max(80 - depth * 8, 42)
-    return QColor.fromHsl(
-        hue,
-        int(255 * sat_pct / 100),
-        int(255 * light_pct / 100),
-    )
-
-
-def blend_color(base: QColor, tint: QColor, ratio: float) -> QColor:
-    """
-    Mix base colour toward tint by ratio.
-
-    Args:
-        base: Source colour.
-        tint: Target tint.
-        ratio: 0.0 = pure base, 1.0 = pure tint.
-
-    Returns:
-        QColor blended result.
-    """
-    r = int(base.red() + (tint.red() - base.red()) * ratio)
-    g = int(base.green() + (tint.green() - base.green()) * ratio)
-    b = int(base.blue() + (tint.blue() - base.blue()) * ratio)
-    return QColor(max(0, min(255, r)), max(0, min(255, g)), max(0, min(255, b)), base.alpha())
-
-
-def chip_gradient(
-    bg: QColor,
-    *,
-    lighter: int = 108,
-    darker: int = 112,
-    alpha_top: int = 230,
-    alpha_bot: int = 215,
-) -> str:
-    """
-    Build a vertical ``qlineargradient`` CSS value for a tag chip.
-
-    Args:
-        bg: Base background colour.
-        lighter: Factor for the top stop (lighter).
-        darker: Factor for the bottom stop (darker).
-        alpha_top: Alpha for the top stop.
-        alpha_bot: Alpha for the bottom stop.
-
-    Returns:
-        str: CSS background value.
-    """
-    top = bg.lighter(lighter)
-    bot = bg.darker(darker)
-    top.setAlpha(alpha_top)
-    bot.setAlpha(alpha_bot)
-
-    def _rgba(c: QColor) -> str:
-        return f"rgba({c.red()},{c.green()},{c.blue()},{c.alpha()})"
-
-    return (
-        f"qlineargradient(x1:0,y1:0,x2:0,y2:1,"
-        f"stop:0 {_rgba(top)},stop:1 {_rgba(bot)})"
-    )
 
 
 def apply_chip_style(
@@ -146,11 +84,7 @@ def apply_chip_style(
     selected_for_drag: bool = False,
 ) -> None:
     """
-    Apply the unified gradient style to any tag library button.
-
-    Caches the stylesheet per (branch_key, depth) so subsequent calls only
-    update the ``tagState`` property when needed, avoiding costly
-    ``setStyleSheet / unpolish / polish`` on every repaint sweep.
+    Apply the unified outline-chip style to any tag library button.
 
     Args:
         button: Target button widget.
@@ -159,66 +93,88 @@ def apply_chip_style(
         active: Whether the tag is part of the active filter.
         selected_for_drag: Whether the tag is in the drag selection.
     """
-    dark_theme = settings.get("ui.theme", "dark") != "light"
-    style_key = (branch_key, depth)
-
-    if button.property("_styleKey") != str(style_key):
-        bg = get_hierarchy_background_color(branch_key, depth)
-        text = "#f5f5f5" if dark_theme else "#1a1a1a"
-
-        grad_rest = chip_gradient(bg, lighter=108, darker=112, alpha_top=220, alpha_bot=200)
-        grad_hover = chip_gradient(bg, lighter=128, darker=108, alpha_top=240, alpha_bot=225)
-
-        blue_tint = QColor(80, 150, 255)
-        bg_sel = blend_color(bg, blue_tint, 0.30)
-        grad_sel = chip_gradient(bg_sel, lighter=115, darker=108, alpha_top=235, alpha_bot=215)
-        grad_sel_h = chip_gradient(bg_sel, lighter=135, darker=105, alpha_top=245, alpha_bot=230)
-
-        green_tint = QColor(80, 220, 100)
-        bg_act = blend_color(bg, green_tint, 0.30)
-        grad_act = chip_gradient(bg_act, lighter=115, darker=108, alpha_top=235, alpha_bot=215)
-        grad_act_h = chip_gradient(bg_act, lighter=135, darker=105, alpha_top=245, alpha_bot=230)
-
-        border_idle = tag_library_idle_border_css(bg)
-        border_hover = f"2px solid {bg.lighter(165).name()}"
-        blue_border = "#5aabff" if dark_theme else "#2b6cb0"
-        green_border = "#72f572" if dark_theme else "#2fa84f"
-
-        font_css = f"font-size: {TAG_LIBRARY_FONT_SUBTAG_PX}px; font-weight: 600;"
-        is_wrapping = isinstance(button, WrappingDraggableTagButton)
-        padding = "0px" if is_wrapping else f"{TAG_LIBRARY_TAG_STYLE_V_PADDING_PX}px 4px"
-
-        def _block(selector: str, grad: str, border: str) -> str:
-            return (
-                f"{selector} {{ padding: {padding}; color: {text}; {font_css} "
-                f"background: {grad}; border: {border}; border-radius: 5px; }}\n"
-            )
-
-        css = (
-            _block("QPushButton", grad_rest, border_idle)
-            + _block("QPushButton:hover", grad_hover, border_hover)
-            + _block('QPushButton[tagState="selected"]', grad_sel, f"2px solid {blue_border}")
-            + _block('QPushButton[tagState="selected"]:hover', grad_sel_h, f"2px solid {blue_border}")
-            + _block('QPushButton[tagState="active"]', grad_act, f"2px solid {green_border}")
-            + _block('QPushButton[tagState="active"]:hover', grad_act_h, f"2px solid {green_border}")
-        )
-        button.setStyleSheet(css)
-        button.setProperty("_styleKey", str(style_key))
-        button.setCursor(Qt.PointingHandCursor)
-
-        shadow = button.graphicsEffect()
-        if not isinstance(shadow, QGraphicsDropShadowEffect):
-            shadow = QGraphicsDropShadowEffect(button)
-            button.setGraphicsEffect(shadow)
-            shadow.setBlurRadius(TAG_LIBRARY_TAG_SHADOW_BLUR_PX)
-            shadow.setOffset(0, TAG_LIBRARY_TAG_SHADOW_OFFSET_PX)
-            shadow.setColor(QColor(0, 0, 0, TAG_LIBRARY_TAG_SHADOW_ALPHA))
-
+    is_category = depth == 0 and bool(button.property("tagGridCategory"))
+    style_key = (branch_key, depth, is_category)
     new_state = "selected" if selected_for_drag else ("active" if active else "")
-    if button.property("tagState") != new_state:
-        button.setProperty("tagState", new_state)
-        button.style().unpolish(button)
-        button.style().polish(button)
+    cache_key = (str(style_key), new_state)
+
+    if button.property("_styleCacheKey") == str(cache_key):
+        return
+
+    font_px = TAG_LIBRARY_FONT_CATEGORY_PX if is_category else TAG_LIBRARY_FONT_SUBTAG_PX
+    radius = (
+        TAG_LIBRARY_CATEGORY_CHIP_RADIUS_PX
+        if is_category
+        else TAG_LIBRARY_TAG_CHIP_RADIUS_PX
+    )
+    is_wrapping = isinstance(button, WrappingDraggableTagButton)
+    padding = "0px" if is_wrapping else f"{TAG_LIBRARY_TAG_STYLE_V_PADDING_PX}px 8px"
+    font_css = f"font-size: {font_px}px; font-weight: 600; letter-spacing: 0.2px;"
+
+    base = chip_palette(branch_key, depth, is_category=is_category)
+    hover = ChipPalette(
+        background=base.background_hover,
+        background_hover=base.background_hover,
+        border=base.border_hover,
+        border_hover=base.border_hover,
+        text=base.text,
+    )
+    selected = chip_state_palette(branch_key, depth, selected=True, active=False)
+    active_palette = chip_state_palette(branch_key, depth, selected=False, active=True)
+
+    def _block(selector: str, palette: ChipPalette) -> str:
+        return (
+            f"{selector} {{ padding: {padding}; color: {palette.text}; {font_css} "
+            f"background: {palette.background}; border: {palette.border}; "
+            f"border-radius: {radius}px; }}\n"
+        )
+
+    css = _block("QPushButton", base) + _block("QPushButton:hover", hover)
+    if selected is not None:
+        sel_hover = ChipPalette(
+            background=selected.background_hover,
+            background_hover=selected.background_hover,
+            border=selected.border_hover,
+            border_hover=selected.border_hover,
+            text=selected.text,
+        )
+        css += _block('QPushButton[tagState="selected"]', selected)
+        css += _block('QPushButton[tagState="selected"]:hover', sel_hover)
+    if active_palette is not None:
+        act_hover = ChipPalette(
+            background=active_palette.background_hover,
+            background_hover=active_palette.background_hover,
+            border=active_palette.border_hover,
+            border_hover=active_palette.border_hover,
+            text=active_palette.text,
+        )
+        css += _block('QPushButton[tagState="active"]', active_palette)
+        css += _block('QPushButton[tagState="active"]:hover', act_hover)
+
+    button.setStyleSheet(css)
+    button.setProperty("_styleKey", str(style_key))
+    button.setProperty("_styleCacheKey", str(cache_key))
+    button.setProperty("tagState", new_state)
+    button.setCursor(Qt.PointingHandCursor)
+
+    shadow = button.graphicsEffect()
+    if not isinstance(shadow, QGraphicsDropShadowEffect):
+        shadow = QGraphicsDropShadowEffect(button)
+        button.setGraphicsEffect(shadow)
+    shadow.setBlurRadius(TAG_LIBRARY_TAG_SHADOW_BLUR_PX)
+    shadow.setOffset(0, TAG_LIBRARY_TAG_SHADOW_OFFSET_PX)
+    shadow.setColor(QColor(0, 0, 0, TAG_LIBRARY_TAG_SHADOW_ALPHA))
+    button.style().unpolish(button)
+    button.style().polish(button)
+
+    label_palette = base
+    if new_state == "selected" and selected is not None:
+        label_palette = selected
+    elif new_state == "active" and active_palette is not None:
+        label_palette = active_palette
+
+    if isinstance(button, WrappingDraggableTagButton):
+        button.apply_label_palette(label_palette.text, font_px)
 
 
 # ---------------------------------------------------------------------------
@@ -304,23 +260,34 @@ class WrappingDraggableTagButton(DraggableTagButton):
 
     ICON_SIDE_PX = TAG_LIBRARY_TAG_MIN_HEIGHT_PX - TAG_LIBRARY_TAG_BORDER_WIDTH_PX * 2 - 4
 
-    def __init__(self, text: str, cell_width: int, parent: Optional[QWidget] = None) -> None:
+    def __init__(
+        self,
+        text: str,
+        cell_width: int,
+        parent: Optional[QWidget] = None,
+        *,
+        is_category: bool = False,
+    ) -> None:
         """
         Args:
             text: Chip label.
             cell_width: Fixed pixel width to use for the chip.
             parent: Optional parent widget.
+            is_category: True for full-width main category header chips.
         """
         super().__init__("", parent)
+        if is_category:
+            self.setProperty("tagGridCategory", True)
         self._cell_width = 0  # sentinel: 0 forces first set_cell_width to apply
         self._geometry_valid = False
-        self._source_icon: Optional[QIcon] = None
+        self._raw_icon: Optional[QIcon] = None
         self._icon_label: Optional[QLabel] = None
+        self._label_color = "#e8e4f2"
 
         self._text_label = QLabel(text)
         self._text_label.setWordWrap(True)
-        self._text_label.setAlignment(Qt.AlignHCenter | Qt.AlignVCenter)
-        self._text_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self._text_label.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._text_label.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._text_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
 
         label_font = self.font()
@@ -330,18 +297,20 @@ class WrappingDraggableTagButton(DraggableTagButton):
 
         self._content_row = QWidget(self)
         self._content_row.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self._content_row.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self._content_row.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
         self._row_layout = QHBoxLayout(self._content_row)
         self._row_layout.setContentsMargins(0, 0, 0, 0)
-        self._row_layout.setSpacing(4)
-        self._row_layout.setAlignment(TAG_LIBRARY_TAG_CELL_ALIGN)
-        self._row_layout.addWidget(self._text_label, 0, TAG_LIBRARY_TAG_CELL_ALIGN)
+        self._row_layout.setSpacing(8)
+        self._row_layout.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+        self._ensure_icon_slot()
+        self._row_layout.addWidget(self._text_label, 1, Qt.AlignLeft | Qt.AlignVCenter)
 
+        h_pad = TAG_LIBRARY_CHIP_CONTENT_HPAD_PX
         self._inner_layout = QVBoxLayout(self)
-        self._inner_layout.setContentsMargins(2, 0, 2, 0)
+        self._inner_layout.setContentsMargins(h_pad, 0, h_pad - 2, 0)
         self._inner_layout.setSpacing(0)
-        self._inner_layout.setAlignment(Qt.AlignVCenter)
-        self._inner_layout.addWidget(self._content_row, 0, Qt.AlignCenter)
+        self._inner_layout.setAlignment(Qt.AlignVCenter | Qt.AlignLeft)
+        self._inner_layout.addWidget(self._content_row, 0, Qt.AlignLeft | Qt.AlignVCenter)
 
         self.setCursor(Qt.PointingHandCursor)
         self.set_cell_width(cell_width)
@@ -361,6 +330,58 @@ class WrappingDraggableTagButton(DraggableTagButton):
     # Public API
     # ------------------------------------------------------------------
 
+    def apply_label_palette(self, text_color: str, font_px: int) -> None:
+        """
+        Apply accent colour and size to the internal QLabel (not the QPushButton).
+
+        Args:
+            text_color: CSS colour for the label text.
+            font_px: Font size in pixels.
+        """
+        self._label_color = text_color
+        self._text_label.setStyleSheet(
+            f"color: {text_color}; background: transparent; border: none; "
+            f"font-size: {font_px}px; font-weight: 600; letter-spacing: 0.2px;"
+        )
+        font = self._text_label.font()
+        if font.pixelSize() != font_px:
+            font.setPixelSize(font_px)
+            font.setWeight(QFont.Weight.DemiBold)
+            self._text_label.setFont(font)
+        if self.property("tagGridCategory"):
+            self._text_label.setWordWrap(False)
+        self._sync_chip_geometry()
+
+    def _is_category_chip(self) -> bool:
+        """Return True for full-width main category header chips."""
+        return bool(self.property("tagGridCategory"))
+
+    def _icon_slot_px(self) -> int:
+        """Return the fixed icon column width for this chip type."""
+        if self._is_category_chip():
+            return TAG_LIBRARY_CATEGORY_ICON_SLOT_PX
+        return TAG_LIBRARY_TAG_ICON_SLOT_PX
+
+    def _effective_width(self) -> int:
+        """Return the layout width used for internal geometry."""
+        return self._cell_width
+
+    def _ensure_icon_slot(self) -> QLabel:
+        """
+        Ensure a fixed-width icon column exists at the left of the chip.
+
+        Returns:
+            QLabel: Icon slot widget (may be empty).
+        """
+        slot_px = self._icon_slot_px()
+        if self._icon_label is None:
+            self._icon_label = QLabel(self._content_row)
+            self._icon_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+            self._icon_label.setAlignment(Qt.AlignCenter)
+            self._row_layout.insertWidget(0, self._icon_label, 0, Qt.AlignVCenter)
+        self._icon_label.setFixedSize(slot_px, slot_px)
+        return self._icon_label
+
     def set_cell_width(self, width: int, *, min_w: int = TAG_LIBRARY_TAG_CELL_MIN_WIDTH_PX) -> None:
         """
         Set fixed cell width and recompute chip geometry.
@@ -370,11 +391,15 @@ class WrappingDraggableTagButton(DraggableTagButton):
             min_w: Minimum enforced width.
         """
         new_w = max(min_w, width)
-        if new_w == self._cell_width and self._geometry_valid:
+        if new_w == self._cell_width and self._geometry_valid and not self._is_category_chip():
             return
         self._cell_width = new_w
-        self.setFixedWidth(self._cell_width)
-        self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        if self._is_category_chip():
+            self.setFixedWidth(self._cell_width)
+            self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        else:
+            self.setFixedWidth(self._cell_width)
+            self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setProperty("tagLibraryCell", True)
         self._geometry_valid = True
         self._sync_chip_geometry()
@@ -389,16 +414,11 @@ class WrappingDraggableTagButton(DraggableTagButton):
         return self._text_label.text()
 
     def setIcon(self, icon: QIcon) -> None:
-        self._source_icon = None if icon.isNull() else icon
+        """Store the untinted source icon; tint follows the label accent colour."""
+        self._raw_icon = None if icon.isNull() else QIcon(icon)
+        self._ensure_icon_slot()
         if icon.isNull():
-            if self._icon_label is not None:
-                self._icon_label.setHidden(True)
-        else:
-            if self._icon_label is None:
-                self._icon_label = QLabel(self._content_row)
-                self._icon_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-                self._row_layout.insertWidget(0, self._icon_label, 0, TAG_LIBRARY_TAG_CELL_ALIGN)
-            self._icon_label.setHidden(False)
+            self._icon_label.clear()
         self._sync_chip_geometry()
 
     def setIconSize(self, _size: QSize) -> None:
@@ -408,7 +428,7 @@ class WrappingDraggableTagButton(DraggableTagButton):
     def sizeHint(self) -> QSize:
         """Stable size hint — never recomputes to avoid layout feedback loops."""
         h = getattr(self, "_chip_height", TAG_LIBRARY_TAG_MIN_HEIGHT_PX)
-        return QSize(self._cell_width, h)
+        return QSize(self._effective_width(), h)
 
     def minimumSizeHint(self) -> QSize:
         return self.sizeHint()
@@ -440,7 +460,7 @@ class WrappingDraggableTagButton(DraggableTagButton):
         fm = QFontMetrics(self._text_label.font())
         br = fm.boundingRect(
             QRect(0, 0, text_w, 10000),
-            Qt.TextWordWrap | Qt.AlignHCenter,
+            Qt.TextWordWrap | Qt.AlignLeft | Qt.AlignVCenter,
             self._text_label.text(),
         )
         return max(fm.height(), br.height()) + 2
@@ -463,38 +483,58 @@ class WrappingDraggableTagButton(DraggableTagButton):
 
     def _sync_chip_geometry_impl(self) -> None:
         border_v = TAG_LIBRARY_TAG_BORDER_WIDTH_PX * 2
-        chip_h_est = TAG_LIBRARY_TAG_MIN_HEIGHT_PX
-        icon_px = chip_h_est - border_v - 4
-        has_icon = (
-            self._source_icon is not None
-            and self._icon_label is not None
-            and not self._icon_label.isHidden()
+        is_category = self._is_category_chip()
+        chip_w = self._effective_width()
+        chip_h_est = (
+            TAG_LIBRARY_CATEGORY_MIN_HEIGHT_PX
+            if is_category
+            else TAG_LIBRARY_TAG_MIN_HEIGHT_PX
         )
-        icon_block_w = (icon_px + self._row_layout.spacing()) if has_icon else 0
+        slot_px = self._icon_slot_px()
 
         margins = self._inner_layout.contentsMargins()
         h_pad = margins.left() + margins.right()
-        raw_inner_w = max(24, self._cell_width - h_pad - border_v - 2)
-        max_text_w = max(20, raw_inner_w - icon_block_w)
-        text_w = self._tight_text_width(max_text_w)
+        inner_w = max(24, chip_w - h_pad - border_v - 2)
+        text_w = max(20, inner_w - slot_px - self._row_layout.spacing())
 
-        label_h = self._label_height_for_text(text_w)
+        if is_category:
+            self._text_label.setWordWrap(False)
+            fm = QFontMetrics(self._text_label.font())
+            label_h = fm.height() + 2
+        else:
+            label_h = self._label_height_for_text(text_w)
+
         pad_v = TAG_LIBRARY_TAG_STYLE_V_PADDING_PX * 2
+        min_h = (
+            TAG_LIBRARY_CATEGORY_MIN_HEIGHT_PX
+            if is_category
+            else TAG_LIBRARY_TAG_MIN_HEIGHT_PX
+        )
         chip_h = min(
             TAG_LIBRARY_TAG_MAX_HEIGHT_PX,
-            max(TAG_LIBRARY_TAG_MIN_HEIGHT_PX, label_h + pad_v + border_v + 4),
+            max(min_h, label_h + pad_v + border_v + 4),
         )
-        icon_px = chip_h - border_v - 4
-        row_h = max(label_h, icon_px if has_icon else 0)
-        row_w = text_w + (icon_px + self._row_layout.spacing() if has_icon else 0)
+        icon_px = min(slot_px - 4, chip_h - border_v - 6)
+        row_h = max(label_h, slot_px)
 
-        self._text_label.setFixedSize(text_w, label_h)
-        self._content_row.setFixedSize(row_w, row_h)
+        self._text_label.setFixedHeight(label_h)
+        if is_category:
+            self._text_label.setMinimumWidth(text_w)
+            self._text_label.setMaximumWidth(text_w)
+        else:
+            self._text_label.setFixedWidth(text_w)
 
-        if has_icon:
-            pm = self._source_icon.pixmap(icon_px, icon_px)
+        self._content_row.setFixedHeight(row_h)
+        self._content_row.setMinimumWidth(inner_w)
+        self._content_row.setMaximumWidth(inner_w)
+
+        has_icon = self._raw_icon is not None and not self._raw_icon.isNull()
+        if has_icon and icon_px > 0:
+            tinted = tint_icon(self._raw_icon, QColor(self._label_color), icon_px)
+            pm = tinted.pixmap(icon_px, icon_px)
             self._icon_label.setPixmap(pm)
-            self._icon_label.setFixedSize(icon_px, icon_px)
+        else:
+            self._icon_label.clear()
 
         self.setFixedHeight(chip_h)
         self._chip_height = chip_h

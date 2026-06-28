@@ -94,10 +94,13 @@ class CategorySection(QWidget):
         # Header chip
         category_chip.setProperty("tagGridRole", "category")
         category_chip.setProperty("tagGridKey", category)
+        category_chip.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         category_chip.clicked.connect(lambda: self.header_clicked.emit(category))
         category_chip.drag_session_started.connect(self.chip_drag_started)
         category_chip.drag_session_ended.connect(self.chip_drag_ended)
-        layout.addWidget(category_chip)
+        layout.addWidget(category_chip, 0, Qt.AlignHCenter)
+
+        self.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
 
         # Subtag grid (built once, initially hidden)
         self._grid_host = TagGridHost(
@@ -184,6 +187,15 @@ class CategorySection(QWidget):
         )
         self._category_chip.setText(label)
         self._category_chip.set_cell_width(cell_w, min_w=cell_w)
+
+    def set_category_chip_width(self, width: int) -> None:
+        """
+        Set the fixed pixel width of the category header chip.
+
+        Args:
+            width: Target chip width (centered in the section).
+        """
+        self._category_chip.set_cell_width(width, min_w=width)
 
     def apply_active_subtags(self, active_subtags: Set[str]) -> None:
         """
@@ -277,11 +289,12 @@ class ShelfSection(QWidget):
         self._header.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
         self._header.setStyleSheet(
             f"QLabel#TagGridButton {{"
-            f" font-weight: bold;"
+            f" font-weight: 600;"
             f" font-size: {TAG_LIBRARY_FONT_SHELF_TITLE_PX}px;"
-            f" padding: 4px 6px;"
+            f" letter-spacing: 0.4px;"
+            f" padding: 6px 4px 4px 4px;"
             f" background-color: transparent;"
-            f" color: #ffffff;"
+            f" color: #c8c2d6;"
             f"}}"
         )
         self._header.setProperty("tagGridRole", "category")
@@ -293,7 +306,14 @@ class ShelfSection(QWidget):
         drop_frame.setObjectName("TagDropZone")
         drop_frame.setFrameShape(QFrame.NoFrame)
         drop_frame.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Minimum)
-        drop_frame.setMinimumHeight(36)
+        drop_frame.setMinimumHeight(40)
+        drop_frame.setStyleSheet(
+            "QFrame#TagDropZone {"
+            " border: 1px dashed rgba(255, 255, 255, 0.12);"
+            " border-radius: 10px;"
+            " background: rgba(0, 0, 0, 0.12);"
+            "}"
+        )
         drop_frame.setProperty("tagGridRole", "category")
         drop_frame.setProperty("tagGridKey", shelf_name)
         drop_frame_layout = QVBoxLayout(drop_frame)

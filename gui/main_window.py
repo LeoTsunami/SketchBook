@@ -106,6 +106,7 @@ from gui.grid_display_flyout import GridDisplayFlyout
 from gui.trace_icon_button import ORANGE_TRACE, TraceIconButton
 from gui.sort_flyout import SortFlyout
 from gui.icon_utils import find_tag_icon, invert_icon, load_white_icon
+from gui.tag_library.theme import tag_library_floating_button_stylesheet
 from gui.tag_library import (
     TagLibraryPanel,
     TagFilterState,
@@ -1253,24 +1254,24 @@ class MainWindow(QMainWindow):
         tags_header_layout.setContentsMargins(0, 0, 0, 0)
         self._tags_library_title_label = QLabel("Tags Library")
         self._tags_library_title_label.setStyleSheet(
-            "font-size: 12px; font-weight: bold; color: #ffffff;"
+            "font-size: 14px; font-weight: 600; color: #ece8f4; letter-spacing: 0.3px;"
         )
         tags_header_layout.addWidget(self._tags_library_title_label)
         tags_header_layout.addStretch()
         add_tag_btn = QPushButton("+ Create tag")
         add_tag_btn.setStyleSheet("""
             QPushButton {
-                background-color: #2196F3;
-                color: white;
+                background-color: rgba(75, 110, 175, 0.85);
+                color: #f4f2f8;
                 font-size: 12px;
-                font-weight: bold;
-                padding: 6px 12px;
-                border: none;
-                border-radius: 4px;
+                font-weight: 600;
+                padding: 7px 12px;
+                border: 1px solid rgba(255, 255, 255, 0.12);
+                border-radius: 8px;
                 min-width: 90px;
             }
-            QPushButton:hover { background-color: #1976D2; }
-            QPushButton:pressed { background-color: #0D47A1; }
+            QPushButton:hover { background-color: rgba(93, 123, 192, 0.95); }
+            QPushButton:pressed { background-color: rgba(62, 90, 148, 0.95); }
         """)
         add_tag_btn.setToolTip("Add a new tag to the library")
         add_tag_btn.clicked.connect(self._on_add_user_tag_clicked)
@@ -1279,17 +1280,17 @@ class MainWindow(QMainWindow):
         add_shelf_btn = QPushButton("+ Create shelf")
         add_shelf_btn.setStyleSheet("""
             QPushButton {
-                background-color: #455a64;
-                color: white;
+                background-color: rgba(255, 255, 255, 0.06);
+                color: #d8d4e4;
                 font-size: 12px;
-                font-weight: bold;
-                padding: 6px 12px;
-                border: none;
-                border-radius: 4px;
+                font-weight: 600;
+                padding: 7px 12px;
+                border: 1px solid rgba(255, 255, 255, 0.1);
+                border-radius: 8px;
                 min-width: 90px;
             }
-            QPushButton:hover { background-color: #37474f; }
-            QPushButton:pressed { background-color: #263238; }
+            QPushButton:hover { background-color: rgba(255, 255, 255, 0.1); }
+            QPushButton:pressed { background-color: rgba(255, 255, 255, 0.14); }
         """)
         add_shelf_btn.setToolTip(
             "Add a titled section (shelf) like Camera-Angle or Miscellaneous"
@@ -1366,28 +1367,9 @@ class MainWindow(QMainWindow):
         self.tag_filters_floating_btn = QPushButton("Tags\nfilters\n>", vp)
         self.tag_filters_floating_btn.setObjectName("TagFiltersFloatingButton")
         self.tag_filters_floating_btn.setToolTip("Hover to expand tags panel")
-        self.tag_filters_floating_btn.setStyleSheet("""
-            QPushButton#TagFiltersFloatingButton {
-                background-color: rgba(114, 132, 152, 0.72);
-                color: #eef5fc;
-                font-size: 12px;
-                font-weight: bold;
-                padding: 10px 4px;
-                border: 1px solid rgba(196, 211, 228, 0.55);
-                border-top-right-radius: 6px;
-                border-bottom-right-radius: 6px;
-                border-top-left-radius: 0px;
-                border-bottom-left-radius: 0px;
-                text-align: center;
-            }
-            QPushButton#TagFiltersFloatingButton:hover {
-                background-color: rgba(126, 146, 168, 0.82);
-                border-color: rgba(210, 223, 236, 0.76);
-            }
-            QPushButton#TagFiltersFloatingButton:pressed {
-                background-color: rgba(100, 118, 140, 0.82);
-            }
-        """)
+        self.tag_filters_floating_btn.setStyleSheet(
+            tag_library_floating_button_stylesheet()
+        )
         tf_shadow = QGraphicsDropShadowEffect(self.tag_filters_floating_btn)
         tf_shadow.setBlurRadius(12)
         tf_shadow.setOffset(0, 2)

@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Optional, Dict
 
 from qtpy.QtCore import QSize, Qt
-from qtpy.QtGui import QIcon, QPixmap, QImage
+from qtpy.QtGui import QIcon, QPixmap, QImage, QColor, QPainter
 from qtpy.QtWidgets import QComboBox, QStyle, QStyleOptionComboBox, QStylePainter
 
 _ICONS_DIR = Path(__file__).parent / "ressources" / "icones"
@@ -63,6 +63,35 @@ def find_tag_icon(tag: str, user_config: Optional[Dict] = None, icon_preview_ove
         return QIcon(str(file_map[fallback]))
 
     return QIcon()
+
+
+def tint_icon(icon: QIcon, color: QColor, size: int = 24) -> QIcon:
+    """
+    Recolor a monochrome icon to match a chip accent hue.
+
+    Args:
+        icon: Original icon (alpha mask).
+        color: Target tint colour.
+        size: Icon size in pixels.
+
+    Returns:
+        QIcon: Tinted icon, or the original when tinting fails.
+    """
+    if icon.isNull():
+        return icon
+
+    pixmap = icon.pixmap(QSize(size, size))
+    if pixmap.isNull():
+        return icon
+
+    tinted = QPixmap(pixmap.size())
+    tinted.fill(Qt.transparent)
+    painter = QPainter(tinted)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.setCompositionMode(QPainter.CompositionMode_SourceIn)
+    painter.fillRect(tinted.rect(), color)
+    painter.end()
+    return QIcon(tinted)
 
 
 def invert_icon(icon: QIcon, size: int = 24) -> QIcon:

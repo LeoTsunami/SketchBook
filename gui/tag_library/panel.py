@@ -39,7 +39,7 @@ from qtpy.QtWidgets import (
 
 from core import user_tags_config
 from core.settings import settings
-from gui.icon_utils import find_tag_icon, invert_icon
+from gui.icon_utils import find_tag_icon
 from gui.tag_shelves import (
     MISCELLANEOUS_SHELF,
     is_tag_shelf,
@@ -52,8 +52,7 @@ from gui.tag_library.chip import (
     apply_chip_style,
 )
 from gui.tag_library.constants import (
-    TAG_LIBRARY_CATEGORY_ICON_PX,
-    TAG_LIBRARY_CATEGORY_MIN_HEIGHT_PX,
+    TAG_LIBRARY_CATEGORY_SIDE_INSET_PX,
     TAG_LIBRARY_CATEGORY_WIDTH_TRIM_PX,
     TAG_LIBRARY_DROP_ZONE_BORDER_PX,
     TAG_LIBRARY_FONT_CATEGORY_PX,
@@ -62,6 +61,7 @@ from gui.tag_library.constants import (
     TAG_LIBRARY_OVERLAY_HORIZONTAL_MARGIN_PX,
     TAG_LIBRARY_SHELF_GRID_PADDING_PX,
     TAG_LIBRARY_TAG_CELL_MIN_WIDTH_PX,
+    TAG_LIBRARY_TAG_CELL_WIDTH_TRIM_PX,
     TAG_LIBRARY_TAG_GRID_SPACING_PX,
     TAG_LIBRARY_TAG_ICON_PX,
     TAG_LIBRARY_TAG_MIN_HEIGHT_PX,
@@ -70,6 +70,9 @@ from gui.tag_library.constants import (
 from gui.tag_library.grid_host import TagGridHost, _with_expand_icon
 from gui.tag_library.section import CategorySection, ShelfSection
 from gui.tag_library.state import TagFilterState, TagLibraryTaxonomy
+from gui.tag_library.theme import (
+    tag_library_scroll_stylesheet,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -250,18 +253,23 @@ class TagLibraryPanel(QWidget):
         outer.setSpacing(0)
 
         self._scroll_area = QScrollArea()
+        self._scroll_area.setObjectName("TagLibraryScrollArea")
         self._scroll_area.setWidgetResizable(True)
         self._scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self._scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._scroll_area.setFrameShape(QFrame.NoFrame)
+        self._scroll_area.setStyleSheet(tag_library_scroll_stylesheet())
 
         self._content = QWidget()
+        self._content.setObjectName("TagLibraryScrollContent")
+        self._content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         self._content_layout = QVBoxLayout(self._content)
         self._content_layout.setContentsMargins(0, 6, 0, 0)
         self._content_layout.setSpacing(8)
         self._content_layout.addStretch(1)
 
         self._scroll_area.setWidget(self._content)
+        self._scroll_area.viewport().setObjectName("TagLibraryScrollViewport")
         outer.addWidget(self._scroll_area)
 
         # Autoscroll during drag
@@ -425,7 +433,7 @@ class TagLibraryPanel(QWidget):
                 tag, user_config=self._user_tags_config, icon_preview_override={}
             )
             if not icon.isNull():
-                chip.setIcon(invert_icon(icon, TAG_LIBRARY_TAG_ICON_PX))
+                chip.setIcon(icon)
                 chip.setIconSize(QIcon().actualSize(chip.sizeHint()))
             chips[tag] = chip
             self._all_chips[tag] = chip
@@ -448,19 +456,17 @@ class TagLibraryPanel(QWidget):
             return section
         else:
             # Build category header chip (full-width)
-            header_chip = WrappingDraggableTagButton(category, cat_w)
+            header_chip = WrappingDraggableTagButton(category, cat_w, is_category=True)
             header_chip.setObjectName("TagGridButton")
             header_chip.setProperty("baseLabel", category)
             header_chip.setProperty("tagGridRole", "category")
             header_chip.setProperty("tagGridKey", category)
-            header_chip.setProperty("tagGridCategory", True)
             header_chip.setProperty("userTag", False)
             cat_icon = find_tag_icon(
                 category, user_config=self._user_tags_config, icon_preview_override={}
             )
             if not cat_icon.isNull():
-                src_px = max(TAG_LIBRARY_CATEGORY_ICON_PX, TAG_LIBRARY_TAG_MIN_HEIGHT_PX)
-                header_chip.setIcon(invert_icon(cat_icon, src_px))
+                header_chip.setIcon(cat_icon)
             self._header_chips[category] = header_chip
 
             root_tags = [t for t in ordered if taxonomy.get_parent(t) is None]
@@ -704,40 +710,51 @@ class TagLibraryPanel(QWidget):
         """Compute subtag chip width from current scroll viewport."""
         from gui.tag_panel_overlay import TagPanelOverlay
         vp = self._scroll_area.viewport()
-        vp_w = vp.width() if vp and vp.width() > 0 else TagPanelOverlay.PANEL_WIDTH
+        vp_w = vp.width() if vp and vp.width() > 0 else TagPanelOverlay.PANEL_WIDTH - 20
         row_w = (
             vp_w
-            - TAG_LIBRARY_OVERLAY_HORIZONTAL_MARGIN_PX
             - TAG_LIBRARY_VIEWPORT_RIGHT_GUTTER_PX
             - 2 * TAG_LIBRARY_SHELF_GRID_PADDING_PX
             - TAG_LIBRARY_DROP_ZONE_BORDER_PX
         )
         gaps = TAG_LIBRARY_TAG_GRID_SPACING_PX * 2  # 3 cols → 2 gaps
         per_col = (row_w - gaps) // 3
-        return max(TAG_LIBRARY_TAG_CELL_MIN_WIDTH_PX, per_col - 6)
+        return max(TAG_LIBRARY_TAG_CELL_MIN_WIDTH_PX, per_col - TAG_LIBRARY_TAG_CELL_WIDTH_TRIM_PX)
 
     def _compute_category_width(self) -> int:
-        """Compute full-width category chip width."""
+        """Compute category chip width (slightly inset from panel edges)."""
         from gui.tag_panel_overlay import TagPanelOverlay
         vp = self._scroll_area.viewport()
-        vp_w = vp.width() if vp and vp.width() > 0 else TagPanelOverlay.PANEL_WIDTH
+        vp_w = vp.width() if vp and vp.width() > 0 else TagPanelOverlay.PANEL_WIDTH - 20
+        inset = TAG_LIBRARY_CATEGORY_SIDE_INSET_PX * 2
         return max(
             TAG_LIBRARY_TAG_CELL_MIN_WIDTH_PX,
             vp_w
-            - TAG_LIBRARY_OVERLAY_HORIZONTAL_MARGIN_PX
             - TAG_LIBRARY_VIEWPORT_RIGHT_GUTTER_PX
-            - TAG_LIBRARY_CATEGORY_WIDTH_TRIM_PX,
+            - TAG_LIBRARY_CATEGORY_WIDTH_TRIM_PX
+            - inset,
+        )
+
+    def _compute_content_width(self) -> int:
+        """Compute full scroll-content width (subtag grid uses full panel)."""
+        from gui.tag_panel_overlay import TagPanelOverlay
+        vp = self._scroll_area.viewport()
+        vp_w = vp.width() if vp and vp.width() > 0 else TagPanelOverlay.PANEL_WIDTH - 20
+        return max(
+            TAG_LIBRARY_TAG_CELL_MIN_WIDTH_PX,
+            vp_w - TAG_LIBRARY_VIEWPORT_RIGHT_GUTTER_PX,
         )
 
     def _apply_widths(self) -> None:
         """Propagate current viewport-based widths to all chips."""
         cell_w = self._compute_cell_width()
         cat_w = self._compute_category_width()
+        self._content.setMinimumWidth(self._compute_content_width())
         for category, chip in self._header_chips.items():
             chip.set_cell_width(cat_w, min_w=cat_w)
             sec = self._category_sections.get(category)
             if sec:
-                sec.set_header_width_value(cat_w) if hasattr(sec, "set_header_width_value") else None
+                sec.set_category_chip_width(cat_w)
                 sec.apply_cell_width(cell_w)
         for section in self._shelf_sections.values():
             section.set_header_width(cat_w)
@@ -921,7 +938,7 @@ class TagLibraryPanel(QWidget):
             tag, user_config=self._user_tags_config, icon_preview_override={}
         )
         if not icon.isNull():
-            chip.setIcon(invert_icon(icon, TAG_LIBRARY_TAG_ICON_PX))
+            chip.setIcon(icon)
         else:
             chip.setIcon(QIcon())
 

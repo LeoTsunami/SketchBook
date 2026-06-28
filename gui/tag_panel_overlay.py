@@ -25,6 +25,7 @@ from qtpy.QtCore import (
     Signal,
 )
 from qtpy.QtGui import QColor, QCursor
+from gui.tag_library.theme import tag_library_overlay_stylesheet
 
 
 class TagPanelOverlay(QFrame):
@@ -61,7 +62,7 @@ class TagPanelOverlay(QFrame):
         self.setFixedWidth(self._panel_width)
         self.setMouseTracking(True)
         self.setAttribute(Qt.WA_StyledBackground, True)
-        self.setStyleSheet(self._build_stylesheet())
+        self.setStyleSheet(tag_library_overlay_stylesheet())
 
         shadow = QGraphicsDropShadowEffect(self)
         shadow.setBlurRadius(28)
@@ -278,15 +279,3 @@ class TagPanelOverlay(QFrame):
         self.hide()
         self._place_offscreen()
         self.panel_did_hide.emit()
-
-    @staticmethod
-    def _build_stylesheet() -> str:
-        """Return the QSS for the semi-transparent dark glass panel."""
-        return """
-            QFrame#TagPanelOverlay {
-                background-color: rgba(30, 33, 38, 230);
-                border-top-right-radius: 12px;
-                border-bottom-right-radius: 12px;
-                border: 1px solid rgba(255, 255, 255, 0.08);
-            }
-        """
