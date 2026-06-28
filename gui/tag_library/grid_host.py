@@ -26,6 +26,7 @@ from gui.tag_library.constants import (
     TAG_LIBRARY_TAG_GRID_SPACING_PX,
     TAG_LIBRARY_TAG_CELL_ALIGN,
     TAG_LIBRARY_SHELF_GRID_PADDING_PX,
+    TAG_LIBRARY_CHIP_SHADOW_BLEED_PX,
 )
 from gui.tag_library.chip import (
     WrappingDraggableTagButton,
@@ -86,10 +87,13 @@ class TagGridHost(QWidget):
         self.setMinimumHeight(0)
 
         padding = TAG_LIBRARY_SHELF_GRID_PADDING_PX if shelf_padding else 0
+        bleed = TAG_LIBRARY_CHIP_SHADOW_BLEED_PX
         self._grid = QGridLayout(self)
-        self._grid.setContentsMargins(padding, padding, padding, padding)
+        self._grid.setContentsMargins(
+            padding + bleed, padding + bleed, padding + bleed, padding + bleed
+        )
         self._grid.setHorizontalSpacing(TAG_LIBRARY_TAG_GRID_SPACING_PX)
-        self._grid.setVerticalSpacing(6)
+        self._grid.setVerticalSpacing(TAG_LIBRARY_TAG_GRID_SPACING_PX)
         for col in range(COLS):
             self._grid.setColumnStretch(col, 1)
 

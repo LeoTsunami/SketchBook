@@ -20,6 +20,8 @@ from gui.tag_library.chip import (
     DraggableTagButton,
     WrappingDraggableTagButton,
     apply_chip_style,
+    drag_pixmap_with_shadow,
+    grab_chip_for_drag,
     get_hierarchy_background_color,
     blend_color,
 )
@@ -34,6 +36,8 @@ __all__ = [
     "DraggableTagButton",
     "WrappingDraggableTagButton",
     "apply_chip_style",
+    "drag_pixmap_with_shadow",
+    "grab_chip_for_drag",
     "get_hierarchy_background_color",
     "blend_color",
     "chip_palette",

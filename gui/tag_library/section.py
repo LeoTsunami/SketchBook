@@ -89,7 +89,7 @@ class CategorySection(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setSpacing(8)
 
         # Header chip
         category_chip.setProperty("tagGridRole", "category")
@@ -280,7 +280,7 @@ class ShelfSection(QWidget):
 
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(2)
+        layout.setSpacing(8)
 
         # Shelf header label (not a button — passes mouse events to viewport)
         self._header = QLabel(shelf_name)

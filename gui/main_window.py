@@ -113,6 +113,8 @@ from gui.tag_library import (
     DraggableTagButton,
     WrappingDraggableTagButton,
     apply_chip_style,
+    drag_pixmap_with_shadow,
+    grab_chip_for_drag,
     TAG_LIBRARY_MIME,
     TAG_LIBRARY_MULTI_MIME,
     mime_data_looks_like_tag_library_drag,
@@ -405,6 +407,8 @@ class TagGridDropFilter(QObject):
         if event.type() == _drag_enter:
             if event.mimeData().hasFormat(TAG_LIBRARY_MIME):
                 event.acceptProposedAction()
+            else:
+                event.ignore()
             return True
         if event.type() == _drag_move:
             if event.mimeData().hasFormat(TAG_LIBRARY_MIME):
@@ -418,6 +422,8 @@ class TagGridDropFilter(QObject):
                 target = self._main._get_tag_grid_drop_target_at(pos)
                 self._main._set_tag_grid_drop_highlight(target)
                 self._main._on_tag_grid_drag_hover(target)
+            else:
+                event.ignore()
             return True
         if event.type() == _drag_leave:
             self._main._set_tag_grid_drop_highlight(None)
@@ -2669,6 +2675,21 @@ class MainWindow(QMainWindow):
             return {t for t in selection if t in user_tags}
         return {primary_tag}
 
+    def _tags_for_apply_drag(self, primary_tag: str) -> Set[str]:
+        """
+        Resolve tag names dragged onto images (default + user tags).
+
+        Args:
+            primary_tag: Tag under the cursor when the drag started.
+
+        Returns:
+            Set[str]: Tag names encoded in the drag MIME payload.
+        """
+        selection = self._tag_library_selection_union()
+        if primary_tag in selection and len(selection) > 1:
+            return set(selection)
+        return {primary_tag}
+
     def _tags_from_drop_mime(self, mime_data: "QMimeData", primary_tag: str) -> Set[str]:
         """
         Read dragged tag names from drop MIME data.
@@ -2693,6 +2714,40 @@ class MainWindow(QMainWindow):
         if not tags:
             tags = self._tags_being_dragged(primary_tag)
         return {t for t in tags if t in user_tags}
+
+    def _tag_chip_drag_label(self, button: QWidget) -> str:
+        """
+        Resolve the tag name encoded when dragging a library chip.
+
+        Args:
+            button: Source chip widget.
+
+        Returns:
+            str: Canonical tag label for MIME / image assignment.
+        """
+        key = button.property("tagGridKey")
+        if key:
+            return str(key)
+        base = button.property("baseLabel")
+        if base:
+            return str(base)
+        return str(button.text() if hasattr(button, "text") else "")
+
+    def _tag_chip_allows_reparent(self, button: QWidget) -> bool:
+        """
+        Return True when a dragged chip may be reparented in the tag grid.
+
+        Category headers and default taxonomy tags only apply to images.
+
+        Args:
+            button: Source chip widget.
+
+        Returns:
+            bool: True for user-owned subtags.
+        """
+        if bool(button.property("tagGridCategory")):
+            return False
+        return bool(button.property("userTag"))
 
     def _tag_filters_floating_btn_global_rect(self) -> Optional[QRect]:
         """
@@ -2813,23 +2868,26 @@ class MainWindow(QMainWindow):
         elif pos.y() > zone.bottom() - margin:
             vbar.setValue(min(vbar.maximum(), vbar.value() + step))
 
-    def _start_tag_button_drag(self, button: QWidget, tag_text: str) -> None:
+    def _start_tag_button_drag(
+        self, button: QWidget, tag_text: str, *, reparent: bool = True
+    ) -> None:
         """
-        Start a drag from a tag button (Trello-style): remove from layout, pixmap follows cursor,
-        restore to original place if dropped on nothing. When multiple tags selected, pixmap shows all (stacked).
+        Start a drag from a tag button with the chip pixmap under the cursor.
+
+        User tags may be reparented in the library (``reparent=True``).
+        Default tags only apply to images (``reparent=False``).
+
+        Args:
+            button: Source chip widget.
+            tag_text: Primary dragged tag name.
+            reparent: True to allow tag-library reparenting (user tags).
         """
         self._tag_drop_was_on_grid = False
-        container = button.parentWidget()
-        layout = container.layout() if container else None
-        layout_row, layout_col, layout_row_span, layout_col_span = -1, -1, 1, 1
-        if layout and hasattr(layout, "indexOf"):
-            idx = layout.indexOf(button)
-            if idx >= 0 and hasattr(layout, "getItemPosition"):
-                layout_row, layout_col, layout_row_span, layout_col_span = (
-                    layout.getItemPosition(idx)
-                )
-        # Build list of tags we're dragging (for multi pixmap and MIME)
-        tags_to_drop = self._tags_being_dragged(tag_text)
+        tags_to_drop = (
+            self._tags_being_dragged(tag_text)
+            if reparent
+            else self._tags_for_apply_drag(tag_text)
+        )
         if not tags_to_drop:
             return
         # Composite pixmap: all selected tags stacked (before we remove any button)
@@ -2841,7 +2899,7 @@ class MainWindow(QMainWindow):
             for t in tag_list:
                 btn = self._get_tag_button_for(t)
                 if btn and btn.isVisible():
-                    g = btn.grab()
+                    g = grab_chip_for_drag(btn)
                     if not g.isNull():
                         grabs.append(g)
             if grabs:
@@ -2856,7 +2914,7 @@ class MainWindow(QMainWindow):
                 painter.end()
                 hot_spot = QPoint(grabs[0].width() // 2, grabs[0].height() // 2)
         if pixmap is None or pixmap.isNull():
-            pixmap = button.grab()
+            pixmap = grab_chip_for_drag(button)
         if pixmap.isNull():
             pixmap = QPixmap(max(120, button.width()), max(28, button.height()))
             pixmap.fill(Qt.transparent)
@@ -2866,51 +2924,61 @@ class MainWindow(QMainWindow):
             painter.end()
         if hot_spot is None:
             hot_spot = pixmap.rect().center()
-        # Remove all selected tags from their layouts, replace with ghost placeholders.
+        pixmap, hot_spot = drag_pixmap_with_shadow(pixmap, hot_spot)
+
         restore_list: List[Tuple[QWidget, QWidget, Any, int, int, int, int]] = []
         self._drag_ghost_placeholders = []
-        for t in tags_to_drop:
-            btn = self._get_tag_button_for(t)
-            if not btn or not btn.isVisible():
-                continue
-            cont = btn.parentWidget()
-            lay = cont.layout() if cont else None
-            r, c, rspan, cspan = -1, -1, 1, 1
-            if lay and hasattr(lay, "indexOf"):
-                idx = lay.indexOf(btn)
-                if idx >= 0 and hasattr(lay, "getItemPosition"):
-                    r, c, rspan, cspan = lay.getItemPosition(idx)
-            if lay is not None and r >= 0:
-                # Insert a semi-transparent ghost in the vacated cell
-                ghost = QWidget(cont)
-                ghost.setFixedSize(btn.width(), btn.height())
-                ghost.setStyleSheet(
-                    "background: rgba(255,255,255,0.07);"
-                    "border: 1px dashed rgba(255,255,255,0.25);"
-                    "border-radius: 6px;"
-                )
-                ghost.show()
-                lay.removeWidget(btn)
-                lay.addWidget(ghost, r, c, rspan, cspan)
-                self._drag_ghost_placeholders.append((ghost, cont, lay, r, c, rspan, cspan))
-            btn.hide()
-            restore_list.append((btn, cont, lay, r, c, rspan, cspan))
+        if reparent:
+            for t in tags_to_drop:
+                btn = self._get_tag_button_for(t)
+                if not btn or not btn.isVisible():
+                    continue
+                cont = btn.parentWidget()
+                lay = cont.layout() if cont else None
+                r, c, rspan, cspan = -1, -1, 1, 1
+                if lay and hasattr(lay, "indexOf"):
+                    idx = lay.indexOf(btn)
+                    if idx >= 0 and hasattr(lay, "getItemPosition"):
+                        r, c, rspan, cspan = lay.getItemPosition(idx)
+                if lay is not None and r >= 0:
+                    ghost = QWidget(cont)
+                    ghost.setFixedSize(btn.width(), btn.height())
+                    ghost.setStyleSheet(
+                        "background: rgba(255,255,255,0.07);"
+                        "border: 1px dashed rgba(255,255,255,0.25);"
+                        "border-radius: 6px;"
+                    )
+                    ghost.show()
+                    lay.removeWidget(btn)
+                    lay.addWidget(ghost, r, c, rspan, cspan)
+                    self._drag_ghost_placeholders.append(
+                        (ghost, cont, lay, r, c, rspan, cspan)
+                    )
+                btn.hide()
+                restore_list.append((btn, cont, lay, r, c, rspan, cspan))
+
         drag = QDrag(button)
         mime_data = QMimeData()
         mime_data.setText(tag_text)
-        if button.property("userTag"):
+        if reparent and button.property("userTag"):
             mime_data.setData(TAG_LIBRARY_MIME, tag_text.encode("utf-8"))
             if len(tags_to_drop) > 1:
                 mime_data.setData(
                     TAG_LIBRARY_MULTI_MIME,
                     "\n".join(sorted(tags_to_drop)).encode("utf-8"),
                 )
+        elif not reparent and len(tags_to_drop) > 1:
+            mime_data.setData(
+                TAG_LIBRARY_MULTI_MIME,
+                "\n".join(sorted(tags_to_drop)).encode("utf-8"),
+            )
+
         drag.setMimeData(mime_data)
         drag.setPixmap(pixmap)
         drag.setHotSpot(hot_spot)
         self._begin_tag_library_drag_session()
         try:
-            result = drag.exec_(Qt.MoveAction)
+            drag.exec_(Qt.MoveAction)
         finally:
             self._end_tag_library_drag_session()
             # Always remove ghost placeholders
@@ -2922,8 +2990,8 @@ class MainWindow(QMainWindow):
                 except Exception:
                     pass
             self._drag_ghost_placeholders = []
-        # Restore all removed tags to their original place if drop was cancelled or on empty/image (grid not reloaded)
-        if not self._tag_drop_was_on_grid and restore_list:
+        # Restore user tags to their original place if drop was cancelled
+        if reparent and not self._tag_drop_was_on_grid and restore_list:
             try:
                 for btn, cont, lay, r, c, rspan, cspan in restore_list:
                     if (
@@ -3179,8 +3247,12 @@ class MainWindow(QMainWindow):
                     self._tag_library_drag_start_button = None
                     self._tag_library_drag_start_tag = None
                     self._tag_library_selection_start = None
-                    if tag_text and btn and btn.property("userTag"):
-                        self._start_tag_button_drag(btn, tag_text)
+                    if tag_text and btn:
+                        self._start_tag_button_drag(
+                            btn,
+                            tag_text,
+                            reparent=self._tag_chip_allows_reparent(btn),
+                        )
                         return True
 
         if event.type() == _mouse_move and self._tag_library_is_selecting:
@@ -3205,7 +3277,11 @@ class MainWindow(QMainWindow):
                     self._tag_library_drag_start_button = None
                     self._tag_library_drag_start_tag = None
                     if tag_text and btn:
-                        self._start_tag_button_drag(btn, tag_text)
+                        self._start_tag_button_drag(
+                            btn,
+                            tag_text,
+                            reparent=self._tag_chip_allows_reparent(btn),
+                        )
                     return True
                 if self._tag_library_selection_start is not None:
                     self._tag_library_rubber_band.setGeometry(
@@ -3247,10 +3323,14 @@ class MainWindow(QMainWindow):
             has_shift = bool(modifiers & Qt.ShiftModifier)
             has_modifier = has_ctrl or has_shift
 
-            # Any subtag button (not category headers)
             is_subtag_btn = (
                 isinstance(obj, WrappingDraggableTagButton)
                 and not bool(obj.property("tagGridCategory"))
+            )
+            is_category_chip = (
+                isinstance(obj, WrappingDraggableTagButton)
+                and bool(obj.property("tagGridCategory"))
+                and obj.property("tagGridRole") == "category"
             )
             # Tag chips from gui.tag_library.chip — also detect via tagGridRole
             # in case isinstance fails across module reload boundaries.
@@ -3290,12 +3370,10 @@ class MainWindow(QMainWindow):
                     self._sync_tag_grid_state()
                 # Do NOT consume the event so buttons still fire their click
 
-            # --- Track user-tag press for drag-to-reparent (no modifier needed) ---
-            if is_subtag_btn and obj.property("userTag") and not has_modifier:
+            # --- Track chip press for drag (user subtag = reparent, else apply to images) ---
+            if (is_subtag_btn or is_category_chip) and not has_modifier:
                 self._tag_library_drag_start_button = obj
-                self._tag_library_drag_start_tag = (
-                    obj.property("baseLabel") or obj.text()
-                )
+                self._tag_library_drag_start_tag = self._tag_chip_drag_label(obj)
                 self._tag_library_selection_start = vp_pos
                 return False
 

@@ -261,11 +261,11 @@ def chip_palette(branch_key: str, depth: int, *, is_category: bool = False) -> C
     text_lift = 142 if is_category and dark else 132 if dark else 98
     text = accent.lighter(text_lift).name()
 
-    fill_alpha = 128 if is_category else max(78, 92 - depth * 8)
-    hover_alpha = fill_alpha + 26
+    fill_alpha = 152 if is_category else max(96, 112 - depth * 8)
+    hover_alpha = fill_alpha + 24
     fill_base = QColor(22, 18, 28) if is_category else QColor(18, 16, 26)
-    fill = blend_color(fill_base, hue, 0.40 if is_category else 0.32)
-    fill_hover = blend_color(fill_base.lighter(108), hue, 0.46 if is_category else 0.38)
+    fill = blend_color(fill_base, hue, 0.44 if is_category else 0.38)
+    fill_hover = blend_color(fill_base.lighter(108), hue, 0.50 if is_category else 0.42)
 
     if is_category and dark:
         background = (
@@ -308,27 +308,30 @@ def chip_state_palette(
         ChipPalette | None: Override colours, or None to use the base palette.
     """
     dark = tag_library_is_dark_theme()
-    hue = get_hierarchy_background_color(branch_key, depth)
     if selected:
-        tint = QColor(90, 155, 255)
-        fill = blend_color(QColor(20, 28, 48), tint, 0.45)
-        accent = tint.lighter(120)
+        tint = QColor(130, 200, 255)
+        fill = blend_color(QColor(28, 48, 88), tint, 0.52)
+        accent = tint.lighter(140)
+        fill_alpha = 175 if dark else 195
+        hover_alpha = fill_alpha + 18
         return ChipPalette(
-            background=_rgba(fill, 118 if dark else 140),
-            background_hover=_rgba(fill.lighter(108), 135 if dark else 155),
-            border=f"1.5px solid {_rgba(accent, 220)}",
-            border_hover=f"1.5px solid {_rgba(accent.lighter(110), 240)}",
-            text="#eef4ff" if dark else "#15325f",
+            background=_rgba(fill, fill_alpha),
+            background_hover=_rgba(fill.lighter(112), hover_alpha),
+            border=f"2px solid {_rgba(accent, 255)}",
+            border_hover=f"2px solid {_rgba(accent.lighter(118), 255)}",
+            text="#ffffff" if dark else "#0c2d5c",
         )
     if active:
-        tint = QColor(72, 196, 118)
-        fill = blend_color(QColor(18, 36, 28), tint, 0.4)
-        accent = tint.lighter(115)
+        tint = QColor(88, 255, 148)
+        fill = blend_color(QColor(18, 72, 42), tint, 0.50)
+        accent = tint.lighter(128)
+        fill_alpha = 180 if dark else 200
+        hover_alpha = fill_alpha + 18
         return ChipPalette(
-            background=_rgba(fill, 120 if dark else 145),
-            background_hover=_rgba(fill.lighter(108), 138 if dark else 160),
-            border=f"1.5px solid {_rgba(accent, 220)}",
-            border_hover=f"1.5px solid {_rgba(accent.lighter(110), 240)}",
-            text="#eafff0" if dark else "#14532d",
+            background=_rgba(fill, fill_alpha),
+            background_hover=_rgba(fill.lighter(112), hover_alpha),
+            border=f"2px solid {_rgba(accent, 255)}",
+            border_hover=f"2px solid {_rgba(accent.lighter(118), 255)}",
+            text="#f4fff8" if dark else "#0f5132",
         )
     return None

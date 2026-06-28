@@ -708,6 +708,19 @@ class ImageThumbnail(QFrame):
         else:
             event.ignore()
 
+    def dragMoveEvent(self, event) -> None:
+        """Keep tag drops accepted while the cursor moves over the thumbnail."""
+        md = event.mimeData()
+        if md.hasUrls():
+            event.acceptProposedAction()
+            return
+        if md.hasFormat("application/x-sketchbook-tag-library-multi") or (
+            md.hasText() and md.text().strip()
+        ):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
+
     def dragLeaveEvent(self, event):
         """Handle drag leave event."""
         self.setProperty("dragOver", False)

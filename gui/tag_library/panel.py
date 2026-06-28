@@ -52,6 +52,7 @@ from gui.tag_library.chip import (
     apply_chip_style,
 )
 from gui.tag_library.constants import (
+    TAG_LIBRARY_CHIP_SHADOW_BLEED_PX,
     TAG_LIBRARY_CATEGORY_SIDE_INSET_PX,
     TAG_LIBRARY_CATEGORY_WIDTH_TRIM_PX,
     TAG_LIBRARY_DROP_ZONE_BORDER_PX,
@@ -259,12 +260,14 @@ class TagLibraryPanel(QWidget):
         self._scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         self._scroll_area.setFrameShape(QFrame.NoFrame)
         self._scroll_area.setStyleSheet(tag_library_scroll_stylesheet())
+        bleed = TAG_LIBRARY_CHIP_SHADOW_BLEED_PX
+        self._scroll_area.setViewportMargins(bleed, bleed // 2, bleed, bleed // 2)
 
         self._content = QWidget()
         self._content.setObjectName("TagLibraryScrollContent")
         self._content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Minimum)
         self._content_layout = QVBoxLayout(self._content)
-        self._content_layout.setContentsMargins(0, 6, 0, 0)
+        self._content_layout.setContentsMargins(bleed, 6, bleed, bleed)
         self._content_layout.setSpacing(8)
         self._content_layout.addStretch(1)
 

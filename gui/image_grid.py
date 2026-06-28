@@ -2231,8 +2231,27 @@ class ImageGrid(QScrollArea):
 
     def dragEnterEvent(self, event: QDragEnterEvent):
         """Accept file/folder drops so they are handled as import (not as tag on thumbnail)."""
-        if event.mimeData().hasUrls() and self._import_drop_callback:
+        md = event.mimeData()
+        if md.hasUrls() and self._import_drop_callback:
             event.acceptProposedAction()
+            return
+        if md.hasFormat("application/x-sketchbook-tag-library-multi") or (
+            md.hasText() and md.text().strip()
+        ):
+            event.acceptProposedAction()
+
+    def dragMoveEvent(self, event) -> None:
+        """Keep tag drops accepted over empty grid areas between thumbnails."""
+        md = event.mimeData()
+        if md.hasUrls() and self._import_drop_callback:
+            event.acceptProposedAction()
+            return
+        if md.hasFormat("application/x-sketchbook-tag-library-multi") or (
+            md.hasText() and md.text().strip()
+        ):
+            event.acceptProposedAction()
+        else:
+            event.ignore()
 
     def dropEvent(self, event: QDropEvent):
         """Handle file/folder drop on empty grid area: forward to import."""

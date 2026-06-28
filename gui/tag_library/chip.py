@@ -12,6 +12,7 @@ from __future__ import annotations
 from typing import Optional
 
 from qtpy.QtWidgets import (
+    QApplication,
     QPushButton,
     QLabel,
     QWidget,
@@ -20,7 +21,7 @@ from qtpy.QtWidgets import (
     QSizePolicy,
     QGraphicsDropShadowEffect,
 )
-from qtpy.QtCore import Qt, Signal, QSize, QMimeData, QRect
+from qtpy.QtCore import Qt, Signal, QSize, QMimeData, QRect, QPoint, QRectF
 from qtpy.QtGui import (
     QColor,
     QDrag,
@@ -28,7 +29,9 @@ from qtpy.QtGui import (
     QFont,
     QIcon,
     QPainter,
+    QPainterPath,
     QPixmap,
+    QRegion,
 )
 
 from gui.icon_utils import tint_icon
@@ -43,8 +46,17 @@ from gui.tag_library.constants import (
     TAG_LIBRARY_FONT_SUBTAG_PX,
     TAG_LIBRARY_FONT_CATEGORY_PX,
     TAG_LIBRARY_TAG_SHADOW_BLUR_PX,
-    TAG_LIBRARY_TAG_SHADOW_OFFSET_PX,
+    TAG_LIBRARY_TAG_SHADOW_OFFSET_X_PX,
+    TAG_LIBRARY_TAG_SHADOW_OFFSET_Y_PX,
     TAG_LIBRARY_TAG_SHADOW_ALPHA,
+    TAG_LIBRARY_CATEGORY_SHADOW_BLUR_PX,
+    TAG_LIBRARY_CATEGORY_SHADOW_OFFSET_X_PX,
+    TAG_LIBRARY_CATEGORY_SHADOW_OFFSET_Y_PX,
+    TAG_LIBRARY_CATEGORY_SHADOW_ALPHA,
+    TAG_LIBRARY_DRAG_SHADOW_BLUR_PX,
+    TAG_LIBRARY_DRAG_SHADOW_OFFSET_X_PX,
+    TAG_LIBRARY_DRAG_SHADOW_OFFSET_Y_PX,
+    TAG_LIBRARY_DRAG_SHADOW_ALPHA,
     TAG_LIBRARY_TAG_CHIP_RADIUS_PX,
     TAG_LIBRARY_CATEGORY_CHIP_RADIUS_PX,
     TAG_LIBRARY_CATEGORY_MIN_HEIGHT_PX,
@@ -52,6 +64,7 @@ from gui.tag_library.constants import (
     TAG_LIBRARY_CATEGORY_ICON_SLOT_PX,
     TAG_LIBRARY_CHIP_CONTENT_HPAD_PX,
 )
+from gui.tag_library.chip_trace import sync_chip_trace
 from gui.tag_library.theme import (
     blend_color,
     chip_palette,
@@ -66,6 +79,8 @@ __all__ = [
     "get_hierarchy_background_color",
     "blend_color",
     "apply_chip_style",
+    "grab_chip_for_drag",
+    "drag_pixmap_with_shadow",
     "DraggableTagButton",
     "WrappingDraggableTagButton",
 ]
@@ -74,6 +89,169 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # Colour helpers (re-exported from theme)
 # ---------------------------------------------------------------------------
+
+
+def _apply_chip_drop_shadow(button: QPushButton, *, is_category: bool) -> None:
+    """
+    Apply a soft neutral drop shadow (no colored glow).
+
+    Called on every style pass so the effect is never left stale by the cache.
+
+    Args:
+        button: Target chip button.
+        is_category: True for main category header chips.
+    """
+    effect = button.graphicsEffect()
+    if not isinstance(effect, QGraphicsDropShadowEffect):
+        effect = QGraphicsDropShadowEffect(button)
+        button.setGraphicsEffect(effect)
+    if is_category:
+        effect.setBlurRadius(TAG_LIBRARY_CATEGORY_SHADOW_BLUR_PX)
+        effect.setOffset(
+            TAG_LIBRARY_CATEGORY_SHADOW_OFFSET_X_PX,
+            TAG_LIBRARY_CATEGORY_SHADOW_OFFSET_Y_PX,
+        )
+        effect.setColor(QColor(0, 0, 0, TAG_LIBRARY_CATEGORY_SHADOW_ALPHA))
+    else:
+        effect.setBlurRadius(TAG_LIBRARY_TAG_SHADOW_BLUR_PX)
+        effect.setOffset(
+            TAG_LIBRARY_TAG_SHADOW_OFFSET_X_PX,
+            TAG_LIBRARY_TAG_SHADOW_OFFSET_Y_PX,
+        )
+        effect.setColor(QColor(0, 0, 0, TAG_LIBRARY_TAG_SHADOW_ALPHA))
+    effect.setEnabled(True)
+    effect.update()
+    button.update()
+
+
+def _chip_corner_radius(widget: QWidget) -> int:
+    """Return rounded-corner radius for a tag chip widget."""
+    if bool(widget.property("tagGridCategory")):
+        return TAG_LIBRARY_CATEGORY_CHIP_RADIUS_PX
+    return TAG_LIBRARY_TAG_CHIP_RADIUS_PX
+
+
+def _mask_pixmap_rounded(pixmap: QPixmap, radius_px: int) -> QPixmap:
+    """Clip pixmap alpha to a rounded rectangle."""
+    if pixmap.isNull() or radius_px <= 0:
+        return pixmap
+    out = QPixmap(pixmap.size())
+    out.fill(Qt.transparent)
+    painter = QPainter(out)
+    painter.setRenderHint(QPainter.Antialiasing, True)
+    painter.setRenderHint(QPainter.SmoothPixmapTransform, True)
+    path = QPainterPath()
+    path.addRoundedRect(QRectF(pixmap.rect()), float(radius_px), float(radius_px))
+    painter.setClipPath(path)
+    painter.drawPixmap(0, 0, pixmap)
+    painter.end()
+    return out
+
+
+def grab_chip_for_drag(widget: QWidget) -> QPixmap:
+    """
+    Render a chip into a transparent pixmap without its live drop shadow.
+
+    Args:
+        widget: Tag chip button.
+
+    Returns:
+        QPixmap: Rounded chip appearance suitable for drag compositing.
+    """
+    effect = widget.graphicsEffect()
+    shadow_was_enabled = False
+    if isinstance(effect, QGraphicsDropShadowEffect):
+        shadow_was_enabled = effect.isEnabled()
+        effect.setEnabled(False)
+
+    trace_overlay = widget.property("_traceOverlay")
+    if trace_overlay is not None:
+        trace_overlay.hide()
+    widget.update()
+    if QApplication.instance() is not None:
+        QApplication.processEvents()
+
+    pm = QPixmap(widget.size())
+    if pm.isNull():
+        if trace_overlay is not None:
+            trace_overlay.show()
+            trace_overlay.sync_geometry()
+        if isinstance(effect, QGraphicsDropShadowEffect):
+            effect.setEnabled(shadow_was_enabled)
+        return pm
+
+    pm.fill(Qt.transparent)
+    try:
+        render_flags = (
+            QWidget.RenderFlag.DrawChildren
+            | QWidget.RenderFlag.DrawWindowBackground
+        )
+    except AttributeError:
+        render_flags = QWidget.DrawChildren | QWidget.DrawWindowBackground
+    widget.render(pm, QPoint(), QRegion(), render_flags)
+    pm = _mask_pixmap_rounded(pm, _chip_corner_radius(widget))
+
+    if trace_overlay is not None:
+        trace_overlay.show()
+        trace_overlay.sync_geometry()
+    if isinstance(effect, QGraphicsDropShadowEffect):
+        effect.setEnabled(shadow_was_enabled)
+    widget.update()
+    return pm
+
+
+def drag_pixmap_with_shadow(
+    source: QPixmap,
+    hot_spot: QPoint,
+    *,
+    blur: int = TAG_LIBRARY_DRAG_SHADOW_BLUR_PX,
+    offset_x: int = TAG_LIBRARY_DRAG_SHADOW_OFFSET_X_PX,
+    offset_y: int = TAG_LIBRARY_DRAG_SHADOW_OFFSET_Y_PX,
+    alpha: int = TAG_LIBRARY_DRAG_SHADOW_ALPHA,
+) -> tuple[QPixmap, QPoint]:
+    """
+    Composite *source* with a Qt-rendered drop shadow for QDrag feedback.
+
+    Args:
+        source: Chip pixmap without shadow.
+        hot_spot: Cursor anchor in *source* coordinates.
+        blur: Shadow blur radius in pixels.
+        offset_x: Horizontal shadow offset.
+        offset_y: Vertical shadow offset.
+        alpha: Shadow opacity 0–255.
+
+    Returns:
+        tuple[QPixmap, QPoint]: Pixmap and adjusted hot spot.
+    """
+    if source.isNull():
+        return source, hot_spot
+
+    pad = int(blur + max(abs(offset_x), abs(offset_y)) + 8)
+    container = QWidget()
+    container.setAttribute(Qt.WA_DontShowOnScreen, True)
+    container.setAttribute(Qt.WA_TranslucentBackground, True)
+    container.setAttribute(Qt.WA_NoSystemBackground, True)
+    container.setAutoFillBackground(False)
+
+    label = QLabel(container)
+    label.setAttribute(Qt.WA_TranslucentBackground, True)
+    label.setPixmap(source)
+    label.resize(source.size())
+    label.move(pad, pad)
+
+    shadow = QGraphicsDropShadowEffect(label)
+    shadow.setBlurRadius(float(blur))
+    shadow.setOffset(float(offset_x), float(offset_y))
+    shadow.setColor(QColor(0, 0, 0, alpha))
+    label.setGraphicsEffect(shadow)
+
+    container.resize(source.width() + pad * 2, source.height() + pad * 2)
+    out = container.grab()
+    container.deleteLater()
+
+    if out.isNull():
+        return source, hot_spot
+    return out, hot_spot + QPoint(pad, pad)
 
 
 def apply_chip_style(
@@ -99,6 +277,10 @@ def apply_chip_style(
     cache_key = (str(style_key), new_state)
 
     if button.property("_styleCacheKey") == str(cache_key):
+        _apply_chip_drop_shadow(button, is_category=is_category)
+        sync_chip_trace(
+            button, new_state, branch_key, depth, is_category=is_category
+        )
         return
 
     font_px = TAG_LIBRARY_FONT_CATEGORY_PX if is_category else TAG_LIBRARY_FONT_SUBTAG_PX
@@ -157,13 +339,6 @@ def apply_chip_style(
     button.setProperty("tagState", new_state)
     button.setCursor(Qt.PointingHandCursor)
 
-    shadow = button.graphicsEffect()
-    if not isinstance(shadow, QGraphicsDropShadowEffect):
-        shadow = QGraphicsDropShadowEffect(button)
-        button.setGraphicsEffect(shadow)
-    shadow.setBlurRadius(TAG_LIBRARY_TAG_SHADOW_BLUR_PX)
-    shadow.setOffset(0, TAG_LIBRARY_TAG_SHADOW_OFFSET_PX)
-    shadow.setColor(QColor(0, 0, 0, TAG_LIBRARY_TAG_SHADOW_ALPHA))
     button.style().unpolish(button)
     button.style().polish(button)
 
@@ -175,6 +350,9 @@ def apply_chip_style(
 
     if isinstance(button, WrappingDraggableTagButton):
         button.apply_label_palette(label_palette.text, font_px)
+
+    _apply_chip_drop_shadow(button, is_category=is_category)
+    sync_chip_trace(button, new_state, branch_key, depth, is_category=is_category)
 
 
 # ---------------------------------------------------------------------------
@@ -315,16 +493,18 @@ class WrappingDraggableTagButton(DraggableTagButton):
         self.setCursor(Qt.PointingHandCursor)
         self.set_cell_width(cell_width)
 
+    def resizeEvent(self, event) -> None:
+        """Keep trace overlay aligned when the chip is resized."""
+        super().resizeEvent(event)
+        overlay = self.property("_traceOverlay")
+        if overlay is not None:
+            overlay.sync_geometry()
+
     def mouseMoveEvent(self, event) -> None:
         """
-        User tags rely on MainWindow's drag handler (multi-select, ghosts).
-
-        Built-in single-tag QDrag is skipped so it cannot race the panel flow.
+        All tag-library drags are handled by MainWindow (ghost, multi-select).
         """
-        if self.property("userTag"):
-            QPushButton.mouseMoveEvent(self, event)
-            return
-        super().mouseMoveEvent(event)
+        QPushButton.mouseMoveEvent(self, event)
 
     # ------------------------------------------------------------------
     # Public API
@@ -356,8 +536,14 @@ class WrappingDraggableTagButton(DraggableTagButton):
         """Return True for full-width main category header chips."""
         return bool(self.property("tagGridCategory"))
 
+    def _has_icon(self) -> bool:
+        """Return True when this chip displays a tag icon."""
+        return self._raw_icon is not None and not self._raw_icon.isNull()
+
     def _icon_slot_px(self) -> int:
-        """Return the fixed icon column width for this chip type."""
+        """Return the icon column width (0 when the chip has no icon)."""
+        if not self._has_icon():
+            return 0
         if self._is_category_chip():
             return TAG_LIBRARY_CATEGORY_ICON_SLOT_PX
         return TAG_LIBRARY_TAG_ICON_SLOT_PX
@@ -491,11 +677,13 @@ class WrappingDraggableTagButton(DraggableTagButton):
             else TAG_LIBRARY_TAG_MIN_HEIGHT_PX
         )
         slot_px = self._icon_slot_px()
+        has_icon = slot_px > 0
 
         margins = self._inner_layout.contentsMargins()
         h_pad = margins.left() + margins.right()
         inner_w = max(24, chip_w - h_pad - border_v - 2)
-        text_w = max(20, inner_w - slot_px - self._row_layout.spacing())
+        row_spacing = self._row_layout.spacing() if has_icon else 0
+        text_w = max(20, inner_w - slot_px - row_spacing)
 
         if is_category:
             self._text_label.setWordWrap(False)
@@ -514,8 +702,8 @@ class WrappingDraggableTagButton(DraggableTagButton):
             TAG_LIBRARY_TAG_MAX_HEIGHT_PX,
             max(min_h, label_h + pad_v + border_v + 4),
         )
-        icon_px = min(slot_px - 4, chip_h - border_v - 6)
-        row_h = max(label_h, slot_px)
+        icon_px = min(max(slot_px, 1) - 4, chip_h - border_v - 6) if has_icon else 0
+        row_h = max(label_h, slot_px) if has_icon else label_h
 
         self._text_label.setFixedHeight(label_h)
         if is_category:
@@ -528,13 +716,19 @@ class WrappingDraggableTagButton(DraggableTagButton):
         self._content_row.setMinimumWidth(inner_w)
         self._content_row.setMaximumWidth(inner_w)
 
-        has_icon = self._raw_icon is not None and not self._raw_icon.isNull()
-        if has_icon and icon_px > 0:
-            tinted = tint_icon(self._raw_icon, QColor(self._label_color), icon_px)
-            pm = tinted.pixmap(icon_px, icon_px)
-            self._icon_label.setPixmap(pm)
-        else:
+        if has_icon:
+            self._ensure_icon_slot()
+            self._icon_label.setFixedSize(slot_px, slot_px)
+            self._icon_label.show()
+            if icon_px > 0:
+                tinted = tint_icon(self._raw_icon, QColor(self._label_color), icon_px)
+                self._icon_label.setPixmap(tinted.pixmap(icon_px, icon_px))
+            else:
+                self._icon_label.clear()
+        elif self._icon_label is not None:
             self._icon_label.clear()
+            self._icon_label.setFixedSize(0, 0)
+            self._icon_label.hide()
 
         self.setFixedHeight(chip_h)
         self._chip_height = chip_h
