@@ -115,6 +115,9 @@ from gui.tag_library import (
     apply_chip_style,
     drag_pixmap_with_shadow,
     grab_chip_for_drag,
+    get_chip_drag_source,
+    build_chip_drag_pixmap,
+    prepare_chip_drag_pixmap,
     TAG_LIBRARY_MIME,
     TAG_LIBRARY_MULTI_MIME,
     mime_data_looks_like_tag_library_drag,
@@ -2899,7 +2902,7 @@ class MainWindow(QMainWindow):
             for t in tag_list:
                 btn = self._get_tag_button_for(t)
                 if btn and btn.isVisible():
-                    g = grab_chip_for_drag(btn)
+                    g = get_chip_drag_source(btn)
                     if not g.isNull():
                         grabs.append(g)
             if grabs:
@@ -2913,18 +2916,20 @@ class MainWindow(QMainWindow):
                     painter.drawPixmap(i * offset, i * offset, p)
                 painter.end()
                 hot_spot = QPoint(grabs[0].width() // 2, grabs[0].height() // 2)
+                pixmap, hot_spot = drag_pixmap_with_shadow(pixmap, hot_spot)
+        else:
+            pixmap, hot_spot = build_chip_drag_pixmap(button)
         if pixmap is None or pixmap.isNull():
-            pixmap = grab_chip_for_drag(button)
-        if pixmap.isNull():
             pixmap = QPixmap(max(120, button.width()), max(28, button.height()))
             pixmap.fill(Qt.transparent)
             painter = QPainter(pixmap)
             painter.setPen(Qt.white)
             painter.drawText(pixmap.rect(), Qt.AlignCenter, tag_text)
             painter.end()
-        if hot_spot is None:
             hot_spot = pixmap.rect().center()
-        pixmap, hot_spot = drag_pixmap_with_shadow(pixmap, hot_spot)
+            pixmap, hot_spot = drag_pixmap_with_shadow(pixmap, hot_spot)
+        elif hot_spot is None:
+            hot_spot = pixmap.rect().center()
 
         restore_list: List[Tuple[QWidget, QWidget, Any, int, int, int, int]] = []
         self._drag_ghost_placeholders = []
@@ -3375,6 +3380,15 @@ class MainWindow(QMainWindow):
                 self._tag_library_drag_start_button = obj
                 self._tag_library_drag_start_tag = self._tag_chip_drag_label(obj)
                 self._tag_library_selection_start = vp_pos
+                drag_tag = self._tag_library_drag_start_tag
+                selection = self._tag_library_selection_union()
+                if drag_tag in selection and len(selection) > 1:
+                    for tag_name in selection:
+                        chip_btn = self._get_tag_button_for(tag_name)
+                        if chip_btn is not None:
+                            prepare_chip_drag_pixmap(chip_btn)
+                else:
+                    prepare_chip_drag_pixmap(obj)
                 return False
 
             # --- Rubber-band drag from any empty/non-interactive area ---

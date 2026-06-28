@@ -80,6 +80,10 @@ __all__ = [
     "blend_color",
     "apply_chip_style",
     "grab_chip_for_drag",
+    "get_chip_drag_source",
+    "build_chip_drag_pixmap",
+    "prepare_chip_drag_pixmap",
+    "invalidate_chip_drag_pixmap",
     "drag_pixmap_with_shadow",
     "DraggableTagButton",
     "WrappingDraggableTagButton",
@@ -200,6 +204,75 @@ def grab_chip_for_drag(widget: QWidget) -> QPixmap:
     return pm
 
 
+class _DragShadowComposer:
+    """Reusable offscreen widget used to composite drag shadows (no per-drag alloc)."""
+
+    def __init__(self) -> None:
+        self._pad = int(
+            TAG_LIBRARY_DRAG_SHADOW_BLUR_PX
+            + max(
+                abs(TAG_LIBRARY_DRAG_SHADOW_OFFSET_X_PX),
+                abs(TAG_LIBRARY_DRAG_SHADOW_OFFSET_Y_PX),
+            )
+            + 8
+        )
+        self._container = QWidget()
+        self._container.setAttribute(Qt.WA_DontShowOnScreen, True)
+        self._container.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._container.setAttribute(Qt.WA_NoSystemBackground, True)
+        self._container.setAutoFillBackground(False)
+
+        self._label = QLabel(self._container)
+        self._label.setAttribute(Qt.WA_TranslucentBackground, True)
+
+        self._shadow = QGraphicsDropShadowEffect(self._label)
+        self._shadow.setBlurRadius(float(TAG_LIBRARY_DRAG_SHADOW_BLUR_PX))
+        self._shadow.setOffset(
+            float(TAG_LIBRARY_DRAG_SHADOW_OFFSET_X_PX),
+            float(TAG_LIBRARY_DRAG_SHADOW_OFFSET_Y_PX),
+        )
+        self._shadow.setColor(
+            QColor(0, 0, 0, TAG_LIBRARY_DRAG_SHADOW_ALPHA)
+        )
+        self._label.setGraphicsEffect(self._shadow)
+
+    def compose(self, source: QPixmap, hot_spot: QPoint) -> tuple[QPixmap, QPoint]:
+        """
+        Draw *source* with drop shadow into a new pixmap.
+
+        Args:
+            source: Chip pixmap without shadow.
+            hot_spot: Cursor anchor in *source* coordinates.
+
+        Returns:
+            tuple[QPixmap, QPoint]: Composited pixmap and adjusted hot spot.
+        """
+        if source.isNull():
+            return source, hot_spot
+
+        pad = self._pad
+        self._label.setPixmap(source)
+        self._label.resize(source.size())
+        self._label.move(pad, pad)
+        self._container.resize(source.width() + pad * 2, source.height() + pad * 2)
+
+        out = self._container.grab()
+        if out.isNull():
+            return source, hot_spot
+        return out, hot_spot + QPoint(pad, pad)
+
+
+_drag_shadow_composer: Optional[_DragShadowComposer] = None
+
+
+def _shadow_composer() -> _DragShadowComposer:
+    """Return the process-wide reusable drag-shadow composer."""
+    global _drag_shadow_composer
+    if _drag_shadow_composer is None:
+        _drag_shadow_composer = _DragShadowComposer()
+    return _drag_shadow_composer
+
+
 def drag_pixmap_with_shadow(
     source: QPixmap,
     hot_spot: QPoint,
@@ -226,6 +299,16 @@ def drag_pixmap_with_shadow(
     if source.isNull():
         return source, hot_spot
 
+    composer = _shadow_composer()
+    if (
+        blur == TAG_LIBRARY_DRAG_SHADOW_BLUR_PX
+        and offset_x == TAG_LIBRARY_DRAG_SHADOW_OFFSET_X_PX
+        and offset_y == TAG_LIBRARY_DRAG_SHADOW_OFFSET_Y_PX
+        and alpha == TAG_LIBRARY_DRAG_SHADOW_ALPHA
+    ):
+        return composer.compose(source, hot_spot)
+
+    # Non-default shadow params (rare): one-off offscreen grab.
     pad = int(blur + max(abs(offset_x), abs(offset_y)) + 8)
     container = QWidget()
     container.setAttribute(Qt.WA_DontShowOnScreen, True)
@@ -252,6 +335,92 @@ def drag_pixmap_with_shadow(
     if out.isNull():
         return source, hot_spot
     return out, hot_spot + QPoint(pad, pad)
+
+
+def _chip_drag_cache_key(widget: QWidget) -> str:
+    """Build a cache key from chip geometry and style snapshot."""
+    style = widget.property("_styleCacheKey") or ""
+    label = widget.property("tagGridKey") or widget.property("baseLabel") or ""
+    return f"{widget.width()}x{widget.height()}:{style}:{label}"
+
+
+def invalidate_chip_drag_pixmap(widget: QWidget) -> None:
+    """
+    Drop cached drag pixmaps for a chip (after text, size, or style change).
+
+    Args:
+        widget: Tag chip button.
+    """
+    for attr in ("_drag_pixmap_cache", "_drag_source_cache"):
+        if hasattr(widget, attr):
+            delattr(widget, attr)
+
+
+def get_chip_drag_source(widget: QWidget) -> QPixmap:
+    """
+    Return a cached chip grab without live drop shadow.
+
+    Args:
+        widget: Tag chip button.
+
+    Returns:
+        QPixmap: Rounded chip appearance for drag compositing.
+    """
+    key = _chip_drag_cache_key(widget)
+    cache = getattr(widget, "_drag_source_cache", None)
+    if cache and cache.get("key") == key:
+        pixmap = cache.get("pixmap")
+        if pixmap is not None and not pixmap.isNull():
+            return pixmap
+
+    pixmap = grab_chip_for_drag(widget)
+    widget._drag_source_cache = {"key": key, "pixmap": pixmap}
+    return pixmap
+
+
+def build_chip_drag_pixmap(widget: QWidget) -> tuple[QPixmap, QPoint]:
+    """
+    Return drag pixmap + hot spot, using a per-chip cache when possible.
+
+    Args:
+        widget: Tag chip button.
+
+    Returns:
+        tuple[QPixmap, QPoint]: Pixmap for QDrag and cursor hot spot.
+    """
+    key = _chip_drag_cache_key(widget)
+    cache = getattr(widget, "_drag_pixmap_cache", None)
+    if cache and cache.get("key") == key:
+        pixmap = cache.get("pixmap")
+        hot_spot = cache.get("hot_spot")
+        if (
+            pixmap is not None
+            and not pixmap.isNull()
+            and hot_spot is not None
+        ):
+            return pixmap, hot_spot
+
+    source = get_chip_drag_source(widget)
+    hot_spot = source.rect().center()
+    pixmap, hot_spot = drag_pixmap_with_shadow(source, hot_spot)
+    widget._drag_pixmap_cache = {
+        "key": key,
+        "pixmap": pixmap,
+        "hot_spot": hot_spot,
+    }
+    return pixmap, hot_spot
+
+
+def prepare_chip_drag_pixmap(widget: QWidget) -> None:
+    """
+    Pre-build drag feedback while the pointer is held before drag threshold.
+
+    Args:
+        widget: Tag chip button under the cursor.
+    """
+    if widget is None or not widget.isVisible():
+        return
+    build_chip_drag_pixmap(widget)
 
 
 def apply_chip_style(
@@ -353,6 +522,7 @@ def apply_chip_style(
 
     _apply_chip_drop_shadow(button, is_category=is_category)
     sync_chip_trace(button, new_state, branch_key, depth, is_category=is_category)
+    invalidate_chip_drag_pixmap(button)
 
 
 # ---------------------------------------------------------------------------
@@ -588,12 +758,14 @@ class WrappingDraggableTagButton(DraggableTagButton):
             self.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.setProperty("tagLibraryCell", True)
         self._geometry_valid = True
+        invalidate_chip_drag_pixmap(self)
         self._sync_chip_geometry()
 
     def setText(self, text: str) -> None:
         if self._text_label.text() == text:
             return
         self._text_label.setText(text)
+        invalidate_chip_drag_pixmap(self)
         self._sync_chip_geometry()
 
     def text(self) -> str:
@@ -605,6 +777,7 @@ class WrappingDraggableTagButton(DraggableTagButton):
         self._ensure_icon_slot()
         if icon.isNull():
             self._icon_label.clear()
+        invalidate_chip_drag_pixmap(self)
         self._sync_chip_geometry()
 
     def setIconSize(self, _size: QSize) -> None:
