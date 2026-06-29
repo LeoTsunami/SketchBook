@@ -118,6 +118,8 @@ from gui.tag_library import (
     get_chip_drag_source,
     build_chip_drag_pixmap,
     prepare_chip_drag_pixmap,
+    chip_drag_hot_spot,
+    apply_drag_cursor_offset,
     TAG_LIBRARY_MIME,
     TAG_LIBRARY_MULTI_MIME,
     mime_data_looks_like_tag_library_drag,
@@ -2909,27 +2911,27 @@ class MainWindow(QMainWindow):
                 offset = 6
                 w = max(p.width() for p in grabs) + (len(grabs) - 1) * offset
                 h = max(p.height() for p in grabs) + (len(grabs) - 1) * offset
-                pixmap = QPixmap(w, h)
-                pixmap.fill(Qt.transparent)
-                painter = QPainter(pixmap)
+                composite = QPixmap(w, h)
+                composite.fill(Qt.transparent)
+                painter = QPainter(composite)
                 for i, p in enumerate(grabs):
                     painter.drawPixmap(i * offset, i * offset, p)
                 painter.end()
-                hot_spot = QPoint(grabs[0].width() // 2, grabs[0].height() // 2)
-                pixmap, hot_spot = drag_pixmap_with_shadow(pixmap, hot_spot)
+                hot_spot = chip_drag_hot_spot(composite)
+                pixmap, hot_spot = drag_pixmap_with_shadow(composite, hot_spot)
         else:
             pixmap, hot_spot = build_chip_drag_pixmap(button)
         if pixmap is None or pixmap.isNull():
-            pixmap = QPixmap(max(120, button.width()), max(28, button.height()))
-            pixmap.fill(Qt.transparent)
-            painter = QPainter(pixmap)
+            composite = QPixmap(max(120, button.width()), max(28, button.height()))
+            composite.fill(Qt.transparent)
+            painter = QPainter(composite)
             painter.setPen(Qt.white)
-            painter.drawText(pixmap.rect(), Qt.AlignCenter, tag_text)
+            painter.drawText(composite.rect(), Qt.AlignCenter, tag_text)
             painter.end()
-            hot_spot = pixmap.rect().center()
-            pixmap, hot_spot = drag_pixmap_with_shadow(pixmap, hot_spot)
+            hot_spot = chip_drag_hot_spot(composite)
+            pixmap, hot_spot = drag_pixmap_with_shadow(composite, hot_spot)
         elif hot_spot is None:
-            hot_spot = pixmap.rect().center()
+            hot_spot = chip_drag_hot_spot(pixmap)
 
         restore_list: List[Tuple[QWidget, QWidget, Any, int, int, int, int]] = []
         self._drag_ghost_placeholders = []
@@ -2980,7 +2982,7 @@ class MainWindow(QMainWindow):
 
         drag.setMimeData(mime_data)
         drag.setPixmap(pixmap)
-        drag.setHotSpot(hot_spot)
+        drag.setHotSpot(apply_drag_cursor_offset(hot_spot, pixmap))
         self._begin_tag_library_drag_session()
         try:
             drag.exec_(Qt.MoveAction)

@@ -57,6 +57,8 @@ from gui.tag_library.constants import (
     TAG_LIBRARY_DRAG_SHADOW_OFFSET_X_PX,
     TAG_LIBRARY_DRAG_SHADOW_OFFSET_Y_PX,
     TAG_LIBRARY_DRAG_SHADOW_ALPHA,
+    TAG_LIBRARY_DRAG_CURSOR_OFFSET_X_PX,
+    TAG_LIBRARY_DRAG_CURSOR_OFFSET_Y_PX,
     TAG_LIBRARY_TAG_CHIP_RADIUS_PX,
     TAG_LIBRARY_CATEGORY_CHIP_RADIUS_PX,
     TAG_LIBRARY_CATEGORY_MIN_HEIGHT_PX,
@@ -83,6 +85,8 @@ __all__ = [
     "get_chip_drag_source",
     "build_chip_drag_pixmap",
     "prepare_chip_drag_pixmap",
+    "chip_drag_hot_spot",
+    "apply_drag_cursor_offset",
     "invalidate_chip_drag_pixmap",
     "drag_pixmap_with_shadow",
     "DraggableTagButton",
@@ -341,7 +345,47 @@ def _chip_drag_cache_key(widget: QWidget) -> str:
     """Build a cache key from chip geometry and style snapshot."""
     style = widget.property("_styleCacheKey") or ""
     label = widget.property("tagGridKey") or widget.property("baseLabel") or ""
-    return f"{widget.width()}x{widget.height()}:{style}:{label}"
+    return f"{widget.width()}x{widget.height()}:{style}:{label}:tr-o15"
+
+
+def chip_drag_hot_spot(source: QPixmap) -> QPoint:
+    """
+    Return the QDrag attach point: top-right of the chip on the cursor.
+
+    The chip body sits to the bottom-left of the pointer.
+
+    Args:
+        source: Chip pixmap before shadow padding.
+
+    Returns:
+        QPoint: Hot spot in *source* coordinates.
+    """
+    if source.isNull():
+        return QPoint()
+    return QPoint(max(0, source.width() - 1), 0)
+
+
+def apply_drag_cursor_offset(hot_spot: QPoint, pixmap: QPixmap) -> QPoint:
+    """
+    Nudge the drag hot spot so the chip sits further up-left of the cursor.
+
+    Args:
+        hot_spot: Hot spot in the shadow-padded drag pixmap.
+        pixmap: Full drag pixmap passed to QDrag.
+
+    Returns:
+        QPoint: Adjusted hot spot, clamped inside the pixmap.
+    """
+    adjusted = hot_spot + QPoint(
+        TAG_LIBRARY_DRAG_CURSOR_OFFSET_X_PX,
+        TAG_LIBRARY_DRAG_CURSOR_OFFSET_Y_PX,
+    )
+    if pixmap.isNull():
+        return adjusted
+    return QPoint(
+        min(max(0, pixmap.width() - 1), adjusted.x()),
+        min(max(0, pixmap.height() - 1), adjusted.y()),
+    )
 
 
 def invalidate_chip_drag_pixmap(widget: QWidget) -> None:
@@ -380,7 +424,7 @@ def get_chip_drag_source(widget: QWidget) -> QPixmap:
 
 def build_chip_drag_pixmap(widget: QWidget) -> tuple[QPixmap, QPoint]:
     """
-    Return drag pixmap + hot spot, using a per-chip cache when possible.
+    Return drag pixmap and hot spot, using a per-chip cache when possible.
 
     Args:
         widget: Tag chip button.
@@ -401,7 +445,7 @@ def build_chip_drag_pixmap(widget: QWidget) -> tuple[QPixmap, QPoint]:
             return pixmap, hot_spot
 
     source = get_chip_drag_source(widget)
-    hot_spot = source.rect().center()
+    hot_spot = chip_drag_hot_spot(source)
     pixmap, hot_spot = drag_pixmap_with_shadow(source, hot_spot)
     widget._drag_pixmap_cache = {
         "key": key,
