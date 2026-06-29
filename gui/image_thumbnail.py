@@ -178,6 +178,9 @@ class ImageThumbnail(QFrame):
             Callable[["ImageThumbnail", str, Set[str]], None]
         ] = None,
         import_drop_callback: Optional[Callable[[List[QUrl]], None]] = None,
+        tag_drop_flash_callback: Optional[
+            Callable[[List[str], str, str], None]
+        ] = None,
     ):
         """
         Initialize the thumbnail widget.
@@ -193,6 +196,8 @@ class ImageThumbnail(QFrame):
                 instead of on the image. Called with (thumbnail_widget, image_id, tags).
             import_drop_callback: If set, file/folder drops (hasUrls) are forwarded here instead of
                 being treated as tags. Called with (list of QUrl); grid/main window handles import.
+            tag_drop_flash_callback: If set, called with (image_ids, tag, drop_image_id)
+                when a tag is dropped to play a colour flash on affected thumbnails.
         """
         super().__init__(parent)
         self.image_id = image_id
@@ -201,6 +206,7 @@ class ImageThumbnail(QFrame):
         self.get_selected_images_callback = get_selected_images_callback
         self.show_tag_popover_callback = show_tag_popover_callback
         self.import_drop_callback = import_drop_callback
+        self.tag_drop_flash_callback = tag_drop_flash_callback
         self.setObjectName("ImageThumbnail")
         self.setFrameStyle(QFrame.NoFrame)
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -776,6 +782,9 @@ class ImageThumbnail(QFrame):
             images_to_tag = [self.image_id]
         else:
             images_to_tag = [self.image_id]
+
+        if self.tag_drop_flash_callback:
+            self.tag_drop_flash_callback(images_to_tag, tag_list[0], self.image_id)
 
         parent = self.parent()
         while parent:

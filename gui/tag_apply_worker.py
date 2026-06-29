@@ -1,15 +1,9 @@
 """
 Worker class for applying or removing a tag on many images in a background thread.
 """
-import time
 from typing import List, Literal
 
 from qtpy.QtCore import QObject, QRunnable, Signal, Slot
-
-# Throttle progress: emit at most every N images to avoid flooding the main thread
-_PROGRESS_EMIT_EVERY = 25
-# Min interval between progress emissions (seconds) when processing is very fast
-_PROGRESS_MIN_INTERVAL_S = 0.08
 
 
 class TagApplySignals(QObject):
@@ -47,47 +41,28 @@ class TagApplyWorker(QRunnable):
         self.signals = TagApplySignals()
         self.setAutoDelete(True)
 
-    def _emit_progress(self, current: int, total: int) -> None:
-        """Emit bounded progress."""
-        current = min(current, total)
-        self.signals.progress.emit(current, total)
-
     @Slot()
     def run(self) -> None:
-        """Apply or remove the tag on all images."""
+        """Apply or remove the tag on all images in one bulk database pass."""
         try:
-            total = len(self.image_ids)
-            if total == 0:
+            if not self.image_ids:
                 self.signals.finished.emit(0)
                 return
 
-            self._emit_progress(0, total)
-            last_emit_index = 0
-            last_emit_time = time.monotonic()
+            if self.operation == "add":
+                count = self.image_manager.add_tags_to_images(
+                    self.image_ids,
+                    self.tag,
+                    progress=self.signals.progress.emit,
+                )
+            else:
+                count = self.image_manager.remove_tags_from_images(
+                    self.image_ids,
+                    self.tag,
+                    progress=self.signals.progress.emit,
+                )
 
-            for index, image_id in enumerate(self.image_ids, start=1):
-                metadata = self.image_manager.get_image_metadata(image_id)
-                if metadata:
-                    new_tags = metadata.tags.copy()
-                    if self.operation == "add":
-                        new_tags.add(self.tag)
-                    else:
-                        new_tags.discard(self.tag)
-                    self.image_manager.update_image_metadata(image_id, tags=new_tags)
-
-                # Throttle progress to avoid freezing UI (too many queued slot calls)
-                now = time.monotonic()
-                if (
-                    index - last_emit_index >= _PROGRESS_EMIT_EVERY
-                    or (now - last_emit_time) >= _PROGRESS_MIN_INTERVAL_S
-                    or index == total
-                ):
-                    self._emit_progress(index, total)
-                    last_emit_index = index
-                    last_emit_time = now
-
-            self._emit_progress(total, total)
-            self.signals.finished.emit(total)
+            self.signals.finished.emit(count)
 
         except Exception as exc:  # pragma: no cover - defensive
             self.signals.error.emit(str(exc))
@@ -121,4 +96,3 @@ class TagLibraryDeleteWorker(QRunnable):
             self.signals.finished.emit(count)
         except Exception as exc:  # pragma: no cover - defensive
             self.signals.error.emit(str(exc))
-

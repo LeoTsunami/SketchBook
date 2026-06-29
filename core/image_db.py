@@ -373,6 +373,83 @@ class ImageDatabase:
             self._request_save()
         return count
 
+    def add_tags_to_images(
+        self,
+        image_ids: List[str],
+        tag_names: Set[str],
+        progress: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """
+        Add tags to a specific list of images (single DB save).
+
+        Args:
+            image_ids: Images to update.
+            tag_names: Tags to add on each image.
+            progress: Optional callback ``(current_index, total_ids)`` while scanning.
+
+        Returns:
+            Number of images updated.
+        """
+        tag_names = {t for t in tag_names if t}
+        if not tag_names or not image_ids:
+            return 0
+        total = len(image_ids)
+        if progress:
+            progress(0, max(1, total))
+        count = 0
+        emit_every = 25
+        for index, image_id in enumerate(image_ids, start=1):
+            metadata = self._images.get(image_id)
+            if metadata is None:
+                continue
+            before = len(metadata.tags)
+            metadata.tags.update(tag_names)
+            if len(metadata.tags) != before:
+                count += 1
+            if progress and (index % emit_every == 0 or index == total):
+                progress(index, total)
+        if count:
+            self._request_save()
+        return count
+
+    def remove_tags_from_images(
+        self,
+        image_ids: List[str],
+        tag_names: Set[str],
+        progress: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """
+        Remove tags from a specific list of images (single DB save).
+
+        Args:
+            image_ids: Images to update.
+            tag_names: Tags to remove from each image.
+            progress: Optional callback ``(current_index, total_ids)`` while scanning.
+
+        Returns:
+            Number of images updated.
+        """
+        tag_names = {t for t in tag_names if t}
+        if not tag_names or not image_ids:
+            return 0
+        total = len(image_ids)
+        if progress:
+            progress(0, max(1, total))
+        count = 0
+        emit_every = 25
+        for index, image_id in enumerate(image_ids, start=1):
+            metadata = self._images.get(image_id)
+            if metadata is None:
+                continue
+            if metadata.tags & tag_names:
+                metadata.tags -= tag_names
+                count += 1
+            if progress and (index % emit_every == 0 or index == total):
+                progress(index, total)
+        if count:
+            self._request_save()
+        return count
+
     def list_images(self, sort_by: str = "import_date_desc") -> List[ImageMetadata]:
         """
         Get list of all image metadata, optionally sorted.

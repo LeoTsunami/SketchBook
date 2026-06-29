@@ -222,3 +222,53 @@ def test_snapshot_metadata_values_empty(tmp_path, monkeypatch):
     monkeypatch.setattr(user_data, "get_images_db_path", lambda: db_file)
     isolated = ImageDatabase()
     assert isolated.snapshot_metadata_values() == []
+
+
+def test_add_tags_to_images_single_save(image_db):
+    """Bulk add updates only listed images and saves once."""
+    from unittest.mock import MagicMock
+
+    ids = []
+    for i in range(3):
+        meta = ImageMetadata(
+            id=f"img-{i}",
+            path=f"img{i}.jpg",
+            original_filename=f"img{i}.jpg",
+            width=10,
+            height=10,
+            file_size=100,
+            format="JPEG",
+            tags={"existing"} if i == 0 else set(),
+        )
+        image_db.add_image(meta)
+        ids.append(meta.id)
+
+    image_db._request_save = MagicMock()
+    count = image_db.add_tags_to_images(ids[:2], {"Landscape"})
+    assert count == 2
+    assert "Landscape" in image_db.get_image("img-0").tags
+    assert "Landscape" in image_db.get_image("img-1").tags
+    assert "Landscape" not in image_db.get_image("img-2").tags
+    image_db._request_save.assert_called_once()
+
+
+def test_remove_tags_from_images_single_save(image_db):
+    """Bulk remove updates only listed images and saves once."""
+    from unittest.mock import MagicMock
+
+    meta = ImageMetadata(
+        id="img-1",
+        path="img.jpg",
+        original_filename="img.jpg",
+        width=10,
+        height=10,
+        file_size=100,
+        format="JPEG",
+        tags={"A", "B"},
+    )
+    image_db.add_image(meta)
+    image_db._request_save = MagicMock()
+    count = image_db.remove_tags_from_images(["img-1"], {"A"})
+    assert count == 1
+    assert image_db.get_image("img-1").tags == {"B"}
+    image_db._request_save.assert_called_once()

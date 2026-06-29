@@ -6,7 +6,7 @@ import os
 import threading
 from datetime import datetime
 from pathlib import Path
-from typing import List, Optional, Tuple, Set
+from typing import Callable, List, Optional, Tuple, Set
 
 # Type alias for rotate_image_file result
 _RotateResult = Tuple[bool, int, int]
@@ -448,6 +448,44 @@ class ImageManager:
 
         # Update the database
         return self.db.update_image(image_id, tags=metadata.tags)
+
+    def add_tags_to_images(
+        self,
+        image_ids: List[str],
+        tag: str,
+        progress: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """
+        Add one tag to many images in a single database save.
+
+        Args:
+            image_ids: Image IDs to update.
+            tag: Tag to add.
+            progress: Optional ``(current, total)`` callback while scanning.
+
+        Returns:
+            Number of images updated.
+        """
+        return self.db.add_tags_to_images(image_ids, {tag}, progress=progress)
+
+    def remove_tags_from_images(
+        self,
+        image_ids: List[str],
+        tag: str,
+        progress: Optional[Callable[[int, int], None]] = None,
+    ) -> int:
+        """
+        Remove one tag from many images in a single database save.
+
+        Args:
+            image_ids: Image IDs to update.
+            tag: Tag to remove.
+            progress: Optional ``(current, total)`` callback while scanning.
+
+        Returns:
+            Number of images updated.
+        """
+        return self.db.remove_tags_from_images(image_ids, {tag}, progress=progress)
 
     def search_images_advanced(
         self,

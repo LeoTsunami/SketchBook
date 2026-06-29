@@ -7,6 +7,7 @@ styles so the library feels cohesive with ``style_dark.qss``.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from typing import Optional
 
 from qtpy.QtGui import QColor
 
@@ -335,3 +336,21 @@ def chip_state_palette(
             text="#f4fff8" if dark else "#0f5132",
         )
     return None
+
+
+def tag_drop_flash_color(tag: str, category: Optional[str] = None) -> QColor:
+    """
+    Resolve the accent colour for a tag-drop flash on an image thumbnail.
+
+    Args:
+        tag: Tag label being applied.
+        category: Parent library category when known (e.g. Human for a subtag).
+
+    Returns:
+        QColor: Vivid chip accent for the overlay animation.
+    """
+    norm = _normalise_branch_key(tag)
+    if norm in _CATEGORY_ACCENTS:
+        return get_hierarchy_background_color(tag, 0)
+    branch = category if category else tag
+    return get_hierarchy_background_color(branch, 1)

@@ -463,6 +463,10 @@ THEME_OPTIONS = [
 class MainWindow(QMainWindow):
     """Main window of the application."""
 
+    # Small tag drops run synchronously; larger ones use a worker + optional progress bar.
+    TAG_APPLY_SYNC_THRESHOLD = 20
+    TAG_APPLY_PROGRESS_THRESHOLD = 20
+
     def __init__(self):
         """Initialize the main window."""
         super().__init__()
@@ -1217,6 +1221,7 @@ class MainWindow(QMainWindow):
         )
         self.image_grid.grid_needs_refresh.connect(self._apply_category_filters)
         self.image_grid.set_import_drop_callback(self._import_from_urls)
+        self.image_grid.set_tag_color_resolver(self._resolve_tag_drop_flash_color)
         middle_layout.addWidget(self.image_grid)
 
         vp = self.image_grid.viewport()
@@ -5096,6 +5101,25 @@ class MainWindow(QMainWindow):
 
     # === Bulk tag application (for drag & drop onto many images) ===
 
+    def _resolve_tag_drop_flash_color(self, tag: str) -> QColor:
+        """
+        Map a dropped tag label to its library accent colour for the flash overlay.
+
+        Args:
+            tag: Tag text being applied to image(s).
+
+        Returns:
+            QColor: Colour used by the drop flash animation.
+        """
+        from gui.tag_library.theme import tag_drop_flash_color
+
+        category = (
+            tag
+            if tag in self._category_buttons
+            else self._subtag_to_category.get(tag)
+        )
+        return tag_drop_flash_color(tag, category)
+
     def apply_tag_to_images_async(self, tag: str, image_ids: List[str]) -> None:
         """
         Apply a tag to many images in a background thread with progress.
@@ -5107,17 +5131,32 @@ class MainWindow(QMainWindow):
         if not image_ids:
             return
 
-        # Create progress bar in status bar
-        progress_bar = self._create_status_progress_bar()
-        progress_bar.setFormat(f"Applying tag '{tag}'...")
+        if len(image_ids) <= self.TAG_APPLY_SYNC_THRESHOLD:
+            try:
+                count = self.image_manager.add_tags_to_images(image_ids, tag)
+                self.statusBar().showMessage(
+                    f"Tag '{tag}' applied to {count} image(s).", 2500
+                )
+                self.image_grid.refresh_visible_tags_for_images(image_ids)
+            except Exception as exc:
+                self._handle_tag_apply_error(str(exc))
+            return
+
+        use_progress_bar = len(image_ids) > self.TAG_APPLY_PROGRESS_THRESHOLD
+        if use_progress_bar:
+            progress_bar = self._create_status_progress_bar()
+            progress_bar.setFormat(f"Applying tag '{tag}'...")
 
         worker = TagApplyWorker(self.image_manager, image_ids, tag)
 
         # Progress updates
-        worker.signals.progress.connect(
-            lambda current, total: self._handle_tag_apply_progress(tag, current, total),
-            Qt.QueuedConnection,
-        )
+        if use_progress_bar:
+            worker.signals.progress.connect(
+                lambda current, total: self._handle_tag_apply_progress(
+                    tag, current, total
+                ),
+                Qt.QueuedConnection,
+            )
 
         # Completion
         worker.signals.finished.connect(
@@ -5132,7 +5171,10 @@ class MainWindow(QMainWindow):
         )
 
         # Start worker
-        self.statusBar().showMessage(f"Applying tag '{tag}' to images...")
+        if use_progress_bar:
+            self.statusBar().showMessage(f"Applying tag '{tag}' to images...")
+        else:
+            self.statusBar().showMessage(f"Applying tag '{tag}'...", 2000)
         self.current_worker = worker
         self.thread_pool.start(worker)
 
@@ -5157,41 +5199,18 @@ class MainWindow(QMainWindow):
     def _handle_tag_apply_finished(
         self, tag: str, image_ids: List[str], total: int
     ) -> None:
-        """Handle completion of tag application; refresh thumbnails in batches to keep UI responsive."""
+        """Handle completion of tag application; refresh tag UI only when visible."""
         try:
             if self.status_progress_bar is not None:
                 self.status_progress_bar.setValue(100)
                 self.status_progress_bar.setFormat(f"Applying tag '{tag}': completed")
                 self.status_progress_bar.repaint()
+                self._cleanup_progress_bars()
 
-            # Clean up progress bar
-            self._cleanup_progress_bars()
-
-            # Refresh only thumbnails that exist in the grid (visible pool or loaded set)
-            to_refresh = [
-                image_id
-                for image_id in image_ids
-                if image_id in self.image_grid.thumbnails
-            ]
-            if not to_refresh:
-                return
-            # Process in batches so the event loop can run between batches (no UI freeze)
-            batch_size = 20
-            index_holder = [0]  # mutable so closure can update
-
-            def process_next_batch() -> None:
-                start = index_holder[0]
-                end = min(start + batch_size, len(to_refresh))
-                grid_thumbnails = self.image_grid.thumbnails
-                for i in range(start, end):
-                    image_id = to_refresh[i]
-                    if image_id in grid_thumbnails:
-                        grid_thumbnails[image_id].refresh_tags()
-                index_holder[0] = end
-                if end < len(to_refresh):
-                    QTimer.singleShot(0, process_next_batch)
-
-            QTimer.singleShot(0, process_next_batch)
+            self.statusBar().showMessage(
+                f"Tag '{tag}' applied to {total} image(s).", 2500
+            )
+            self.image_grid.refresh_visible_tags_for_images(image_ids)
         except Exception:
             self._cleanup_progress_bars()
 

@@ -34,7 +34,15 @@ from qtpy.QtCore import (
     QUrl,
     QElapsedTimer,
 )
-from qtpy.QtGui import QPixmap, QImage, QResizeEvent, QIcon, QDragEnterEvent, QDropEvent
+from qtpy.QtGui import (
+    QColor,
+    QPixmap,
+    QImage,
+    QResizeEvent,
+    QIcon,
+    QDragEnterEvent,
+    QDropEvent,
+)
 from core.image_manager import ImageManager
 from core.image_db import ImageMetadata
 from gui.image_loader_worker import ImageLoaderWorker
@@ -180,6 +188,7 @@ class ImageGrid(QScrollArea):
 
         # Import drop: file/folder drops on grid (or forwarded from thumbnail) trigger this callback
         self._import_drop_callback: Optional[Callable[[List[QUrl]], None]] = None
+        self._tag_color_resolver: Optional[Callable[[str], QColor]] = None
         self.setAcceptDrops(True)
 
         # Apply theme-aware styles
@@ -1168,6 +1177,7 @@ class ImageGrid(QScrollArea):
                 get_selected_images_callback=lambda: self.selected_images,
                 show_tag_popover_callback=self._show_tag_popover,
                 import_drop_callback=self._import_drop_callback,
+                tag_drop_flash_callback=self._flash_tag_drop,
             )
             thumb._fit_mode = self._fit_mode
             thumb.apply_outer_geometry(thumbnail_width, row_height)
@@ -1397,6 +1407,90 @@ class ImageGrid(QScrollArea):
     ) -> None:
         """Set callback for file/folder drops (on grid or forwarded from thumbnail). Used for import."""
         self._import_drop_callback = callback
+
+    def set_tag_color_resolver(
+        self, resolver: Optional[Callable[[str], QColor]]
+    ) -> None:
+        """
+        Set a callback that maps a tag label to its library accent colour.
+
+        Args:
+            resolver: Callable returning a QColor for the given tag text.
+        """
+        self._tag_color_resolver = resolver
+
+    def _tag_drop_flash_targets(
+        self, image_ids: List[str]
+    ) -> List[ImageThumbnail]:
+        """
+        Return thumbnails that will receive drop feedback (visible in the viewport).
+
+        Args:
+            image_ids: Images tagged by the drop.
+
+        Returns:
+            Thumbnails currently shown inside the scroll viewport.
+        """
+        targets: List[ImageThumbnail] = []
+        viewport = self.viewport()
+        viewport_rect = viewport.rect()
+        for image_id in image_ids:
+            thumb = self.thumbnails.get(image_id)
+            if thumb is None or not thumb.isVisible():
+                continue
+            top_left = thumb.mapTo(viewport, QPoint(0, 0))
+            if viewport_rect.intersects(QRect(top_left, thumb.size())):
+                targets.append(thumb)
+        return targets
+
+    def _flash_tag_drop(
+        self,
+        image_ids: List[str],
+        tag: str,
+        primary_image_id: Optional[str] = None,
+    ) -> None:
+        """
+        Play a colour flash on every selected thumbnail visible in the viewport.
+
+        Single-image drops use a smooth opacity pulse; multi-image drops use a
+        lightweight instant tint to stay responsive.
+
+        Args:
+            image_ids: Image IDs that received the tag.
+            tag: Tag label (used to resolve colour).
+            primary_image_id: Drop target id (reserved; flash uses all viewport hits).
+        """
+        from gui.tag_drop_overlay import play_tag_drop_flash
+
+        if self._tag_color_resolver is not None:
+            color = self._tag_color_resolver(tag)
+        else:
+            color = QColor(140, 100, 220)
+
+        targets = self._tag_drop_flash_targets(image_ids)
+        if not targets:
+            return
+
+        animated = len(targets) == 1
+        for thumb in targets:
+            play_tag_drop_flash(
+                thumb.image_container,
+                color,
+                animated=animated,
+            )
+
+    def refresh_visible_tags_for_images(self, image_ids: List[str]) -> None:
+        """
+        Refresh tag chips only when the active image is among the updated set.
+
+        Args:
+            image_ids: Image IDs whose tags may have changed.
+        """
+        if not self.active_image_id or self.active_image_id not in image_ids:
+            return
+        thumb = self.thumbnails.get(self.active_image_id)
+        if thumb is not None:
+            thumb.refresh_tags()
 
     def _calculate_row_heights(self):
         """Calculate optimal height for each row based on actual image dimensions."""
@@ -1639,6 +1733,7 @@ class ImageGrid(QScrollArea):
                 get_selected_images_callback=lambda: self.selected_images,
                 show_tag_popover_callback=self._show_tag_popover,
                 import_drop_callback=self._import_drop_callback,
+                tag_drop_flash_callback=self._flash_tag_drop,
             )
             thumbnail._fit_mode = self._fit_mode
 
@@ -1674,6 +1769,7 @@ class ImageGrid(QScrollArea):
             get_selected_images_callback=lambda: self.selected_images,
             show_tag_popover_callback=self._show_tag_popover,
             import_drop_callback=self._import_drop_callback,
+            tag_drop_flash_callback=self._flash_tag_drop,
         )
         thumbnail._fit_mode = self._fit_mode
         thumbnail.apply_outer_geometry(thumbnail_width, thumbnail_height)
@@ -2365,26 +2461,9 @@ class ImageGrid(QScrollArea):
     def _on_remove_tag_finished(
         self, tag: str, image_ids: List[str], total: int
     ) -> None:
-        """Refresh thumbnails after tag removal in batches to keep UI responsive."""
-        to_refresh = [iid for iid in image_ids if iid in self.thumbnails]
-        if not to_refresh:
-            self.tag_remove_finished.emit(tag, image_ids, total)
-            return
-        batch_size = 20
-        index_holder = [0]
-
-        def process_next_batch() -> None:
-            start = index_holder[0]
-            end = min(start + batch_size, len(to_refresh))
-            for i in range(start, end):
-                self.thumbnails[to_refresh[i]].refresh_tags()
-            index_holder[0] = end
-            if end < len(to_refresh):
-                QTimer.singleShot(0, process_next_batch)
-            else:
-                self.tag_remove_finished.emit(tag, image_ids, total)
-
-        QTimer.singleShot(0, process_next_batch)
+        """Refresh thumbnails after tag removal when tag UI is visible."""
+        self.refresh_visible_tags_for_images(image_ids)
+        self.tag_remove_finished.emit(tag, image_ids, total)
 
     def _on_remove_tag_error(self, error_msg: str) -> None:
         """Handle tag removal error (main thread)."""
@@ -2398,17 +2477,8 @@ class ImageGrid(QScrollArea):
             tag: Tag to add
             image_ids: List of image IDs to add the tag to
         """
-        for image_id in image_ids:
-            metadata = self.image_manager.get_image_metadata(image_id)
-            if metadata:
-                new_tags = metadata.tags.copy()
-                new_tags.add(tag)
-                self.image_manager.update_image_metadata(image_id, tags=new_tags)
-
-        # Refresh tags display on affected thumbnails
-        for image_id in image_ids:
-            if image_id in self.thumbnails:
-                self.thumbnails[image_id].refresh_tags()
+        self.image_manager.add_tags_to_images(image_ids, tag)
+        self.refresh_visible_tags_for_images(image_ids)
 
     def load_images_with_advanced_filter(
         self, filters: dict, sort_by: str = "import_date_desc"
