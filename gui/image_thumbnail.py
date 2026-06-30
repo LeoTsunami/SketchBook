@@ -319,10 +319,16 @@ class ImageThumbnail(QFrame):
             outer_width: Outer thumbnail width in pixels.
             outer_height: Outer thumbnail height in pixels.
         """
-        self.setFixedSize(outer_width, outer_height)
         inner_w, inner_h = self.content_dimensions(outer_width, outer_height)
+        # Reason: size the view before the outer frame so resizeEvent / fit logic
+        # sees the final viewport dimensions (column changes, relayout, etc.).
         self.image_container.setFixedSize(inner_w, inner_h)
         self.graphics_view.setFixedSize(inner_w, inner_h)
+        self.setFixedSize(outer_width, outer_height)
+        if self.pixmap_item is not None:
+            fit_pixmap_in_view(
+                self.graphics_view, self.scene, self.pixmap_item, self._fit_mode
+            )
 
     def set_fit_mode(self, mode: FitMode) -> None:
         """
