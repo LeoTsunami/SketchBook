@@ -27,6 +27,7 @@ from gui.tag_library.constants import (
     TAG_LIBRARY_TAG_CELL_ALIGN,
     TAG_LIBRARY_SHELF_GRID_PADDING_PX,
     TAG_LIBRARY_CHIP_SHADOW_BLEED_PX,
+    TAG_LIBRARY_HIERARCHY_INNER_MARGIN_PX,
 )
 from gui.tag_library.chip import (
     WrappingDraggableTagButton,
@@ -87,7 +88,13 @@ class TagGridHost(QWidget):
         self.setMinimumHeight(0)
 
         padding = TAG_LIBRARY_SHELF_GRID_PADDING_PX if shelf_padding else 0
-        bleed = TAG_LIBRARY_CHIP_SHADOW_BLEED_PX
+        # Nested sub-category grids live inside a bordered hierarchy frame and
+        # don't need the full shadow bleed: use a tight inner margin instead.
+        bleed = (
+            TAG_LIBRARY_HIERARCHY_INNER_MARGIN_PX
+            if depth_offset > 0
+            else TAG_LIBRARY_CHIP_SHADOW_BLEED_PX
+        )
         self._grid = QGridLayout(self)
         self._grid.setContentsMargins(
             padding + bleed, padding + bleed, padding + bleed, padding + bleed
@@ -207,6 +214,16 @@ class TagGridHost(QWidget):
             self._root_tags, self._taxonomy, active_subtags
         )
         if lines == self._cached_lines:
+            # This level's own layout is unchanged, but a deeper descendant's
+            # expand state may have changed. Frame lines only exist for expanded
+            # parents, so propagate to their child grids to update nested levels.
+            if active_subtags != self._last_active_subtags:
+                self._last_active_subtags = set(active_subtags)
+                for kind, payload in lines:
+                    if kind == "frame":
+                        child_grid = self._child_grids.get(payload)
+                        if child_grid is not None:
+                            child_grid._relayout(active_subtags)
             return
 
         self._last_active_subtags = set(active_subtags)
@@ -296,7 +313,7 @@ class TagGridHost(QWidget):
             "}"
         )
         frame_layout = QGridLayout(frame)
-        frame_layout.setContentsMargins(3, 4, 3, 4)
+        frame_layout.setContentsMargins(2, 2, 2, 2)
         frame_layout.setHorizontalSpacing(TAG_LIBRARY_TAG_GRID_SPACING_PX)
         frame_layout.setVerticalSpacing(6)
 

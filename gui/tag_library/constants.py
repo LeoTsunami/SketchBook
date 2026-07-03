@@ -20,6 +20,9 @@ TAG_LIBRARY_MULTI_MIME = "application/x-sketchbook-tag-library-multi"
 TAG_LIBRARY_TAG_GRID_COLUMNS = 3
 TAG_LIBRARY_TAG_GRID_SPACING_PX = 14
 TAG_LIBRARY_CHIP_SHADOW_BLEED_PX = 14
+# Tight inner margin for nested sub-category grids (inside a hierarchy frame),
+# where the full shadow bleed is not needed.
+TAG_LIBRARY_HIERARCHY_INNER_MARGIN_PX = 2
 TAG_LIBRARY_TAG_CELL_WIDTH_TRIM_PX = 8
 TAG_LIBRARY_CATEGORY_WIDTH_TRIM_PX = 4
 TAG_LIBRARY_CATEGORY_SIDE_INSET_PX = 16

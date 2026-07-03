@@ -705,6 +705,9 @@ class WrappingDraggableTagButton(DraggableTagButton):
         self._inner_layout.addWidget(self._content_row, 0, Qt.AlignLeft | Qt.AlignVCenter)
 
         self.setCursor(Qt.PointingHandCursor)
+        # Reason: clicking a chip must not steal focus, else the QScrollArea
+        # auto-scrolls to the focused widget and the scroll position jumps.
+        self.setFocusPolicy(Qt.NoFocus)
         self.set_cell_width(cell_width)
 
     def resizeEvent(self, event) -> None:

@@ -2047,11 +2047,18 @@ class MainWindow(QMainWindow):
                     changed = True
         return result
 
-    def _load_tags_into_grid(self, skip_sync: bool = False) -> None:
+    def _load_tags_into_grid(
+        self, skip_sync: bool = False, scroll_to: Optional[str] = None
+    ) -> None:
         """
         Delegate tag library load to TagLibraryPanel.
 
-        Preserves active filter state across reloads.
+        Preserves active filter state and scroll position across reloads.
+
+        Args:
+            skip_sync: Skip the post-load filter state sync when True.
+            scroll_to: Tag/shelf/category name to centre in the viewport after
+                the rebuild (used when creating a tag or shelf).
         """
         self._user_tags_config = user_tags_config.load_config()
         user_tags_set = self._get_user_tags()
@@ -2065,6 +2072,7 @@ class MainWindow(QMainWindow):
             user_tags_config_data=self._user_tags_config,
             restore_categories=restore_cats,
             restore_subtags=restore_subtags,
+            scroll_to=scroll_to,
         )
 
         # Sync shelf filter modes from panel
@@ -4067,7 +4075,7 @@ class MainWindow(QMainWindow):
             registered.append(tag_name)
         user_tags_config.save_config(placements, icons, registered)
         self._user_tags_config = user_tags_config.load_config()
-        self._load_tags_into_grid()
+        self._load_tags_into_grid(scroll_to=tag_name)
         self._update_tag_search_completer()
         self._sync_tag_grid_state()
 
@@ -4135,7 +4143,7 @@ class MainWindow(QMainWindow):
             shelf_colors=shelf_colors,
         )
         self._user_tags_config = user_tags_config.load_config()
-        self._load_tags_into_grid()
+        self._load_tags_into_grid(scroll_to=shelf_name)
         self._sync_tag_grid_state()
 
     def _update_available_tags(self) -> None:

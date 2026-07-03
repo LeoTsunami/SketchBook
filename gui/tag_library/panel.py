@@ -295,6 +295,7 @@ class TagLibraryPanel(QWidget):
         user_tags_config_data: Dict[str, Any],
         restore_categories: Optional[Set[str]] = None,
         restore_subtags: Optional[Dict[str, Set[str]]] = None,
+        scroll_to: Optional[str] = None,
     ) -> None:
         """
         Build (or rebuild) the entire widget tree from taxonomy + user config.
@@ -308,7 +309,11 @@ class TagLibraryPanel(QWidget):
             user_tags_config_data: Loaded user_tags_config dict.
             restore_categories: Active category set to restore after reload.
             restore_subtags: Active subtag dict to restore after reload.
+            scroll_to: Tag/shelf/category name to centre in the viewport after
+                the rebuild; when None, the previous scroll offset is kept.
         """
+        prev_scroll = self._scroll_area.verticalScrollBar().value()
+
         self._user_tags_config = user_tags_config_data
         self._user_tags = user_tags
         placements = user_tags_config_data.get("placements", {})
@@ -407,7 +412,55 @@ class TagLibraryPanel(QWidget):
             self._active_subtags = {k: set(v) for k, v in restore_subtags.items()}
 
         self._apply_all_states()
-        QTimer.singleShot(0, self._apply_widths)
+
+        def _post_layout() -> None:
+            self._apply_widths()
+            # Chip heights settle only after widths applied; restore scroll next tick.
+            QTimer.singleShot(
+                0, lambda: self._restore_scroll(prev_scroll, scroll_to)
+            )
+
+        QTimer.singleShot(0, _post_layout)
+
+    # ------------------------------------------------------------------
+    # Scroll preservation
+    # ------------------------------------------------------------------
+
+    def _restore_scroll(self, prev_value: int, scroll_to: Optional[str]) -> None:
+        """
+        Restore or centre the vertical scroll after a rebuild.
+
+        Args:
+            prev_value: Scroll offset captured before the rebuild.
+            scroll_to: Widget key to centre on, or None to keep prev_value.
+        """
+        bar = self._scroll_area.verticalScrollBar()
+        if scroll_to and self._center_on_key(scroll_to):
+            return
+        bar.setValue(min(prev_value, bar.maximum()))
+
+    def _center_on_key(self, key: str) -> bool:
+        """
+        Centre the viewport on a tag chip, shelf, or category section.
+
+        Args:
+            key: Tag name, or shelf/category name (with trailing colon for shelves).
+
+        Returns:
+            bool: True if the target was found and scrolled to.
+        """
+        widget: Optional[QWidget] = self.get_chip(key)
+        if widget is None:
+            section = self._shelf_sections.get(key) or self._category_sections.get(key)
+            widget = section
+        if widget is None:
+            return False
+        bar = self._scroll_area.verticalScrollBar()
+        top = widget.mapTo(self._content, QPoint(0, 0)).y()
+        vp_h = self._scroll_area.viewport().height()
+        target = top - vp_h // 2 + widget.height() // 2
+        bar.setValue(max(0, min(target, bar.maximum())))
+        return True
 
     # ------------------------------------------------------------------
     # Section construction
@@ -511,11 +564,41 @@ class TagLibraryPanel(QWidget):
     # Click handlers
     # ------------------------------------------------------------------
 
+    def _anchor_scroll_to_widget(self, widget: Optional[QWidget]) -> None:
+        """
+        Keep *widget* at the same viewport position across an expand/collapse.
+
+        Captures the widget's current offset, then corrects the scrollbar on the
+        next event-loop tick (after the grid relayout settles) so the clicked
+        chip does not jump when child rows appear or disappear.
+
+        Args:
+            widget: The chip/header the user clicked, or None to skip.
+        """
+        vp = self._scroll_area.viewport()
+        if widget is None or vp is None:
+            return
+        before = widget.mapTo(vp, QPoint(0, 0)).y()
+        bar = self._scroll_area.verticalScrollBar()
+
+        def _correct() -> None:
+            try:
+                after = widget.mapTo(vp, QPoint(0, 0)).y()
+            except RuntimeError:
+                return
+            delta = after - before
+            if delta:
+                bar.setValue(max(0, min(bar.maximum(), bar.value() + delta)))
+
+        QTimer.singleShot(0, _correct)
+
     def _on_category_header_clicked(self, category: str) -> None:
         """Toggle category expand / collapse and update filter."""
         if self._parent_select_mode:
             self._on_tag_clicked_in_parent_mode(category)
             return
+
+        self._anchor_scroll_to_widget(self._header_chips.get(category))
 
         if category in self._active_categories:
             # Collapse
@@ -547,6 +630,8 @@ class TagLibraryPanel(QWidget):
         if self._parent_select_mode:
             self._on_tag_clicked_in_parent_mode(tag, category)
             return
+
+        self._anchor_scroll_to_widget(self._all_chips.get(tag))
 
         if category not in self._active_categories:
             # Auto-expand the category
@@ -580,6 +665,8 @@ class TagLibraryPanel(QWidget):
         if self._parent_select_mode:
             self._on_tag_clicked_in_parent_mode(tag, shelf)
             return
+
+        self._anchor_scroll_to_widget(self._all_chips.get(tag))
 
         cat_subtags = self._active_subtags.setdefault(shelf, set())
         if tag in cat_subtags:
