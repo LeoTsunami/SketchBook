@@ -45,6 +45,7 @@ from gui.tag_shelves import (
     is_tag_shelf,
     load_default_tags_taxonomy,
     merge_custom_shelves,
+    normalize_shelf_name,
     parse_category_tags,
 )
 from gui.tag_library.chip import (
@@ -72,6 +73,8 @@ from gui.tag_library.grid_host import TagGridHost, _with_expand_icon
 from gui.tag_library.section import CategorySection, ShelfSection
 from gui.tag_library.state import TagFilterState, TagLibraryTaxonomy
 from gui.tag_library.theme import (
+    get_shelf_color_override,
+    set_shelf_color_overrides,
     tag_library_scroll_stylesheet,
 )
 
@@ -211,6 +214,9 @@ class TagLibraryPanel(QWidget):
     tag_icon_change_requested = Signal(str)          # tag_name
     tag_reparent_requested = Signal(object, object)  # set[str] tags, dict placement
     shelf_create_requested = Signal(str, str)        # name, filter_mode
+    shelf_edit_requested = Signal(str, str, str, str)  # old_name, new_name, filter, color
+    shelf_delete_requested = Signal(str)             # shelf_name
+    shelf_color_change_requested = Signal(str, str)  # shelf_name, hex_color ("" = reset)
     tag_create_requested = Signal(str, str)          # name, icon_filename
     drag_session_started = Signal()
     drag_session_ended = Signal()
@@ -247,6 +253,7 @@ class TagLibraryPanel(QWidget):
         self._user_tags_config: Dict[str, Any] = {}
         self._user_tags: Set[str] = set()
         self._tag_shelf_filter_modes: Dict[str, str] = {}
+        self._custom_shelf_names: Set[str] = set()
 
         # ---- layout ----
         outer = QVBoxLayout(self)
@@ -306,6 +313,14 @@ class TagLibraryPanel(QWidget):
         self._user_tags = user_tags
         placements = user_tags_config_data.get("placements", {})
         user_tags_list = sorted(user_tags)
+
+        # Register user shelf colours so chips inherit the chosen hue on build.
+        set_shelf_color_overrides(user_tags_config_data.get("shelf_colors", {}))
+        self._custom_shelf_names = {
+            normalize_shelf_name(str(s.get("name", "")))
+            for s in user_tags_config_data.get("custom_shelves", [])
+            if isinstance(s, dict) and s.get("name")
+        }
 
         # --- Clear existing sections ---
         self._category_sections.clear()
@@ -452,9 +467,13 @@ class TagLibraryPanel(QWidget):
             )
             section.chip_clicked.connect(self._on_shelf_chip_clicked)
             section.chip_context_menu.connect(self._on_chip_context_menu)
+            section.shelf_context_menu.connect(self._on_shelf_context_menu)
             section.chip_drag_started.connect(self._on_drag_started)
             section.chip_drag_ended.connect(self._on_drag_ended)
             section.set_header_width(cat_w)
+            override = get_shelf_color_override(category)
+            if override is not None:
+                section.set_header_color(override.name())
             self._shelf_sections[category] = section
             return section
         else:
@@ -624,6 +643,81 @@ class TagLibraryPanel(QWidget):
         finally:
             if overlay is not None:
                 overlay.lock_dismiss(False)
+
+    def _on_shelf_context_menu(self, shelf: str) -> None:
+        """
+        Show the shelf context menu.
+
+        Custom shelves get Edit… (name/filter/colour) and Delete shelf.
+        Built-in shelves only get colour set/reset.
+
+        Args:
+            shelf: Shelf name (with trailing colon).
+        """
+        from gui.tag_library.shelf_color_popup import pick_shelf_color
+
+        overlay = self._get_overlay()
+        if overlay is not None:
+            overlay.lock_dismiss(True)
+        try:
+            is_custom = shelf in self._custom_shelf_names
+            menu = QMenu(self)
+
+            if is_custom:
+                edit_act = menu.addAction("Edit shelf…")
+                delete_act = menu.addAction("Delete shelf…")
+                action = menu.exec_(QCursor.pos())
+                if action == edit_act:
+                    self._open_shelf_edit_dialog(shelf)
+                elif action == delete_act:
+                    self.shelf_delete_requested.emit(shelf)
+            else:
+                has_color = get_shelf_color_override(shelf) is not None
+                color_act = menu.addAction("Set colour…")
+                reset_act = menu.addAction("Reset colour")
+                reset_act.setEnabled(has_color)
+                action = menu.exec_(QCursor.pos())
+                if action == color_act:
+                    current = get_shelf_color_override(shelf)
+                    chosen = pick_shelf_color(current, self)
+                    if chosen:
+                        self.shelf_color_change_requested.emit(shelf, chosen)
+                elif action == reset_act and has_color:
+                    self.shelf_color_change_requested.emit(shelf, "")
+        finally:
+            if overlay is not None:
+                overlay.lock_dismiss(False)
+
+    def _open_shelf_edit_dialog(self, shelf: str) -> None:
+        """
+        Open the edit dialog for a custom shelf and emit the change request.
+
+        Args:
+            shelf: Shelf name (with trailing colon).
+        """
+        from gui.add_shelf_dialog import AddShelfDialog
+
+        current_color = get_shelf_color_override(shelf)
+        dialog = AddShelfDialog(
+            self,
+            name=shelf.rstrip(":"),
+            filter_mode=self._tag_shelf_filter_modes.get(shelf, "or"),
+            color=current_color.name() if current_color is not None else None,
+            is_edit=True,
+        )
+        from qtpy.QtWidgets import QDialog as _QDialog
+
+        if dialog.exec_() != _QDialog.DialogCode.Accepted:
+            return
+        new_name = dialog.get_shelf_name()
+        if not new_name:
+            return
+        self.shelf_edit_requested.emit(
+            shelf,
+            new_name,
+            dialog.get_filter_mode(),
+            dialog.get_color() or "",
+        )
 
     # ------------------------------------------------------------------
     # Parent-select mode

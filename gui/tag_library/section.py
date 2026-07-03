@@ -256,6 +256,7 @@ class ShelfSection(QWidget):
 
     chip_clicked = Signal(str, str)        # (tag_name, shelf_name)
     chip_context_menu = Signal(str)        # tag_name
+    shelf_context_menu = Signal(str)       # shelf_name
     chip_drag_started = Signal()
     chip_drag_ended = Signal()
 
@@ -287,18 +288,14 @@ class ShelfSection(QWidget):
         self._header.setObjectName("TagGridButton")
         self._header.setCursor(Qt.ArrowCursor)
         self._header.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Maximum)
-        self._header.setStyleSheet(
-            f"QLabel#TagGridButton {{"
-            f" font-weight: 600;"
-            f" font-size: {TAG_LIBRARY_FONT_SHELF_TITLE_PX}px;"
-            f" letter-spacing: 0.4px;"
-            f" padding: 6px 4px 4px 4px;"
-            f" background-color: transparent;"
-            f" color: #c8c2d6;"
-            f"}}"
-        )
+        self._header_color = "#c8c2d6"
+        self._apply_header_style()
         self._header.setProperty("tagGridRole", "category")
         self._header.setProperty("tagGridKey", shelf_name)
+        self._header.setContextMenuPolicy(Qt.CustomContextMenu)
+        self._header.customContextMenuRequested.connect(
+            lambda _pos: self.shelf_context_menu.emit(shelf_name)
+        )
         layout.addWidget(self._header)
 
         # Drop zone frame + shelf grid
@@ -316,6 +313,10 @@ class ShelfSection(QWidget):
         )
         drop_frame.setProperty("tagGridRole", "category")
         drop_frame.setProperty("tagGridKey", shelf_name)
+        drop_frame.setContextMenuPolicy(Qt.CustomContextMenu)
+        drop_frame.customContextMenuRequested.connect(
+            lambda _pos: self.shelf_context_menu.emit(shelf_name)
+        )
         drop_frame_layout = QVBoxLayout(drop_frame)
         drop_frame_layout.setContentsMargins(0, 0, 0, 0)
         drop_frame_layout.setSpacing(0)
@@ -351,6 +352,29 @@ class ShelfSection(QWidget):
     def shelf_name(self) -> str:
         """Shelf name for this section."""
         return self._shelf_name
+
+    def _apply_header_style(self) -> None:
+        """Apply the current header text colour to the shelf title label."""
+        self._header.setStyleSheet(
+            f"QLabel#TagGridButton {{"
+            f" font-weight: 600;"
+            f" font-size: {TAG_LIBRARY_FONT_SHELF_TITLE_PX}px;"
+            f" letter-spacing: 0.4px;"
+            f" padding: 6px 4px 4px 4px;"
+            f" background-color: transparent;"
+            f" color: {self._header_color};"
+            f"}}"
+        )
+
+    def set_header_color(self, color: Optional[str]) -> None:
+        """
+        Tint the shelf title, or reset to the default when color is None.
+
+        Args:
+            color: CSS hex colour for the title, or None for the default grey.
+        """
+        self._header_color = color or "#c8c2d6"
+        self._apply_header_style()
 
     @property
     def grid_host(self) -> TagGridHost:

@@ -20,7 +20,13 @@ def load_config() -> Dict[str, Any]:
     """
     path = get_config_path()
     if not path.exists():
-        return {"placements": {}, "icons": {}, "registered_only": [], "custom_shelves": []}
+        return {
+            "placements": {},
+            "icons": {},
+            "registered_only": [],
+            "custom_shelves": [],
+            "shelf_colors": {},
+        }
     try:
         with open(path, "r", encoding="utf-8") as f:
             import json
@@ -29,15 +35,23 @@ def load_config() -> Dict[str, Any]:
         icons = data.get("icons", {})
         registered_only = data.get("registered_only", [])
         custom_shelves = data.get("custom_shelves", [])
+        shelf_colors = data.get("shelf_colors", {})
         return {
             "placements": dict(placements),
             "icons": dict(icons),
             "registered_only": list(registered_only),
             "custom_shelves": list(custom_shelves) if isinstance(custom_shelves, list) else [],
+            "shelf_colors": dict(shelf_colors) if isinstance(shelf_colors, dict) else {},
         }
     except (OSError, ValueError) as e:
         print(f"Error loading user tags config: {e}")
-        return {"placements": {}, "icons": {}, "registered_only": [], "custom_shelves": []}
+        return {
+            "placements": {},
+            "icons": {},
+            "registered_only": [],
+            "custom_shelves": [],
+            "shelf_colors": {},
+        }
 
 
 def save_config(
@@ -45,6 +59,7 @@ def save_config(
     icons: Dict[str, str],
     registered_only: Optional[List[str]] = None,
     custom_shelves: Optional[List[Dict[str, Any]]] = None,
+    shelf_colors: Optional[Dict[str, str]] = None,
 ) -> bool:
     """
     Save user tags config.
@@ -54,6 +69,7 @@ def save_config(
         icons: Map tag name -> icon filename e.g. "Hand.png".
         registered_only: Tags added via UI but not yet on any image (optional).
         custom_shelves: User-defined tag library shelves (optional; keeps existing if None).
+        shelf_colors: Map shelf name -> hex colour "#rrggbb" (optional; keeps existing if None).
 
     Returns:
         True if saved successfully.
@@ -70,6 +86,10 @@ def save_config(
         payload["custom_shelves"] = custom_shelves
     else:
         payload["custom_shelves"] = existing.get("custom_shelves", [])
+    if shelf_colors is not None:
+        payload["shelf_colors"] = shelf_colors
+    else:
+        payload["shelf_colors"] = existing.get("shelf_colors", {})
     try:
         with open(path, "w", encoding="utf-8") as f:
             import json

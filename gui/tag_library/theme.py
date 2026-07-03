@@ -7,7 +7,7 @@ styles so the library feels cohesive with ``style_dark.qss``.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from typing import Optional
+from typing import Dict, Optional
 
 from qtpy.QtGui import QColor
 
@@ -52,6 +52,40 @@ _CATEGORY_ACCENTS: dict[str, _CategoryAccent] = {
     "objects": _CategoryAccent(318, 48, 45),    # dusty orchid (not fire-red)
 }
 
+# User-defined shelf colours, keyed by normalised shelf name → base QColor.
+# Populated from user_tags_config so shelf tags inherit the chosen hue.
+_SHELF_COLOR_OVERRIDES: Dict[str, QColor] = {}
+
+
+def set_shelf_color_overrides(colors: Dict[str, str]) -> None:
+    """
+    Replace the shelf colour override registry.
+
+    Args:
+        colors: Map of shelf name -> hex colour string (e.g. "#7c4dff").
+            Invalid or empty entries are ignored.
+    """
+    _SHELF_COLOR_OVERRIDES.clear()
+    for name, hex_color in (colors or {}).items():
+        if not name or not hex_color:
+            continue
+        color = QColor(hex_color)
+        if color.isValid():
+            _SHELF_COLOR_OVERRIDES[_normalise_branch_key(name)] = color
+
+
+def get_shelf_color_override(shelf_name: str) -> Optional[QColor]:
+    """
+    Return the base override colour for a shelf, or None if unset.
+
+    Args:
+        shelf_name: Shelf name (with or without trailing colon).
+
+    Returns:
+        QColor | None: Configured base colour.
+    """
+    return _SHELF_COLOR_OVERRIDES.get(_normalise_branch_key(shelf_name))
+
 
 def _normalise_branch_key(branch_key: str) -> str:
     """
@@ -78,8 +112,25 @@ def get_hierarchy_background_color(branch_key: str, depth: int) -> QColor:
         QColor in HSL space.
     """
     norm = _normalise_branch_key(branch_key)
-    accent = _CATEGORY_ACCENTS.get(norm)
     dark_theme = tag_library_is_dark_theme()
+    override = _SHELF_COLOR_OVERRIDES.get(norm)
+    if override is not None:
+        h, s, lightness, _ = override.getHsl()
+        hue = h if h >= 0 else 0
+        base_sat = int(s / 255 * 100)
+        base_light = int(lightness / 255 * 100)
+        if dark_theme:
+            sat_pct = min(base_sat + depth * 3, 85)
+            light_pct = min(base_light + depth * 5, 70)
+        else:
+            sat_pct = min(base_sat + depth * 4, 88)
+            light_pct = max(base_light - depth * 6, 40)
+        return QColor.fromHsl(
+            hue,
+            int(255 * sat_pct / 100),
+            int(255 * light_pct / 100),
+        )
+    accent = _CATEGORY_ACCENTS.get(norm)
     if accent is not None:
         hue = accent.hue
         if dark_theme:

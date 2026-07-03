@@ -1344,6 +1344,11 @@ class MainWindow(QMainWindow):
         self._tag_library_panel.filter_changed.connect(self._on_panel_filter_changed)
         self._tag_library_panel.tag_delete_requested.connect(self._delete_user_tags)
         self._tag_library_panel.tag_rename_requested.connect(self._on_panel_tag_rename)
+        self._tag_library_panel.shelf_edit_requested.connect(self._on_panel_shelf_edit)
+        self._tag_library_panel.shelf_delete_requested.connect(self._on_panel_shelf_delete)
+        self._tag_library_panel.shelf_color_change_requested.connect(
+            self._on_panel_shelf_color_change
+        )
         self._tag_library_panel.tag_icon_change_requested.connect(self._on_panel_tag_icon_change)
         self._tag_library_panel.drag_session_started.connect(self._begin_tag_library_drag_session)
         self._tag_library_panel.drag_session_ended.connect(self._end_tag_library_drag_session)
@@ -4118,11 +4123,16 @@ class MainWindow(QMainWindow):
                 "tags": [],
             }
         )
+        shelf_colors = dict(cfg.get("shelf_colors", {}))
+        chosen_color = dialog.get_color()
+        if chosen_color:
+            shelf_colors[shelf_name] = chosen_color
         user_tags_config.save_config(
             dict(cfg.get("placements", {})),
             dict(cfg.get("icons", {})),
             list(cfg.get("registered_only", [])),
             custom_shelves=custom_shelves,
+            shelf_colors=shelf_colors,
         )
         self._user_tags_config = user_tags_config.load_config()
         self._load_tags_into_grid()
@@ -4298,6 +4308,146 @@ class MainWindow(QMainWindow):
                 placements[t] = {"parent_tag": new_name}
         user_tags_config.save_config(placements, icons, cfg.get("registered_only"))
         self._update_available_tags()
+
+    def _on_panel_shelf_edit(
+        self, old_name: str, new_display_name: str, filter_mode: str, color: str
+    ) -> None:
+        """
+        Apply edits to a user-created shelf: name, filter mode and colour.
+
+        Args:
+            old_name: Current shelf name (with trailing colon).
+            new_display_name: New shelf title (colon added automatically).
+            filter_mode: "and" or "or".
+            color: Hex colour "#rrggbb", or "" for no colour.
+        """
+        new_name = normalize_shelf_name(new_display_name)
+        if not new_name:
+            return
+        renamed = new_name != old_name
+        if renamed and self._shelf_name_already_used(new_name):
+            QMessageBox.warning(
+                self,
+                "Edit shelf",
+                "A category or shelf with this name already exists.",
+            )
+            return
+
+        cfg = user_tags_config.load_config()
+        custom_shelves = []
+        found = False
+        for shelf in cfg.get("custom_shelves", []):
+            if not isinstance(shelf, dict):
+                continue
+            entry = dict(shelf)
+            if normalize_shelf_name(str(entry.get("name", ""))) == old_name:
+                entry["name"] = new_name
+                entry["filter"] = filter_mode
+                found = True
+            custom_shelves.append(entry)
+        if not found:
+            return
+
+        # Move tag placements pointing at the old shelf name when renamed.
+        placements = dict(cfg.get("placements", {}))
+        if renamed:
+            for tag, pl in list(placements.items()):
+                if isinstance(pl, dict) and pl.get("category") == old_name:
+                    placements[tag] = {"category": new_name}
+
+        # Update the shelf colour (drop the old key on rename).
+        shelf_colors = dict(cfg.get("shelf_colors", {}))
+        shelf_colors.pop(old_name, None)
+        if color:
+            shelf_colors[new_name] = color
+        else:
+            shelf_colors.pop(new_name, None)
+
+        user_tags_config.save_config(
+            placements,
+            dict(cfg.get("icons", {})),
+            list(cfg.get("registered_only", [])),
+            custom_shelves=custom_shelves,
+            shelf_colors=shelf_colors,
+        )
+        self._user_tags_config = user_tags_config.load_config()
+        self._load_tags_into_grid()
+        self._sync_tag_grid_state()
+
+    def _on_panel_shelf_delete(self, shelf_name: str) -> None:
+        """
+        Delete a custom shelf after confirmation; its tags return to Miscellaneous.
+
+        Args:
+            shelf_name: Shelf name to remove (with trailing colon).
+        """
+        confirm = QMessageBox.question(
+            self,
+            "Delete shelf",
+            f"Delete the shelf '{shelf_name.rstrip(':')}'?\n\n"
+            "Its tags are kept and moved back to the Miscellaneous shelf.",
+            QMessageBox.StandardButton.Yes | QMessageBox.StandardButton.No,
+            QMessageBox.StandardButton.No,
+        )
+        if confirm != QMessageBox.StandardButton.Yes:
+            return
+
+        cfg = user_tags_config.load_config()
+        custom_shelves = [
+            dict(shelf)
+            for shelf in cfg.get("custom_shelves", [])
+            if isinstance(shelf, dict)
+            and normalize_shelf_name(str(shelf.get("name", ""))) != shelf_name
+        ]
+
+        # Move tags placed directly in this shelf back to Miscellaneous.
+        placements = dict(cfg.get("placements", {}))
+        for tag, pl in list(placements.items()):
+            if isinstance(pl, dict) and pl.get("category") == shelf_name:
+                placements[tag] = {"category": MISCELLANEOUS_SHELF}
+
+        shelf_colors = dict(cfg.get("shelf_colors", {}))
+        shelf_colors.pop(shelf_name, None)
+
+        user_tags_config.save_config(
+            placements,
+            dict(cfg.get("icons", {})),
+            list(cfg.get("registered_only", [])),
+            custom_shelves=custom_shelves,
+            shelf_colors=shelf_colors,
+        )
+        self._user_tags_config = user_tags_config.load_config()
+        # A deleted shelf may be in the active filter; drop it to avoid stale state.
+        self._active_categories.discard(shelf_name)
+        self._active_subtags.pop(shelf_name, None)
+        self._load_tags_into_grid()
+        self._sync_tag_grid_state()
+
+    def _on_panel_shelf_color_change(self, shelf_name: str, hex_color: str) -> None:
+        """
+        Set or reset a shelf's colour; its tags inherit the chosen hue.
+
+        Args:
+            shelf_name: Shelf name (with trailing colon).
+            hex_color: Hex colour "#rrggbb", or "" to clear the override.
+        """
+        cfg = user_tags_config.load_config()
+        shelf_colors = dict(cfg.get("shelf_colors", {}))
+        if hex_color:
+            shelf_colors[shelf_name] = hex_color
+        else:
+            shelf_colors.pop(shelf_name, None)
+
+        user_tags_config.save_config(
+            dict(cfg.get("placements", {})),
+            dict(cfg.get("icons", {})),
+            list(cfg.get("registered_only", [])),
+            custom_shelves=list(cfg.get("custom_shelves", [])),
+            shelf_colors=shelf_colors,
+        )
+        self._user_tags_config = user_tags_config.load_config()
+        self._load_tags_into_grid()
+        self._sync_tag_grid_state()
 
     def _on_panel_tag_icon_change(self, tag: str) -> None:
         """
