@@ -1256,14 +1256,13 @@ class ImageGrid(QScrollArea):
 
             # Reason: only push geometry when it actually changed to avoid
             # cascading relayout and repaint on every scroll tick.
-            if thumb.width() != thumbnail_width or thumb.height() != row_height:
-                thumb.apply_outer_geometry(thumbnail_width, row_height)
-            elif (
-                thumb.graphics_view.width() != inner_w
+            if (
+                thumb.width() != thumbnail_width
+                or thumb.height() != row_height
+                or thumb.graphics_view.width() != inner_w
                 or thumb.graphics_view.height() != inner_h
             ):
-                thumb.image_container.setFixedSize(inner_w, inner_h)
-                thumb.graphics_view.setFixedSize(inner_w, inner_h)
+                thumb.apply_outer_geometry(thumbnail_width, row_height)
 
             row, col = idx // self.columns, idx % self.columns
             x = margins.left() + col * (thumbnail_width + spacing)
