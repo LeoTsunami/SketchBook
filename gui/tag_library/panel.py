@@ -676,6 +676,7 @@ class TagLibraryPanel(QWidget):
 
         section = self._shelf_sections.get(shelf)
         if section:
+            section.apply_active_subtags(cat_subtags)
             section.update_chip_states(
                 cat_subtags, self._tag_library_selection,
                 self._parent_select_mode, self._tags_to_parent,
@@ -881,6 +882,7 @@ class TagLibraryPanel(QWidget):
             )
         for shelf, section in self._shelf_sections.items():
             active = self._active_subtags.get(shelf, set())
+            section.apply_active_subtags(active)
             section.update_chip_states(
                 active, self._tag_library_selection,
                 self._parent_select_mode, self._tags_to_parent,
@@ -1088,11 +1090,14 @@ class TagLibraryPanel(QWidget):
         elif role == "tag":
             category = self._taxonomy.subtag_to_category.get(key)
             if category:
-                self._active_categories.add(category)
-                self._active_subtags.setdefault(category, set()).add(key)
-                section = self._category_sections.get(category)
-                if section:
-                    section.set_expanded(True)
+                if is_tag_shelf(category):
+                    self._active_subtags.setdefault(category, set()).add(key)
+                else:
+                    self._active_categories.add(category)
+                    self._active_subtags.setdefault(category, set()).add(key)
+                    section = self._category_sections.get(category)
+                    if section:
+                        section.set_expanded(True)
         self._apply_all_states()
         self._emit_filter()
 

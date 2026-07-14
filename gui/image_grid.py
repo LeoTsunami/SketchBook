@@ -210,6 +210,7 @@ class ImageGrid(QScrollArea):
         self.max_thumbnail_height = 300  # Default maximum height
         self.sort_by = "import_date_desc"  # Default sort: most recent first
         self._fit_mode: FitMode = FitMode.FIT_ALL
+        self._tag_drag_scroll_lock: Optional[int] = None
 
         # Set up thread pool for main image loading (thumbnails in the grid)
         self.thread_pool = QThreadPool.globalInstance()
@@ -750,8 +751,49 @@ class ImageGrid(QScrollArea):
         self._scroll_preview_load_check_timer.stop()
         self._hide_scroll_preview()
 
+    def set_tag_drag_scroll_lock(self, value: Optional[int]) -> None:
+        """
+        Freeze vertical scroll while a tag is dragged from the tag library.
+
+        Blocks QAbstractScrollArea edge auto-scroll, accidental drift, and scroll
+        preview side effects that can look like a jump when leaving the panel.
+
+        Args:
+            value: Scroll position to keep, or None to release the lock.
+        """
+        self._tag_drag_scroll_lock = value
+        if value is not None:
+            self._scroll_idle_timer.stop()
+            self._scroll_preview_load_check_timer.stop()
+            if self._scroll_preview.isVisible():
+                self._hide_scroll_preview()
+            self._enforce_tag_drag_scroll_lock()
+        else:
+            self._tag_popover.refresh_position()
+
+    def _enforce_tag_drag_scroll_lock(self) -> None:
+        """Revert the vertical scrollbar if it moved while tag-drag lock is active."""
+        locked = self._tag_drag_scroll_lock
+        if locked is None:
+            return
+        bar = self.verticalScrollBar()
+        if bar is not None and bar.value() != locked:
+            bar.blockSignals(True)
+            bar.setValue(locked)
+            bar.blockSignals(False)
+
+    def scrollContentsBy(self, dx: int, dy: int) -> None:
+        """Suppress auto-scroll during tag-library drags (QAbstractScrollArea DnD)."""
+        if self._tag_drag_scroll_lock is not None:
+            self._enforce_tag_drag_scroll_lock()
+            return
+        super().scrollContentsBy(dx, dy)
+
     def _on_scroll(self, value):
         """Handle scroll events; defer heavy work until scrolling stops."""
+        if self._tag_drag_scroll_lock is not None:
+            self._enforce_tag_drag_scroll_lock()
+            return
         self._schedule_idle_resume()
         self._pause_background_work_for_scroll()
         self._scroll_idle_timer.start()
@@ -1946,6 +1988,8 @@ class ImageGrid(QScrollArea):
     def resizeEvent(self, event):
         """Handle resize events to adjust grid layout."""
         super().resizeEvent(event)
+        if self._tag_drag_scroll_lock is not None:
+            self._enforce_tag_drag_scroll_lock()
         self._update_scroll_preview_position()
         self._tag_popover.refresh_position()
         if event.size().width() != event.oldSize().width():

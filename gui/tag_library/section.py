@@ -390,6 +390,15 @@ class ShelfSection(QWidget):
         """
         self._header.setFixedWidth(width)
 
+    def apply_active_subtags(self, active_subtags: Set[str]) -> None:
+        """
+        Propagate expand/collapse state to nested tag blocks in this shelf.
+
+        Args:
+            active_subtags: Active subtags for this shelf (expanded parents).
+        """
+        self._grid_host.apply_active_subtags(active_subtags)
+
     def update_chip_states(
         self,
         active_subtags: Set[str],

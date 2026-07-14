@@ -388,6 +388,38 @@ class TagLibraryWheelFilter(QObject):
         return False
 
 
+class TagDragImageGridScrollGuard(QObject):
+    """Block wheel and accidental scroll drift on the image grid during tag drags."""
+
+    def __init__(self, main_window: "MainWindow"):
+        super().__init__(main_window)
+        self._main = main_window
+
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        if not getattr(self._main, "_tag_drag_in_progress", False):
+            return False
+        if not hasattr(self._main, "image_grid") or obj != self._main.image_grid.viewport():
+            return False
+        try:
+            wheel_type = QEvent.Type.Wheel
+            drag_enter = QEvent.Type.DragEnter
+            drag_move = QEvent.Type.DragMove
+        except AttributeError:
+            wheel_type = QEvent.Wheel
+            drag_enter = QEvent.DragEnter
+            drag_move = QEvent.DragMove
+        if event.type() == wheel_type:
+            event.accept()
+            return True
+        if event.type() in (drag_enter, drag_move):
+            md = event.mimeData()
+            if mime_data_looks_like_tag_library_drag(md):
+                event.acceptProposedAction()
+                self._main._restore_image_grid_scroll_for_tag_drag()
+                return True
+        return False
+
+
 class TagGridDropFilter(QObject):
     """Event filter to accept tag-library drag/drop on the tag library panel."""
 
@@ -533,6 +565,8 @@ class MainWindow(QMainWindow):
             False  # True when last drop was on tag grid (reparent), so button was destroyed
         )
         self._tag_drag_in_progress: bool = False
+        self._image_grid_scroll_locked_value: Optional[int] = None
+        self._tag_drag_image_grid_scroll_guard: Optional[TagDragImageGridScrollGuard] = None
         self._tag_drag_scroll_timer: Optional[QTimer] = (
             None  # auto-scroll tag library during drag
         )
@@ -1411,6 +1445,9 @@ class MainWindow(QMainWindow):
         self.tag_search_input = QLineEdit()
         # Completer is filled when the tag library loads (see _load_tags_into_grid).
 
+        vp = self.image_grid.viewport()
+        self._tag_drag_image_grid_scroll_guard = TagDragImageGridScrollGuard(self)
+        vp.installEventFilter(self._tag_drag_image_grid_scroll_guard)
         vp.installEventFilter(self)
         self._tag_panel_overlay.panel_did_hide.connect(
             self._position_floating_grid_overlays
@@ -1487,6 +1524,8 @@ class MainWindow(QMainWindow):
                     x, y, session_hint.width(), session_hint.height()
                 )
             session_btn.raise_()
+        if getattr(self, "_tag_drag_in_progress", False):
+            self._restore_image_grid_scroll_for_tag_drag()
 
     def _get_default_tags_from_path(self, default_tags_path: Path) -> Set[str]:
         """
@@ -2784,6 +2823,32 @@ class MainWindow(QMainWindow):
             return None
         return QRect(btn.mapToGlobal(QPoint(0, 0)), btn.size())
 
+    def _lock_image_grid_scroll_for_tag_drag(self) -> None:
+        """Remember image grid scroll position so it does not drift during tag drags."""
+        grid = getattr(self, "image_grid", None)
+        if grid is None:
+            self._image_grid_scroll_locked_value = None
+            return
+        bar = grid.verticalScrollBar()
+        self._image_grid_scroll_locked_value = bar.value() if bar is not None else None
+
+    def _restore_image_grid_scroll_for_tag_drag(self) -> None:
+        """Restore image grid scroll if it moved while a tag drag is still active."""
+        if not self._tag_drag_in_progress:
+            return
+        grid = getattr(self, "image_grid", None)
+        if grid is not None and hasattr(grid, "_enforce_tag_drag_scroll_lock"):
+            grid._enforce_tag_drag_scroll_lock()
+            return
+        locked = self._image_grid_scroll_locked_value
+        if locked is None:
+            return
+        if grid is None:
+            return
+        bar = grid.verticalScrollBar()
+        if bar is not None and bar.value() != locked:
+            bar.setValue(locked)
+
     def _begin_tag_library_drag_session(self) -> None:
         """
         Start shared drag helpers: panel fold/reopen poll and tag-library autoscroll.
@@ -2791,6 +2856,10 @@ class MainWindow(QMainWindow):
         Used for every tag-library QDrag (user tags, categories, multi-select).
         """
         self._tag_drag_in_progress = True
+        self._lock_image_grid_scroll_for_tag_drag()
+        grid = getattr(self, "image_grid", None)
+        if grid is not None and hasattr(grid, "set_tag_drag_scroll_lock"):
+            grid.set_tag_drag_scroll_lock(self._image_grid_scroll_locked_value)
         self._start_tag_panel_drag_outside_poll()
         if self._tag_drag_scroll_timer is None:
             self._tag_drag_scroll_timer = QTimer(self)
@@ -2800,6 +2869,10 @@ class MainWindow(QMainWindow):
     def _end_tag_library_drag_session(self) -> None:
         """Stop drag helpers after any tag-library QDrag ends."""
         self._tag_drag_in_progress = False
+        grid = getattr(self, "image_grid", None)
+        if grid is not None and hasattr(grid, "set_tag_drag_scroll_lock"):
+            grid.set_tag_drag_scroll_lock(None)
+        self._image_grid_scroll_locked_value = None
         self._stop_tag_panel_drag_outside_poll()
         self._tag_grid_hover_expand_cancel()
         if self._tag_drag_scroll_timer is not None:
@@ -2850,6 +2923,8 @@ class MainWindow(QMainWindow):
         rail_rect = self._tag_filters_floating_btn_global_rect()
         on_rail = rail_rect is not None and rail_rect.contains(pos)
 
+        self._restore_image_grid_scroll_for_tag_drag()
+
         if on_panel or on_rail:
             if not ov.is_panel_visible():
                 ov.show_animated()
@@ -2860,6 +2935,8 @@ class MainWindow(QMainWindow):
         if ov.is_panel_visible():
             ov.hide_animated()
             self._left_panel_expanded = False
+            delay = TagPanelOverlay.ANIM_DURATION_MS + 20
+            QTimer.singleShot(delay, self._restore_image_grid_scroll_for_tag_drag)
 
     def _on_tag_drag_scroll_tick(self) -> None:
         """During tag drag: scroll tag library when cursor is near top or bottom edge."""

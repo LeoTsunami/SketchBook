@@ -155,3 +155,25 @@ def test_resize_event_no_width_change_does_not_schedule(image_grid):
         old = image_grid.size()
         image_grid.resizeEvent(QResizeEvent(QSize(old.width(), old.height() + 30), old))
     mock_sched.assert_not_called()
+
+
+def test_tag_drag_scroll_lock_blocks_on_scroll(image_grid):
+    """Tag-drag lock should revert accidental scroll and skip preview side effects."""
+    image_grid.verticalScrollBar().setValue(0)
+    image_grid.set_tag_drag_scroll_lock(0)
+    with patch.object(image_grid, "_update_scroll_preview_during_scroll") as mock_prev:
+        image_grid.verticalScrollBar().setValue(100)
+    assert image_grid.verticalScrollBar().value() == 0
+    mock_prev.assert_not_called()
+    image_grid.set_tag_drag_scroll_lock(None)
+
+
+def test_tag_drag_scroll_lock_blocks_scroll_contents_by(image_grid):
+    """Tag-drag lock should block QAbstractScrollArea edge auto-scroll."""
+    bar = image_grid.verticalScrollBar()
+    bar.setValue(0)
+    locked = bar.value()
+    image_grid.set_tag_drag_scroll_lock(locked)
+    image_grid.scrollContentsBy(0, 40)
+    assert bar.value() == locked
+    image_grid.set_tag_drag_scroll_lock(None)
