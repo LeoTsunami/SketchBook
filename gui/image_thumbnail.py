@@ -161,7 +161,8 @@ class TagChip(QFrame):
 class ImageThumbnail(QFrame):
     """Widget representing a single image thumbnail."""
 
-    CONTENT_INSET = 0  # image fills the cell; selection border is drawn on the frame
+    CONTENT_INSET = 0  # image fills the cell; selection overlay sits above the image
+    SELECTION_RING = 3  # padding reserved inside the cell for the visible blue outline
 
     clicked = Signal(str)  # Emits image ID when clicked
     tag_removed = Signal(str, str)  # Emits (image_id, tag) when a tag is removed
@@ -224,7 +225,12 @@ class ImageThumbnail(QFrame):
 
         # Create layout
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
+        layout.setContentsMargins(
+            self.SELECTION_RING,
+            self.SELECTION_RING,
+            self.SELECTION_RING,
+            0,
+        )
         layout.setSpacing(0)
 
         # Create graphics view for better image rendering
@@ -267,6 +273,12 @@ class ImageThumbnail(QFrame):
         self._shadow_effect.setColor(QColor(0, 0, 0, 60))
         self.image_container.setGraphicsEffect(self._shadow_effect)
 
+        self._selection_overlay = QFrame(self)
+        self._selection_overlay.setObjectName("ImageThumbnailSelection")
+        self._selection_overlay.setAttribute(Qt.WA_StyledBackground, True)
+        self._selection_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._selection_overlay.hide()
+
         layout.addWidget(self.image_container, 1)  # Give image container stretch factor
 
         # Create tags container (initially hidden)
@@ -307,8 +319,8 @@ class ImageThumbnail(QFrame):
             Inner (width, height) for the image view.
         """
         return (
-            max(1, outer_width - cls.CONTENT_INSET),
-            max(1, outer_height - cls.CONTENT_INSET),
+            max(1, outer_width - 2 * cls.SELECTION_RING),
+            max(1, outer_height - 2 * cls.SELECTION_RING),
         )
 
     def apply_outer_geometry(self, outer_width: int, outer_height: int) -> None:
@@ -325,6 +337,7 @@ class ImageThumbnail(QFrame):
         self.image_container.setFixedSize(inner_w, inner_h)
         self.graphics_view.setFixedSize(inner_w, inner_h)
         self.setFixedSize(outer_width, outer_height)
+        self._sync_selection_overlay_geometry()
         if self.pixmap_item is not None:
             fit_pixmap_in_view(
                 self.graphics_view, self.scene, self.pixmap_item, self._fit_mode
@@ -483,13 +496,38 @@ class ImageThumbnail(QFrame):
         if self.tag_chips and not fast:
             self._relayout_tags()
 
+    def _sync_selection_overlay_geometry(self) -> None:
+        """Position the selection overlay around the image (inside the cell padding)."""
+        ring = self.SELECTION_RING
+        inner_w, inner_h = self.content_dimensions(self.width(), self.height())
+        if inner_w <= 0 or inner_h <= 0:
+            return
+        self._selection_overlay.setGeometry(
+            0, 0, self.width(), ring + inner_h + ring
+        )
+
+    def resizeEvent(self, event) -> None:
+        """Keep the selection overlay aligned when the cell is resized."""
+        super().resizeEvent(event)
+        if self.selected:
+            self._sync_selection_overlay_geometry()
+            self._selection_overlay.raise_()
+            self.tags_container.raise_()
+
     def set_selected(self, selected: bool):
-        """Set the selection state of the thumbnail (border only)."""
+        """Set the selection state of the thumbnail (overlay above the image)."""
         if self.selected != selected:
             self.selected = selected
             self.setProperty("selected", selected)
             self.style().unpolish(self)
             self.style().polish(self)
+            if selected:
+                self._sync_selection_overlay_geometry()
+                self._selection_overlay.show()
+                self._selection_overlay.raise_()
+                self.tags_container.raise_()
+            else:
+                self._selection_overlay.hide()
 
     def _set_hovered(self, hovered: bool) -> None:
         """Update hovered visual state (handled by theme QSS)."""

@@ -8,13 +8,17 @@ from gui.thumbnail_fitting import FitMode
 
 
 def test_thumbnail_selection_property_updates(qtbot):
-    """Selection flag should update dynamic property used by QSS."""
+    """Selection flag should update dynamic property and show the overlay."""
     thumb = ImageThumbnail("img_1", "label")
     qtbot.addWidget(thumb)
+    thumb.apply_outer_geometry(120, 100)
+    thumb.show()
     thumb.set_selected(True)
     assert thumb.property("selected") is True
+    assert thumb._selection_overlay.isVisible()
     thumb.set_selected(False)
     assert thumb.property("selected") is False
+    assert not thumb._selection_overlay.isVisible()
 
 
 def test_thumbnail_hover_updates_property(qtbot):
@@ -44,5 +48,5 @@ def test_apply_outer_geometry_refits_after_cell_resize(qtbot):
     thumb.apply_outer_geometry(150, 200)
     transform_wide = thumb.graphics_view.transform()
 
-    assert thumb.graphics_view.viewport().width() == 150
+    assert thumb.graphics_view.viewport().width() == 150 - 2 * ImageThumbnail.SELECTION_RING
     assert transform_narrow.m11() != transform_wide.m11()

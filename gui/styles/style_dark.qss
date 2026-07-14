@@ -132,11 +132,16 @@ QFrame#ImageThumbnail:hover {
 }
 QFrame#ImageThumbnail[selected="true"] {
     background-color: transparent;
-    border: 2px solid #5d9dff;
+    border: 2px solid #8ab9ff;
 }
 QFrame#ImageThumbnail[selected="true"]:hover {
     background-color: transparent;
-    border: 2px solid #8ab9ff;
+    border: 2px solid #a8c8ff;
+}
+QFrame#ImageThumbnailSelection {
+    background-color: rgba(93, 157, 255, 0.12);
+    border: 3px solid #8ab9ff;
+    border-radius: 5px;
 }
 QFrame#ImageThumbnail[dragOver="true"] {
     background-color: #5d7bc0;
