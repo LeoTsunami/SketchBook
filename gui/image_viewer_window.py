@@ -29,11 +29,17 @@ from qtpy.QtGui import (
     QBrush,
 )
 from core.image_manager import ImageManager
+from core.image_db import ImageMetadata
 from gui.turnaround_scrub import (
     is_turnaround_meta,
     load_pose_pixmap,
     scrub_index_from_drag,
     turnaround_pose_setup,
+)
+from core.turnaround import (
+    batch_edit_image_ids,
+    sync_turnaround_root_dimensions,
+    turnaround_root_id_for_edit,
 )
 from gui.turnaround_badge import TurnaroundViewerHintOverlay
 from gui.window_chrome import (
@@ -41,8 +47,6 @@ from gui.window_chrome import (
     apply_glass_button_style,
     enable_frameless_window,
 )
-from PIL import Image
-
 # Minimum crop size in scene pixels
 CROP_MIN_SIZE = 20
 
@@ -412,16 +416,37 @@ class ImageViewerWindow(QMainWindow):
         """Rotate the current image 90° clockwise or counterclockwise and reload it."""
         if not self._current_image_id:
             return
-        success = self.image_manager.rotate_image(
-            self._current_image_id, clockwise=clockwise
-        )
+        target_ids = batch_edit_image_ids(self.image_manager, self._current_image_id)
+        success = self.image_manager.rotate_images(target_ids, clockwise=clockwise)
         if not success:
             QMessageBox.warning(
                 self, "Rotate image", "Could not rotate the image on disk."
             )
             return
-        # Reload image with updated orientation
+        root_id = turnaround_root_id_for_edit(
+            self.image_manager, self._current_image_id
+        )
+        if root_id:
+            sync_turnaround_root_dimensions(self.image_manager, root_id)
         self._load_current_image()
+
+    def _display_metadata_for_crop(self) -> Optional[ImageMetadata]:
+        """
+        Metadata for the image currently shown (turnaround pose or single).
+
+        Returns:
+            ImageMetadata for crop reference dimensions, or None.
+        """
+        if not self._current_image_id:
+            return None
+        metadata = self.image_manager.get_image_metadata(self._current_image_id)
+        if metadata is None:
+            return None
+        if is_turnaround_meta(metadata) and self._turnaround_pose_ids:
+            pose_id = self._turnaround_pose_ids[self._turnaround_pose_index]
+            pose_meta = self.image_manager.get_image_metadata(pose_id)
+            return pose_meta or metadata
+        return metadata
 
     def _image_scene_rect(self) -> QRectF:
         """Return the image bounds in scene coordinates (for clamping crop)."""
@@ -649,14 +674,14 @@ class ImageViewerWindow(QMainWindow):
         confirm = QMessageBox.question(
             self,
             "Confirm crop",
-            "Are you sure you want to crop this image?\n\nThis will overwrite the original file on disk.",
+            self._crop_confirm_message(),
             QMessageBox.Yes | QMessageBox.No,
             QMessageBox.No,
         )
         if confirm != QMessageBox.Yes:
             return
 
-        metadata = self.image_manager.get_image_metadata(self._current_image_id)
+        metadata = self._display_metadata_for_crop()
         if not metadata:
             return
         path = self.image_manager.image_dir / metadata.path
@@ -677,42 +702,49 @@ class ImageViewerWindow(QMainWindow):
             )
             return
 
-        try:
-            with Image.open(path) as img:
-                w, h = img.size
-                x1_clamped = max(0, min(w - 1, x1))
-                y1_clamped = max(0, min(h - 1, y1))
-                x2_clamped = max(x1_clamped + 1, min(w, x2))
-                y2_clamped = max(y1_clamped + 1, min(h, y2))
-                cropped = img.crop((x1_clamped, y1_clamped, x2_clamped, y2_clamped))
-                fmt = (metadata.format or "jpg").upper()
-                if fmt in ("JPG", "JPEG"):
-                    if cropped.mode in ("RGBA", "P"):
-                        cropped = cropped.convert("RGB")
-                    cropped.save(path, format="JPEG", quality=95)
-                else:
-                    cropped.save(path, format="PNG")
-                new_w, new_h = cropped.size
-        except Exception as exc:  # pylint: disable=broad-except
+        target_ids = batch_edit_image_ids(self.image_manager, self._current_image_id)
+        if len(target_ids) == 1:
+            success = self.image_manager.crop_image(target_ids[0], (x1, y1, x2, y2))
+        else:
+            success = self.image_manager.crop_images_proportional(
+                target_ids,
+                (x1, y1, x2, y2),
+                metadata.width,
+                metadata.height,
+            )
+        if not success:
             QMessageBox.critical(
                 self,
                 "Crop image",
-                f"Error while cropping image:\n{exc}",
+                "Error while cropping one or more images.",
             )
             return
 
-        try:
-            file_size = path.stat().st_size
-        except OSError:
-            file_size = metadata.file_size
-        self.image_manager.update_image_metadata(
-            self._current_image_id,
-            width=new_w,
-            height=new_h,
-            file_size=file_size,
+        root_id = turnaround_root_id_for_edit(
+            self.image_manager, self._current_image_id
         )
+        if root_id:
+            sync_turnaround_root_dimensions(self.image_manager, root_id)
         self._exit_crop_mode()
         self._load_current_image()
+
+    def _crop_confirm_message(self) -> str:
+        """
+        Build the crop confirmation text for singles and turnaround groups.
+
+        Returns:
+            str: Dialog body text.
+        """
+        target_ids = batch_edit_image_ids(self.image_manager, self._current_image_id)
+        if len(target_ids) > 1:
+            return (
+                f"Are you sure you want to crop all {len(target_ids)} poses in this "
+                "turnaround?\n\nThis will overwrite the original files on disk."
+            )
+        return (
+            "Are you sure you want to crop this image?\n\n"
+            "This will overwrite the original file on disk."
+        )
 
     def _cancel_crop(self) -> None:
         """Cancel crop mode without saving."""

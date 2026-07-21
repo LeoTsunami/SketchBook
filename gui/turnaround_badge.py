@@ -87,12 +87,12 @@ class TurnaroundBadgeOverlay(QLabel):
 
 class TurnaroundViewerHintOverlay(QWidget):
     """
-    Top-left turnaround hint for the expanded image viewer (icon + drag hint text).
+    Bottom-centered turnaround hint for viewer and session (icon + drag hint text).
     """
 
     HINT_TEXT = "Click and drag to turn around"
     ICON_PX = TurnaroundBadgeOverlay.BADGE_ICON_LARGE
-    MARGIN = 14
+    BOTTOM_MARGIN = 24
 
     def __init__(self, parent: QWidget) -> None:
         """
@@ -128,7 +128,7 @@ class TurnaroundViewerHintOverlay(QWidget):
         font.setPointSize(11)
         font.setBold(True)
         self._hint_label.setFont(font)
-        self._hint_label.setStyleSheet("color: rgba(255, 255, 255, 0.92);")
+        self._hint_label.setStyleSheet("color: #ffffff;")
         hint_shadow = QGraphicsDropShadowEffect(self._hint_label)
         hint_shadow.setBlurRadius(10)
         hint_shadow.setOffset(0, 1)
@@ -140,18 +140,26 @@ class TurnaroundViewerHintOverlay(QWidget):
         self.adjustSize()
         self.hide()
 
-    def reposition(self, host: QWidget | None = None) -> None:
+    def reposition(
+        self, host: QWidget | None = None, *, bottom_offset_y: int = 0
+    ) -> None:
         """
-        Place the hint strip in the top-left corner of the host.
+        Place the hint strip centered along the bottom edge of the host.
 
         Args:
             host: Optional widget whose size defines placement; defaults to parent.
+            bottom_offset_y: Extra lift from the bottom (e.g. above session controls).
         """
         self.adjustSize()
         target = host or self.parentWidget()
         if target is None:
             return
-        self.move(self.MARGIN, self.MARGIN)
+        x = max(0, (target.width() - self.width()) // 2)
+        y = max(
+            0,
+            target.height() - self.height() - self.BOTTOM_MARGIN - bottom_offset_y,
+        )
+        self.move(x, y)
         self.raise_()
 
     def set_visible_for_turnaround(self, visible: bool) -> None:

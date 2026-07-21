@@ -9,10 +9,12 @@ from core.image_db import ImageMetadata, metadata_from_dict
 from core.turnaround import (
     TURNAROUND_KIND,
     TURNAROUND_TAG,
+    batch_edit_image_ids,
     create_turnaround,
     decompose_turnaround,
     get_pose_ids,
     middle_pose_index,
+    sync_turnaround_root_dimensions,
 )
 from gui.turnaround_scrub import scrub_index_from_drag
 
@@ -150,3 +152,43 @@ def test_delete_turnaround_decomposes(image_manager, tmp_path):
     for mid, path in zip(ids, member_paths):
         assert image_manager.db.get_image(mid) is not None
         assert path.exists()
+
+
+def test_batch_edit_image_ids_for_turnaround(image_manager, tmp_path):
+    """Batch edit resolves all turnaround member ids from the root."""
+    metas = _import_n(image_manager, tmp_path, 3)
+    ids = [m.id for m in metas]
+    root = create_turnaround(image_manager, ids)
+    assert batch_edit_image_ids(image_manager, root.id) == ids
+    assert batch_edit_image_ids(image_manager, ids[1]) == ids
+
+
+def test_rotate_images_batch_updates_root_dimensions(image_manager, tmp_path):
+    """Rotating all turnaround poses updates the root dimensions."""
+    metas = _import_n(image_manager, tmp_path, 2)
+    ids = [m.id for m in metas]
+    root = create_turnaround(image_manager, ids)
+    assert image_manager.rotate_images(ids, clockwise=True) is True
+    sync_turnaround_root_dimensions(image_manager, root.id)
+    updated_root = image_manager.db.get_image(root.id)
+    first = image_manager.db.get_image(ids[0])
+    assert updated_root.width == first.width == 80
+    assert updated_root.height == first.height == 80
+
+
+def test_crop_images_proportional_on_turnaround(image_manager, tmp_path):
+    """Cropping one turnaround pose applies the same region to every pose."""
+    metas = _import_n(image_manager, tmp_path, 3)
+    ids = [m.id for m in metas]
+    root = create_turnaround(image_manager, ids)
+    assert image_manager.crop_images_proportional(
+        ids, (10, 10, 70, 70), reference_width=80, reference_height=80
+    )
+    sync_turnaround_root_dimensions(image_manager, root.id)
+    for mid in ids:
+        member = image_manager.db.get_image(mid)
+        assert member.width == 60
+        assert member.height == 60
+    updated_root = image_manager.db.get_image(root.id)
+    assert updated_root.width == 60
+    assert updated_root.height == 60

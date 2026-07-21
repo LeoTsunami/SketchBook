@@ -368,6 +368,119 @@ class ImageManager:
             self.db.update_image(image_id, width=w, height=h)
         return success
 
+    def rotate_images(self, image_ids: List[str], clockwise: bool = True) -> bool:
+        """
+        Rotate multiple images by 90° and update each metadata row.
+
+        Args:
+            image_ids: Image ids to rotate on disk.
+            clockwise: Rotation direction.
+
+        Returns:
+            True if every image rotated successfully.
+        """
+        if not image_ids:
+            return False
+        all_ok = True
+        for image_id in image_ids:
+            if not self.rotate_image(image_id, clockwise=clockwise):
+                all_ok = False
+        return all_ok
+
+    def crop_image(
+        self,
+        image_id: str,
+        box: Tuple[int, int, int, int],
+    ) -> bool:
+        """
+        Crop an image file on disk and update metadata dimensions.
+
+        Args:
+            image_id: Target image id.
+            box: Pixel crop box ``(x1, y1, x2, y2)`` in image coordinates.
+
+        Returns:
+            True if the crop succeeded.
+        """
+        metadata = self.db.get_image(image_id)
+        if not metadata:
+            return False
+        path = self.image_dir / metadata.path
+        if not path.exists():
+            return False
+        x1, y1, x2, y2 = box
+        if x2 - x1 < 10 or y2 - y1 < 10:
+            return False
+        try:
+            with Image.open(path) as img:
+                w, h = img.size
+                x1_clamped = max(0, min(w - 1, x1))
+                y1_clamped = max(0, min(h - 1, y1))
+                x2_clamped = max(x1_clamped + 1, min(w, x2))
+                y2_clamped = max(y1_clamped + 1, min(h, y2))
+                cropped = img.crop(
+                    (x1_clamped, y1_clamped, x2_clamped, y2_clamped)
+                )
+                fmt = (metadata.format or "jpg").upper()
+                if fmt in ("JPG", "JPEG"):
+                    if cropped.mode in ("RGBA", "P"):
+                        cropped = cropped.convert("RGB")
+                    cropped.save(path, format="JPEG", quality=95)
+                else:
+                    cropped.save(path, format="PNG")
+                new_w, new_h = cropped.size
+        except Exception as exc:  # pylint: disable=broad-except
+            print(f"Error cropping image {path}: {exc}")
+            return False
+        try:
+            file_size = path.stat().st_size
+        except OSError:
+            file_size = metadata.file_size
+        self.db.update_image(
+            image_id, width=new_w, height=new_h, file_size=file_size
+        )
+        return True
+
+    def crop_images_proportional(
+        self,
+        image_ids: List[str],
+        box: Tuple[int, int, int, int],
+        reference_width: int,
+        reference_height: int,
+    ) -> bool:
+        """
+        Crop multiple images using the same relative region.
+
+        Args:
+            image_ids: Images to crop.
+            box: Reference crop box ``(x1, y1, x2, y2)`` in reference pixels.
+            reference_width: Width of the reference image used for the crop UI.
+            reference_height: Height of the reference image used for the crop UI.
+
+        Returns:
+            True if every crop succeeded.
+        """
+        if not image_ids or reference_width <= 0 or reference_height <= 0:
+            return False
+        x1, y1, x2, y2 = box
+        all_ok = True
+        for image_id in image_ids:
+            metadata = self.db.get_image(image_id)
+            if metadata is None:
+                all_ok = False
+                continue
+            sx = metadata.width / reference_width
+            sy = metadata.height / reference_height
+            target_box = (
+                int(round(x1 * sx)),
+                int(round(y1 * sy)),
+                int(round(x2 * sx)),
+                int(round(y2 * sy)),
+            )
+            if not self.crop_image(image_id, target_box):
+                all_ok = False
+        return all_ok
+
     def delete_image(self, image_id: str) -> bool:
         """
         Delete an image and its metadata. If the file was already removed by hand,

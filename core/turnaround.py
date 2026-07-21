@@ -147,6 +147,83 @@ def decompose_turnaround(
     return member_ids
 
 
+def sync_turnaround_root_dimensions(
+    image_manager: "ImageManager", root_id: str
+) -> None:
+    """
+    Refresh turnaround root dimensions from its first pose after batch edits.
+
+    Args:
+        image_manager: Image manager owning the database.
+        root_id: Turnaround root id.
+    """
+    db = image_manager.db
+    root = db.get_image(root_id)
+    if root is None or root.kind != TURNAROUND_KIND or not root.member_ids:
+        return
+    first = db.get_image(root.member_ids[0])
+    if first is None:
+        return
+    db.update_image(
+        root_id,
+        width=first.width,
+        height=first.height,
+        file_size=first.file_size,
+    )
+
+
+def batch_edit_image_ids(
+    image_manager: "ImageManager", image_id: str
+) -> List[str]:
+    """
+    Resolve image IDs that should receive the same crop/rotate edit.
+
+    Args:
+        image_manager: Image manager owning the database.
+        image_id: Turnaround root, hidden member, or single image id.
+
+    Returns:
+        Member ids for a turnaround group, otherwise a one-element list.
+    """
+    db = image_manager.db
+    meta = db.get_image(image_id)
+    if meta is None:
+        return []
+    if meta.kind == TURNAROUND_KIND and meta.member_ids:
+        return list(meta.member_ids)
+    if meta.group_id:
+        root = db.get_image(meta.group_id)
+        if root is not None and root.kind == TURNAROUND_KIND and root.member_ids:
+            return list(root.member_ids)
+    return [image_id]
+
+
+def turnaround_root_id_for_edit(
+    image_manager: "ImageManager", image_id: str
+) -> Optional[str]:
+    """
+    Return the turnaround root id when ``image_id`` belongs to a group.
+
+    Args:
+        image_manager: Image manager owning the database.
+        image_id: Image id being edited.
+
+    Returns:
+        Root id, or None for singles.
+    """
+    db = image_manager.db
+    meta = db.get_image(image_id)
+    if meta is None:
+        return None
+    if meta.kind == TURNAROUND_KIND:
+        return meta.id
+    if meta.group_id:
+        root = db.get_image(meta.group_id)
+        if root is not None and root.kind == TURNAROUND_KIND:
+            return root.id
+    return None
+
+
 def resolve_pose_path(
     image_manager: "ImageManager", root: ImageMetadata, pose_index: int
 ) -> Optional[str]:

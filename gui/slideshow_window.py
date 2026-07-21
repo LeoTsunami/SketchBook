@@ -56,7 +56,7 @@ from gui.turnaround_scrub import (
     scrub_index_from_drag,
     turnaround_pose_setup,
 )
-from gui.turnaround_badge import TurnaroundBadgeOverlay
+from gui.turnaround_badge import TurnaroundViewerHintOverlay
 from gui.icon_utils import invert_icon
 from gui.image_viewer_window import ImageViewerWindow
 from gui.window_chrome import (
@@ -210,7 +210,10 @@ class _OverlayContainer(QWidget):
             self._phase_title_frame.setGeometry(r)
         badge = getattr(self, "_turnaround_badge", None)
         if badge is not None:
-            badge.reposition(self)
+            bottom_offset = 0
+            if self._controls_frame and self._controls_frame.isVisible():
+                bottom_offset = self._controls_frame.height() + 12
+            badge.reposition(self, bottom_offset_y=bottom_offset)
         for w in (
             self._countdown_frame,
             self._fullscreen_btn,
@@ -293,9 +296,7 @@ class SlideshowWindow(QMainWindow):
         )
         self._overlay_container.resized.connect(self._on_container_resized)
         layout.addWidget(self._overlay_container, 1)
-        self._turnaround_badge = TurnaroundBadgeOverlay(
-            self._overlay_container, large=True
-        )
+        self._turnaround_badge = TurnaroundViewerHintOverlay(self._overlay_container)
         self._overlay_container._turnaround_badge = self._turnaround_badge
 
         self._setup_ui_auto_hide()  # Show overlays + cursor on key/mouse; hide after 2s inactivity
@@ -570,6 +571,7 @@ class SlideshowWindow(QMainWindow):
             # Reason: keep resize cursor feedback on window edges while overlays are shown.
             self._update_resize_cursor(self.mapFromGlobal(QCursor.pos()))
         self._hide_ui_timer.start(_UI_HIDE_AFTER_MS)
+        self._reposition_turnaround_hint()
 
     def _hide_ui(self):
         """Hide controls and cursor after inactivity; countdown (timer) stays visible."""
@@ -579,6 +581,17 @@ class SlideshowWindow(QMainWindow):
         self.fullscreen_btn.setVisible(False)
         self.controls_frame.setVisible(False)
         self.setCursor(Qt.BlankCursor)
+        self._reposition_turnaround_hint()
+
+    def _reposition_turnaround_hint(self) -> None:
+        """Keep the turnaround hint centered above session controls when visible."""
+        badge = getattr(self, "_turnaround_badge", None)
+        if badge is None or not badge.isVisible():
+            return
+        bottom_offset = 0
+        if self.controls_frame.isVisible():
+            bottom_offset = self.controls_frame.height() + 12
+        badge.reposition(self._overlay_container, bottom_offset_y=bottom_offset)
 
     def _setup_shortcuts(self):
         """Keyboard: Space = toggle pause/play (via eventFilter/keyPressEvent only, to avoid double trigger). Left/Right = prev/next, Escape = fullscreen->window or close."""
