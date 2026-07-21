@@ -373,24 +373,86 @@ class ImageManager:
         Delete an image and its metadata. If the file was already removed by hand,
         only the metadata is removed from the DB.
 
+        Turnaround roots are decomposed first (members restored, root metadata removed
+        without deleting member files). Deleting a turnaround member removes it from
+        the group's ``member_ids``.
+
         Args:
             image_id: ID of the image to delete
 
         Returns:
             True if metadata was found and removed, False if image not found in DB
         """
+        from core.turnaround import TURNAROUND_KIND, decompose_turnaround
+
         metadata = self.db.get_image(image_id)
         if not metadata:
             return False
-        # Delete file if it still exists (ignore if already removed manually)
+
+        if metadata.kind == TURNAROUND_KIND:
+            decompose_turnaround(self, image_id)
+            return True
+
+        group_id = metadata.group_id
         image_path = self.image_dir / metadata.path
         if image_path.exists():
             try:
                 image_path.unlink()
             except OSError as e:
                 print(f"Error deleting image file: {image_path}: {e}")
-        # Always remove metadata from DB
-        return self.db.delete_image(image_id)
+        removed = self.db.delete_image(image_id)
+        if removed and group_id:
+            root = self.db.get_image(group_id)
+            if root is not None and root.kind == TURNAROUND_KIND:
+                new_members = [m for m in root.member_ids if m != image_id]
+                if len(new_members) < 2:
+                    # Too few poses left — dissolve the group.
+                    decompose_turnaround(self, group_id)
+                else:
+                    self.db.update_image(group_id, member_ids=new_members)
+        return removed
+
+    def list_visible_images(
+        self, sort_by: str = "import_date_desc"
+    ) -> List[ImageMetadata]:
+        """
+        List images visible in the grid/session (excludes hidden turnaround members).
+
+        Args:
+            sort_by: Sort order (see ImageDatabase.list_images).
+
+        Returns:
+            List of visible ImageMetadata.
+        """
+        return self.db.list_images(sort_by=sort_by, visible_only=True)
+
+    def create_turnaround(self, member_ids: List[str]) -> ImageMetadata:
+        """
+        Group images into a turnaround root.
+
+        Args:
+            member_ids: Ordered pose image IDs.
+
+        Returns:
+            ImageMetadata: New turnaround root.
+        """
+        from core.turnaround import create_turnaround
+
+        return create_turnaround(self, member_ids)
+
+    def decompose_turnaround(self, root_id: str) -> List[str]:
+        """
+        Decompose a turnaround back into individual visible images.
+
+        Args:
+            root_id: Turnaround root id.
+
+        Returns:
+            List of restored member ids.
+        """
+        from core.turnaround import decompose_turnaround
+
+        return decompose_turnaround(self, root_id)
 
     def search_images(
         self, tags: Optional[List[str]] = None, sort_by: str = "import_date_desc"

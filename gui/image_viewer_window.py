@@ -29,6 +29,12 @@ from qtpy.QtGui import (
     QBrush,
 )
 from core.image_manager import ImageManager
+from gui.turnaround_scrub import (
+    is_turnaround_meta,
+    load_pose_pixmap,
+    scrub_index_from_drag,
+    turnaround_pose_setup,
+)
 from gui.window_chrome import (
     WindowChromeBar,
     apply_glass_button_style,
@@ -144,6 +150,11 @@ class ImageViewerWindow(QMainWindow):
         self._image_ids: List[str] = []
         self._current_index: int = -1
         self._current_image_id: Optional[str] = None
+        self._turnaround_pose_ids: List[str] = []
+        self._turnaround_pose_index: int = 0
+        self._turnaround_scrubbing: bool = False
+        self._turnaround_scrub_start_x: float = 0.0
+        self._turnaround_scrub_start_index: int = 0
 
         central = QWidget()
         self.setCentralWidget(central)
@@ -251,6 +262,7 @@ class ImageViewerWindow(QMainWindow):
         self._prev_drag_mode = self.graphics_view.dragMode()
         # When dragging a handle, viewport event filter drives move; release clears this
         self._crop_drag_handle_index: Optional[int] = None
+        self.graphics_view.viewport().installEventFilter(self)
 
     def changeEvent(self, event) -> None:
         """Keep custom chrome controls synchronized with window state."""
@@ -303,13 +315,29 @@ class ImageViewerWindow(QMainWindow):
         metadata = self.image_manager.get_image_metadata(self._current_image_id)
         if not metadata:
             return False
-        path = self.image_manager.image_dir / metadata.path
-        if not path.exists():
-            return False
 
-        pixmap = QPixmap(str(path))
-        if pixmap.isNull():
-            return False
+        poses, middle = turnaround_pose_setup(
+            self.image_manager, self._current_image_id
+        )
+        self._turnaround_pose_ids = poses
+        self._turnaround_pose_index = middle
+        self._turnaround_scrubbing = False
+
+        if is_turnaround_meta(metadata):
+            pixmap = load_pose_pixmap(
+                self.image_manager, metadata, self._turnaround_pose_index
+            )
+            if pixmap is None:
+                return False
+            self.graphics_view.setDragMode(QGraphicsView.NoDrag)
+        else:
+            path = self.image_manager.image_dir / metadata.path
+            if not path.exists():
+                return False
+            pixmap = QPixmap(str(path))
+            if pixmap.isNull():
+                return False
+            self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
 
         self.scene.clear()
         self.pixmap_item = QGraphicsPixmapItem(pixmap)
@@ -324,6 +352,33 @@ class ImageViewerWindow(QMainWindow):
         # so the first open uses the full available size as well.
         QTimer.singleShot(0, self.graphics_view.fit_image)
         return True
+
+    def _apply_turnaround_pose(self, pose_index: int) -> None:
+        """
+        Swap the displayed pixmap to a turnaround pose without leaving the viewer.
+
+        Args:
+            pose_index: Target pose index.
+        """
+        if not self._current_image_id or len(self._turnaround_pose_ids) < 2:
+            return
+        metadata = self.image_manager.get_image_metadata(self._current_image_id)
+        if not is_turnaround_meta(metadata):
+            return
+        idx = max(0, min(len(self._turnaround_pose_ids) - 1, pose_index))
+        if idx == self._turnaround_pose_index and self.pixmap_item is not None:
+            return
+        pixmap = load_pose_pixmap(self.image_manager, metadata, idx)
+        if pixmap is None:
+            return
+        self._turnaround_pose_index = idx
+        self.scene.clear()
+        self.pixmap_item = QGraphicsPixmapItem(pixmap)
+        self.pixmap_item.setTransformationMode(Qt.SmoothTransformation)
+        self.scene.addItem(self.pixmap_item)
+        self.scene.setSceneRect(QRectF(pixmap.rect()))
+        self.graphics_view.set_pixmap_item_ref(self.pixmap_item)
+        self.graphics_view.fit_image()
 
     def show_previous_image(self) -> None:
         """Show the previous image in the current sequence."""
@@ -376,12 +431,9 @@ class ImageViewerWindow(QMainWindow):
         # Disable panning so dragging works on corner handles
         self._prev_drag_mode = self.graphics_view.dragMode()
         self.graphics_view.setDragMode(QGraphicsView.NoDrag)
-        # Capture move/release at viewport so we get drag even when cursor leaves the handle
-        self.graphics_view.viewport().installEventFilter(self)
         self._crop_rect = self._image_scene_rect()
         if self._crop_rect.isEmpty():
             self._crop_mode = False
-            self.graphics_view.viewport().removeEventFilter(self)
             self.graphics_view.setDragMode(self._prev_drag_mode)
             return
 
@@ -393,7 +445,6 @@ class ImageViewerWindow(QMainWindow):
         """Leave crop mode: remove overlay items from scene and show normal toolbar."""
         self._crop_mode = False
         self._crop_drag_handle_index = None
-        self.graphics_view.viewport().removeEventFilter(self)
         # Restore previous drag mode (panning) for normal navigation
         self.graphics_view.setDragMode(self._prev_drag_mode)
         self._hide_crop_overlay()
@@ -493,9 +544,38 @@ class ImageViewerWindow(QMainWindow):
         """
         When in crop mode and a handle was pressed, capture move/release on the viewport
         so we get drag events even when the cursor leaves the small handle circle.
+        Also handles horizontal click-drag scrubbing for turnaround poses.
         """
         if obj is not self.graphics_view.viewport():
             return super().eventFilter(obj, event)
+
+        # Turnaround pose scrub (disabled during crop)
+        if (
+            not self._crop_mode
+            and len(self._turnaround_pose_ids) >= 2
+            and self.graphics_view.dragMode() == QGraphicsView.NoDrag
+        ):
+            t = event.type()
+            if t == QEvent.MouseButtonPress and event.button() == Qt.LeftButton:
+                self._turnaround_scrubbing = True
+                self._turnaround_scrub_start_x = float(event.pos().x())
+                self._turnaround_scrub_start_index = self._turnaround_pose_index
+                return True
+            if t == QEvent.MouseMove and self._turnaround_scrubbing:
+                new_idx = scrub_index_from_drag(
+                    self._turnaround_scrub_start_x,
+                    float(event.pos().x()),
+                    self._turnaround_scrub_start_index,
+                    len(self._turnaround_pose_ids),
+                )
+                self._apply_turnaround_pose(new_idx)
+                return True
+            if t == QEvent.MouseButtonRelease and event.button() == Qt.LeftButton:
+                was = self._turnaround_scrubbing
+                self._turnaround_scrubbing = False
+                if was:
+                    return True
+
         if not self._crop_mode or self._crop_drag_handle_index is None:
             return super().eventFilter(obj, event)
         t = event.type()

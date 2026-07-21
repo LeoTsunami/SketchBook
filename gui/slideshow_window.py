@@ -50,6 +50,12 @@ from core.session_manager import SessionManager, load_course_config
 from core.image_manager import ImageManager
 from gui.session_timer import SessionTimer
 from gui.image_loader_worker import ImageLoaderWorker
+from gui.turnaround_scrub import (
+    is_turnaround_meta,
+    load_pose_pixmap,
+    scrub_index_from_drag,
+    turnaround_pose_setup,
+)
 from gui.icon_utils import invert_icon
 from gui.image_viewer_window import ImageViewerWindow
 from gui.window_chrome import (
@@ -286,6 +292,12 @@ class SlideshowWindow(QMainWindow):
         self._first_image = True
         self._fade_animation: Optional[QVariantAnimation] = None
         self._fade_in_progress: bool = False
+        self._turnaround_pose_ids: List[str] = []
+        self._turnaround_pose_index: int = 0
+        self._turnaround_root_id: Optional[str] = None
+        self._turnaround_scrubbing: bool = False
+        self._turnaround_scrub_start_x: float = 0.0
+        self._turnaround_scrub_start_index: int = 0
         # Title screen countdown (Get ready / phase): ticks every second, then calls done callback
         self._title_countdown_timer = QTimer(self)
         self._title_countdown_timer.setInterval(1000)
@@ -900,14 +912,50 @@ class SlideshowWindow(QMainWindow):
         if not metadata:
             return
 
-        # Load image asynchronously
-        image_path = self.image_manager.image_dir / metadata.path
+        poses, middle = turnaround_pose_setup(self.image_manager, image_id)
+        self._turnaround_pose_ids = poses
+        self._turnaround_pose_index = middle
+        self._turnaround_root_id = image_id if is_turnaround_meta(metadata) else None
+        self._turnaround_scrubbing = False
+
+        # Load middle pose for turnaround roots; otherwise the image path.
+        if self._turnaround_root_id is not None:
+            rel = None
+            from core.turnaround import resolve_pose_path
+
+            rel = resolve_pose_path(self.image_manager, metadata, middle)
+            image_path = self.image_manager.image_dir / (rel or metadata.path)
+        else:
+            image_path = self.image_manager.image_dir / metadata.path
         worker = ImageLoaderWorker(image_id, image_path, (1920, 1080))  # Full HD max
 
         worker.signals.finished.connect(self._on_image_loaded)
         worker.signals.error.connect(self._on_image_error)
 
         self.thread_pool.start(worker)
+
+    def _apply_session_turnaround_pose(self, pose_index: int) -> None:
+        """
+        Instantly swap the session display to another turnaround pose.
+
+        Args:
+            pose_index: Target pose index.
+        """
+        if self._turnaround_root_id is None or len(self._turnaround_pose_ids) < 2:
+            return
+        metadata = self.image_manager.get_image_metadata(self._turnaround_root_id)
+        if not is_turnaround_meta(metadata):
+            return
+        idx = max(0, min(len(self._turnaround_pose_ids) - 1, pose_index))
+        if idx == self._turnaround_pose_index and self.current_pixmap is not None:
+            return
+        pixmap = load_pose_pixmap(self.image_manager, metadata, idx)
+        if pixmap is None:
+            return
+        self._turnaround_pose_index = idx
+        self.current_pixmap = pixmap
+        # Instant swap — do not run session crossfade (that is for step changes).
+        self._scale_and_display_pixmap(pixmap)
 
     def _on_image_loaded(self, image_id: str, pixmap: QPixmap):
         """Handle loaded image (HQ pixmap from ``ImageLoaderWorker.finished``)."""
@@ -1348,6 +1396,37 @@ class SlideshowWindow(QMainWindow):
                 self._update_resize_cursor(self.mapFromGlobal(global_pos))
         # Viewport receives mouse events (QGraphicsView delegates to viewport())
         if obj == self.graphics_view.viewport():
+            if (
+                self._turnaround_root_id is not None
+                and len(self._turnaround_pose_ids) >= 2
+            ):
+                if (
+                    event.type() == QEvent.MouseButtonPress
+                    and event.button() == Qt.LeftButton
+                ):
+                    self._turnaround_scrubbing = True
+                    self._turnaround_scrub_start_x = float(event.pos().x())
+                    self._turnaround_scrub_start_index = self._turnaround_pose_index
+                    self._show_ui_and_restart_timer()
+                    return True
+                if event.type() == QEvent.MouseMove and self._turnaround_scrubbing:
+                    new_idx = scrub_index_from_drag(
+                        self._turnaround_scrub_start_x,
+                        float(event.pos().x()),
+                        self._turnaround_scrub_start_index,
+                        len(self._turnaround_pose_ids),
+                    )
+                    self._apply_session_turnaround_pose(new_idx)
+                    self._show_ui_and_restart_timer()
+                    return True
+                if (
+                    event.type() == QEvent.MouseButtonRelease
+                    and event.button() == Qt.LeftButton
+                    and self._turnaround_scrubbing
+                ):
+                    self._turnaround_scrubbing = False
+                    self._show_ui_and_restart_timer()
+                    return True
             if (
                 not self._is_fullscreen
                 and event.type() == QEvent.MouseButtonPress

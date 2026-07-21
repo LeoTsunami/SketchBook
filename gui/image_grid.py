@@ -67,6 +67,8 @@ class ImageGrid(QScrollArea):
     start_session_from_image_requested = Signal(
         str
     )  # Emits selected image ID (must be exactly one)
+    group_as_turnaround_requested = Signal(list)  # Ordered selected image IDs
+    decompose_turnaround_requested = Signal(str)  # Turnaround root ID
     grid_needs_refresh = (
         Signal()
     )  # Emits when DB changed (delete, etc.) so main window can reload
@@ -286,6 +288,18 @@ class ImageGrid(QScrollArea):
         )
         self.start_session_from_image_action.triggered.connect(
             self._start_session_from_selected_image
+        )
+        self.group_as_turnaround_action = self.context_menu.addAction(
+            "Group as Turnaround"
+        )
+        self.group_as_turnaround_action.triggered.connect(
+            self._group_selected_as_turnaround
+        )
+        self.decompose_turnaround_action = self.context_menu.addAction(
+            "Decompose Turnaround"
+        )
+        self.decompose_turnaround_action.triggered.connect(
+            self._decompose_selected_turnaround
         )
         self.context_menu.addSeparator()
         self.delete_action = self.context_menu.addAction("Delete from Library")
@@ -1777,6 +1791,7 @@ class ImageGrid(QScrollArea):
                 tag_drop_flash_callback=self._flash_tag_drop,
             )
             thumbnail._fit_mode = self._fit_mode
+            thumbnail._configure_turnaround(metadata)
 
             thumbnail.apply_outer_geometry(thumbnail_width, thumbnail_height)
 
@@ -1813,6 +1828,7 @@ class ImageGrid(QScrollArea):
             tag_drop_flash_callback=self._flash_tag_drop,
         )
         thumbnail._fit_mode = self._fit_mode
+        thumbnail._configure_turnaround(metadata)
         thumbnail.apply_outer_geometry(thumbnail_width, thumbnail_height)
         self.thumbnails[metadata.id] = thumbnail
         thumbnail.clicked.connect(self.image_clicked.emit)
@@ -2359,7 +2375,70 @@ class ImageGrid(QScrollArea):
             has_single_selection = len(self.selected_images) == 1
             self.start_session_from_image_action.setEnabled(has_single_selection)
             self.start_session_from_image_action.setVisible(has_single_selection)
+
+            can_group = self._selection_can_group_as_turnaround()
+            self.group_as_turnaround_action.setVisible(can_group)
+            self.group_as_turnaround_action.setEnabled(can_group)
+
+            turnaround_id = self._selected_turnaround_root_id()
+            self.decompose_turnaround_action.setVisible(turnaround_id is not None)
+            self.decompose_turnaround_action.setEnabled(turnaround_id is not None)
+
             self.context_menu.popup(event.globalPos())
+
+    def _selection_can_group_as_turnaround(self) -> bool:
+        """
+        Return True when the current selection can form a new turnaround.
+
+        Returns:
+            bool: At least two free (non-grouped) images selected.
+        """
+        if len(self.selected_images) < 2:
+            return False
+        for image_id in self.selected_images:
+            meta = self.image_manager.get_image_metadata(image_id)
+            if meta is None:
+                return False
+            if meta.kind == "turnaround" or meta.hidden or meta.group_id:
+                return False
+        return True
+
+    def _selected_turnaround_root_id(self) -> Optional[str]:
+        """
+        Return the turnaround root id if the selection is exactly one turnaround.
+
+        Returns:
+            Root id, or None.
+        """
+        if len(self.selected_images) != 1:
+            return None
+        image_id = next(iter(self.selected_images))
+        meta = self.image_manager.get_image_metadata(image_id)
+        if meta is None or meta.kind != "turnaround":
+            return None
+        return image_id
+
+    def _group_selected_as_turnaround(self) -> None:
+        """Emit ordered selection for turnaround grouping."""
+        if not self._selection_can_group_as_turnaround():
+            return
+        # Prefer grid display order for stable pose sequence when set order is unordered.
+        ordered = [
+            m.id for m in self.all_images if m.id in self.selected_images
+        ]
+        # Append any selected ids missing from all_images (should not happen).
+        seen = set(ordered)
+        for image_id in self.selected_images:
+            if image_id not in seen:
+                ordered.append(image_id)
+        self.group_as_turnaround_requested.emit(ordered)
+
+    def _decompose_selected_turnaround(self) -> None:
+        """Emit decompose request for the selected turnaround root."""
+        root_id = self._selected_turnaround_root_id()
+        if root_id is None:
+            return
+        self.decompose_turnaround_requested.emit(root_id)
 
     def _start_session_from_selected_image(self) -> None:
         """Emit a request to start a session from the currently selected image."""

@@ -10,10 +10,10 @@ import random
 import hashlib
 from datetime import datetime
 from pathlib import Path
-from typing import Dict, List, Optional, Set, Callable
+from typing import Any, Dict, List, Optional, Set, Callable
 from core.settings import settings
 from core.user_data import user_data
-from dataclasses import dataclass, asdict, field
+from dataclasses import dataclass, asdict, field, fields
 
 # Global shuffle timestamp used as part of the seed for course_random shuffles.
 # Initialized at import time so each application run starts with a different
@@ -41,6 +41,34 @@ class ImageMetadata:
     original_path: str = ""  # Path to the original image file
     tags: Set[str] = field(default_factory=set)
     import_date: str = ""  # ISO format date string of when image was imported
+    kind: str = "single"  # "single" | "turnaround"
+    member_ids: List[str] = field(default_factory=list)  # ordered poses (turnaround root)
+    group_id: str = ""  # turnaround root id (members only)
+    hidden: bool = False  # True for members hidden from grid/session
+
+
+_IMAGE_METADATA_FIELD_NAMES = {f.name for f in fields(ImageMetadata)}
+
+
+def metadata_from_dict(raw: Dict[str, Any]) -> ImageMetadata:
+    """
+    Build ImageMetadata from a JSON row, ignoring unknown keys.
+
+    Args:
+        raw: Raw metadata dict from images.json.
+
+    Returns:
+        ImageMetadata: Parsed row with tags coerced to a set.
+    """
+    data: Dict[str, Any] = {
+        k: v for k, v in raw.items() if k in _IMAGE_METADATA_FIELD_NAMES
+    }
+    if "tags" in data and isinstance(data["tags"], list):
+        data["tags"] = set(data["tags"])
+    if "member_ids" in data and not isinstance(data["member_ids"], list):
+        data["member_ids"] = list(data["member_ids"] or [])
+    return ImageMetadata(**data)
+
 
 class ImageDatabase:
     """Local database for image metadata."""
@@ -77,11 +105,8 @@ class ImageDatabase:
             return False
         try:
             self._images = {
-                id: ImageMetadata(**{
-                    k: set(v) if k == "tags" else v
-                    for k, v in metadata.items()
-                })
-                for id, metadata in data.items()
+                id_: metadata_from_dict(metadata)
+                for id_, metadata in data.items()
             }
         except (TypeError, KeyError):
             return False
@@ -102,11 +127,8 @@ class ImageDatabase:
             with open(self._db_path, "r", encoding="utf-8") as f:
                 data = json.load(f)
             self._images = {
-                id: ImageMetadata(**{
-                    k: set(v) if k == "tags" else v
-                    for k, v in metadata.items()
-                })
-                for id, metadata in data.items()
+                id_: metadata_from_dict(metadata)
+                for id_, metadata in data.items()
             }
         except json.JSONDecodeError as e:
             # Try to repair: trailing commas, then truncated last entry
@@ -128,11 +150,8 @@ class ImageDatabase:
                     try:
                         data = json.loads(repaired)
                         self._images = {
-                            id: ImageMetadata(**{
-                                k: set(v) if k == "tags" else v
-                                for k, v in metadata.items()
-                            })
-                            for id, metadata in data.items()
+                            id_: metadata_from_dict(metadata)
+                            for id_, metadata in data.items()
                         }
                         self._save_db()
                         print(
@@ -147,11 +166,8 @@ class ImageDatabase:
                 self._images = {}
                 return
             self._images = {
-                id: ImageMetadata(**{
-                    k: set(v) if k == "tags" else v
-                    for k, v in metadata.items()
-                })
-                for id, metadata in data.items()
+                id_: metadata_from_dict(metadata)
+                for id_, metadata in data.items()
             }
             self._save_db()
             print("Image database repaired (trailing commas removed) and saved.")
@@ -450,10 +466,12 @@ class ImageDatabase:
             self._request_save()
         return count
 
-    def list_images(self, sort_by: str = "import_date_desc") -> List[ImageMetadata]:
+    def list_images(
+        self, sort_by: str = "import_date_desc", *, visible_only: bool = False
+    ) -> List[ImageMetadata]:
         """
         Get list of all image metadata, optionally sorted.
-        
+
         Args:
             sort_by: Sort order. Options:
                 - "import_date_desc": Most recent first (default)
@@ -462,11 +480,14 @@ class ImageDatabase:
                 - "filename_desc": Filename Z→A
                 - "file_size_asc": Lightest first (smallest file size)
                 - "file_size_desc": Heaviest first (largest file size)
-        
+            visible_only: If True, skip images marked ``hidden`` (turnaround members).
+
         Returns:
             List of all image metadata, sorted
         """
         images = list(self._images.values())
+        if visible_only:
+            images = [m for m in images if not m.hidden]
         return self._sort_images(images, sort_by)
     
     def _shuffle_images_for_session(self, images: List[ImageMetadata], shuffle_iteration: int = 0) -> List[ImageMetadata]:

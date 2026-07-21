@@ -1253,6 +1253,12 @@ class MainWindow(QMainWindow):
         self.image_grid.start_session_from_image_requested.connect(
             self._on_start_session_from_grid_image
         )
+        self.image_grid.group_as_turnaround_requested.connect(
+            self._on_group_as_turnaround
+        )
+        self.image_grid.decompose_turnaround_requested.connect(
+            self._on_decompose_turnaround
+        )
         self.image_grid.grid_needs_refresh.connect(self._apply_category_filters)
         self.image_grid.set_import_drop_callback(self._import_from_urls)
         self.image_grid.set_tag_color_resolver(self._resolve_tag_drop_flash_color)
@@ -1702,6 +1708,7 @@ class MainWindow(QMainWindow):
         Filter images from a given list by category/subtag filters (keeps original order).
         Shelf filters: AND shelves require all selected tags; OR shelves require any.
         """
+        images = [m for m in images if not getattr(m, "hidden", False)]
         label_categories_and = shelf_categories_with_filter(
             self._tag_shelf_filter_modes, "and"
         )
@@ -1828,9 +1835,8 @@ class MainWindow(QMainWindow):
         self._apply_category_filters()
 
     def _initialize_course_random_list(self):
-        """Initialize the global course_random list with ALL images in random order."""
-        # Get ALL images from database
-        all_images = self.image_manager.db.list_images()
+        """Initialize the global course_random list with ALL visible images in random order."""
+        all_images = self.image_manager.db.list_images(visible_only=True)
 
         # Apply random shuffle with current shuffle counter
         self._course_random_images_list = self.image_manager.db._sort_images(
@@ -1945,6 +1951,42 @@ class MainWindow(QMainWindow):
     def _on_start_session_from_grid_image(self, image_id: str) -> None:
         """Open session settings and start a session from the selected grid image."""
         self._on_session_settings_clicked(start_from_image_id=image_id)
+
+    def _on_group_as_turnaround(self, member_ids: list) -> None:
+        """
+        Group selected grid images into a Turnaround entry.
+
+        Args:
+            member_ids: Ordered pose image IDs.
+        """
+        try:
+            root = self.image_manager.create_turnaround(member_ids)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Turnaround", str(exc))
+            return
+        self._initialize_course_random_list()
+        self._apply_category_filters()
+        if hasattr(self, "image_grid"):
+            self.image_grid.selected_images = {root.id}
+            self.image_grid._update_selection()
+
+    def _on_decompose_turnaround(self, root_id: str) -> None:
+        """
+        Decompose a Turnaround back into individual images.
+
+        Args:
+            root_id: Turnaround root id.
+        """
+        try:
+            member_ids = self.image_manager.decompose_turnaround(root_id)
+        except ValueError as exc:
+            QMessageBox.warning(self, "Turnaround", str(exc))
+            return
+        self._initialize_course_random_list()
+        self._apply_category_filters()
+        if hasattr(self, "image_grid") and member_ids:
+            self.image_grid.selected_images = set(member_ids)
+            self.image_grid._update_selection()
 
     def _on_session_settings_clicked(
         self, start_from_image_id: Optional[str] = None
@@ -4956,6 +4998,7 @@ class MainWindow(QMainWindow):
             all_images = pre_sorted
         else:
             all_images = self.image_manager.db.list_images(sort_by)
+        all_images = [m for m in all_images if not getattr(m, "hidden", False)]
 
         label_categories_and = shelf_categories_with_filter(
             self._tag_shelf_filter_modes, "and"
