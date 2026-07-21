@@ -56,6 +56,7 @@ from gui.turnaround_scrub import (
     scrub_index_from_drag,
     turnaround_pose_setup,
 )
+from gui.turnaround_badge import TurnaroundBadgeOverlay
 from gui.icon_utils import invert_icon
 from gui.image_viewer_window import ImageViewerWindow
 from gui.window_chrome import (
@@ -207,6 +208,9 @@ class _OverlayContainer(QWidget):
             self._get_ready_frame.setGeometry(r)
         if self._phase_title_frame:
             self._phase_title_frame.setGeometry(r)
+        badge = getattr(self, "_turnaround_badge", None)
+        if badge is not None:
+            badge.reposition(self)
         for w in (
             self._countdown_frame,
             self._fullscreen_btn,
@@ -216,6 +220,8 @@ class _OverlayContainer(QWidget):
         ):
             if w:
                 w.raise_()
+        if badge is not None and badge.isVisible():
+            badge.raise_()
         self.resized.emit()
 
 
@@ -278,6 +284,10 @@ class SlideshowWindow(QMainWindow):
         )
         self._overlay_container.resized.connect(self._on_container_resized)
         layout.addWidget(self._overlay_container, 1)
+        self._turnaround_badge = TurnaroundBadgeOverlay(
+            self._overlay_container, large=True
+        )
+        self._overlay_container._turnaround_badge = self._turnaround_badge
 
         self._setup_ui_auto_hide()  # Show overlays + cursor on key/mouse; hide after 2s inactivity
         self._overlay_container.installEventFilter(self)
@@ -917,8 +927,12 @@ class SlideshowWindow(QMainWindow):
         self._turnaround_pose_index = middle
         self._turnaround_root_id = image_id if is_turnaround_meta(metadata) else None
         self._turnaround_scrubbing = False
+        if hasattr(self, "_turnaround_badge"):
+            self._turnaround_badge.set_visible_for_turnaround(
+                self._turnaround_root_id is not None
+            )
 
-        # Load middle pose for turnaround roots; otherwise the image path.
+        # Load first pose for turnaround roots; otherwise the image path.
         if self._turnaround_root_id is not None:
             rel = None
             from core.turnaround import resolve_pose_path

@@ -35,6 +35,7 @@ from qtpy.QtGui import (
 from core.settings import settings
 from gui.icon_utils import find_tag_icon, invert_icon, tint_icon
 from gui.thumbnail_fitting import FitMode, fit_pixmap_in_view
+from gui.turnaround_badge import TurnaroundBadgeOverlay
 from core.turnaround import TURNAROUND_KIND, TURNAROUND_TAG, get_pose_ids
 
 
@@ -313,41 +314,7 @@ class ImageThumbnail(QFrame):
         self._turnaround_cycle_timer.setInterval(280)
         self._turnaround_cycle_timer.timeout.connect(self._on_turnaround_cycle_tick)
 
-        self._turnaround_icon = QLabel(self)
-        self._turnaround_icon.setObjectName("TurnaroundBadge")
-        self._turnaround_icon.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self._turnaround_icon.setAttribute(Qt.WA_TranslucentBackground, True)
-        self._turnaround_icon.setFixedSize(32, 32)
-        self._turnaround_icon.setAlignment(Qt.AlignCenter)
-        self._turnaround_icon.setStyleSheet(
-            "QLabel#TurnaroundBadge { background: transparent; border: none; }"
-        )
-        badge_pm = self._build_turnaround_badge_pixmap(24)
-        if not badge_pm.isNull():
-            self._turnaround_icon.setPixmap(badge_pm)
-        icon_shadow = QGraphicsDropShadowEffect(self._turnaround_icon)
-        icon_shadow.setBlurRadius(12)
-        icon_shadow.setOffset(0, 1)
-        icon_shadow.setColor(QColor(0, 0, 0, 200))
-        self._turnaround_icon.setGraphicsEffect(icon_shadow)
-        self._turnaround_icon.hide()
-
-    @staticmethod
-    def _build_turnaround_badge_pixmap(size: int = 24) -> QPixmap:
-        """
-        Build a white turnaround badge pixmap from the tag icon asset.
-
-        Args:
-            size: Icon size in pixels.
-
-        Returns:
-            QPixmap: White-tinted icon, or null pixmap if missing.
-        """
-        raw = find_tag_icon("Turnaround")
-        if raw.isNull():
-            return QPixmap()
-        tinted = tint_icon(raw, QColor(255, 255, 255), size)
-        return tinted.pixmap(size, size)
+        self._turnaround_icon = TurnaroundBadgeOverlay(self, large=False)
 
     @classmethod
     def content_dimensions(
@@ -535,20 +502,11 @@ class ImageThumbnail(QFrame):
         Args:
             visible: Whether the badge should be visible.
         """
-        if visible and self._is_turnaround():
-            self._position_turnaround_icon()
-            self._turnaround_icon.show()
-            self._turnaround_icon.raise_()
-        else:
-            self._turnaround_icon.hide()
+        self._turnaround_icon.set_visible_for_turnaround(visible and self._is_turnaround())
 
     def _position_turnaround_icon(self) -> None:
-        """Place the turnaround badge in the bottom-right corner of the image area."""
-        margin = 8
-        x = max(0, self.width() - self._turnaround_icon.width() - margin)
-        y = max(0, self.height() - self._turnaround_icon.height() - margin)
-        self._turnaround_icon.move(x, y)
-        self._turnaround_icon.raise_()
+        """Place the turnaround badge in the bottom-right corner of the thumbnail."""
+        self._turnaround_icon.reposition(self)
 
     def set_turnaround_hover(self, active: bool) -> None:
         """

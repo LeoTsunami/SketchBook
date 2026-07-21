@@ -35,6 +35,7 @@ from gui.turnaround_scrub import (
     scrub_index_from_drag,
     turnaround_pose_setup,
 )
+from gui.turnaround_badge import TurnaroundBadgeOverlay
 from gui.window_chrome import (
     WindowChromeBar,
     apply_glass_button_style,
@@ -198,6 +199,7 @@ class ImageViewerWindow(QMainWindow):
         self.scene.setBackgroundBrush(Qt.transparent)
         self.graphics_view.setScene(self.scene)
         self.pixmap_item: Optional[QGraphicsPixmapItem] = None
+        self._turnaround_badge = TurnaroundBadgeOverlay(self.graphics_view, large=True)
 
         center_layout.addWidget(self.graphics_view, 1)
 
@@ -270,6 +272,12 @@ class ImageViewerWindow(QMainWindow):
         if hasattr(self, "_chrome_bar"):
             self._chrome_bar.sync_window_state()
 
+    def resizeEvent(self, event) -> None:
+        """Reposition turnaround badge when the viewer is resized."""
+        super().resizeEvent(event)
+        if hasattr(self, "_turnaround_badge") and self._turnaround_badge.isVisible():
+            self._turnaround_badge.reposition(self.graphics_view)
+
     def _ensure_sequence_from_grid(self, current_id: str) -> None:
         """
         Ensure we have the current image sequence from the parent ImageGrid.
@@ -330,6 +338,7 @@ class ImageViewerWindow(QMainWindow):
             if pixmap is None:
                 return False
             self.graphics_view.setDragMode(QGraphicsView.NoDrag)
+            self._turnaround_badge.set_visible_for_turnaround(True)
         else:
             path = self.image_manager.image_dir / metadata.path
             if not path.exists():
@@ -338,6 +347,7 @@ class ImageViewerWindow(QMainWindow):
             if pixmap.isNull():
                 return False
             self.graphics_view.setDragMode(QGraphicsView.ScrollHandDrag)
+            self._turnaround_badge.set_visible_for_turnaround(False)
 
         self.scene.clear()
         self.pixmap_item = QGraphicsPixmapItem(pixmap)

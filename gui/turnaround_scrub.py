@@ -123,4 +123,4 @@ def scrub_index_from_drag(
         return 0
     delta = current_x - start_x
     steps = int(round(delta / max(1.0, pixels_per_pose)))
-    return max(0, min(pose_count - 1, start_index + steps))
+    return (start_index + steps) % pose_count

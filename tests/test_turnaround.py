@@ -14,6 +14,7 @@ from core.turnaround import (
     get_pose_ids,
     middle_pose_index,
 )
+from gui.turnaround_scrub import scrub_index_from_drag
 
 
 def _import_n(image_manager, tmp_path: Path, n: int) -> list:
@@ -38,6 +39,13 @@ def test_middle_pose_index():
     assert middle_pose_index(3) == 1
     assert middle_pose_index(4) == 1
     assert middle_pose_index(5) == 2
+
+
+def test_scrub_index_from_drag_loops():
+    """Drag scrub wraps at sequence ends."""
+    assert scrub_index_from_drag(0, 48 * 4, 0, 4) == 0
+    assert scrub_index_from_drag(0, 48 * 5, 3, 4) == 0
+    assert scrub_index_from_drag(100, 100 - 48, 0, 4) == 3
 
 
 def test_create_turnaround_hides_members_and_tags_root(image_manager, tmp_path):
