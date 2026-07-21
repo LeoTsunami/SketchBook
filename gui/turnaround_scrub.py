@@ -12,7 +12,6 @@ from core.image_manager import ImageManager
 from core.turnaround import (
     TURNAROUND_KIND,
     get_pose_ids,
-    middle_pose_index,
     resolve_pose_path,
 )
 from core.image_db import ImageMetadata
@@ -22,20 +21,20 @@ def turnaround_pose_setup(
     image_manager: ImageManager, image_id: str
 ) -> Tuple[List[str], int]:
     """
-    Resolve pose IDs and middle index for an image.
+    Resolve pose IDs and default pose index for an image.
 
     Args:
         image_manager: Image manager.
         image_id: Current image id (root or single).
 
     Returns:
-        (pose_ids, middle_index). For non-turnaround, pose_ids is ``[image_id]``.
+        (pose_ids, default_index). Default is the first pose (index 0).
     """
     meta = image_manager.get_image_metadata(image_id)
     if meta is None:
         return ([image_id], 0)
     poses = get_pose_ids(meta)
-    return (poses, middle_pose_index(len(poses)))
+    return (poses, 0)
 
 
 def is_turnaround_meta(meta: Optional[ImageMetadata]) -> bool:

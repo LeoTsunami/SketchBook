@@ -33,6 +33,8 @@ from qtpy.QtCore import (
     QPoint,
     QUrl,
     QElapsedTimer,
+    QEvent,
+    QObject,
 )
 from qtpy.QtGui import (
     QColor,
@@ -136,6 +138,9 @@ class ImageGrid(QScrollArea):
         # Enable mouse tracking for drag selection
         self.setMouseTracking(True)
         self.content.setMouseTracking(True)
+        self.viewport().setMouseTracking(True)
+        self._turnaround_hover_thumb: Optional[ImageThumbnail] = None
+        self.viewport().installEventFilter(self)
 
         # Create selection rubber band
         self.rubber_band = QRubberBand(QRubberBand.Rectangle, self.viewport())
@@ -696,6 +701,9 @@ class ImageGrid(QScrollArea):
             return
         thumb = self.thumbnails.get(image_id)
         if thumb and thumb.image_id == image_id:
+            # Don't clobber an active turnaround hover cycle with the root pixmap.
+            if thumb.is_turnaround_hover_active():
+                return
             thumb.set_image(pixmap)
 
     def _update_scroll_preview_during_scroll(self) -> None:
@@ -1920,7 +1928,9 @@ class ImageGrid(QScrollArea):
         metadata = self.all_images[idx]
         if image_id in self.pixmap_cache:
             if image_id in self.thumbnails:
-                self.thumbnails[image_id].set_image(self.pixmap_cache[image_id])
+                thumb = self.thumbnails[image_id]
+                if not thumb.is_turnaround_hover_active():
+                    thumb.set_image(self.pixmap_cache[image_id])
             return
         self.loading_images.add(image_id)
         if image_id in self.thumbnails:
@@ -2132,13 +2142,82 @@ class ImageGrid(QScrollArea):
                 return
         super().mouseDoubleClickEvent(event)
 
+    def eventFilter(self, obj: QObject, event: QEvent) -> bool:
+        """Track turnaround hover from viewport mouse moves (reliable under scroll area)."""
+        if obj is self.viewport():
+            et = event.type()
+            if et == QEvent.Type.MouseMove and not self.is_selecting:
+                self._update_turnaround_hover_at(event.pos())
+            elif et in (QEvent.Type.Leave, QEvent.Leave):
+                self._set_turnaround_hover_thumbnail(None)
+        return super().eventFilter(obj, event)
+
     def mouseMoveEvent(self, event):
         self._note_user_activity()
         if self.is_selecting:
             # Update rubber band geometry with proper coordinates
             selection_rect = QRect(self.selection_start, event.pos()).normalized()
             self.rubber_band.setGeometry(selection_rect)
+        else:
+            # mouseMoveEvent on QScrollArea: pos is in the scroll area; map via viewport.
+            vp = self.viewport().mapFrom(self, event.pos())
+            self._update_turnaround_hover_at(vp)
         super().mouseMoveEvent(event)
+
+    def leaveEvent(self, event):
+        """Clear turnaround hover cycling when the pointer leaves the grid."""
+        self._set_turnaround_hover_thumbnail(None)
+        super().leaveEvent(event)
+
+    def _thumbnail_at_viewport_pos(self, viewport_pos: QPoint) -> Optional[ImageThumbnail]:
+        """
+        Return the thumbnail under a viewport position, if any.
+
+        Args:
+            viewport_pos: Position in the scroll-area viewport coordinates.
+
+        Returns:
+            ImageThumbnail or None.
+        """
+        content_pos = self.content.mapFrom(self.viewport(), viewport_pos)
+        for thumbnail in self.thumbnails.values():
+            top_left = thumbnail.mapTo(self.content, QPoint(0, 0))
+            if QRect(top_left, thumbnail.size()).contains(content_pos):
+                return thumbnail
+        return None
+
+    def _update_turnaround_hover_at(self, viewport_pos: QPoint) -> None:
+        """
+        Keep turnaround pose cycling in sync with the pointer position.
+
+        Args:
+            viewport_pos: Pointer position in grid coordinates.
+        """
+        thumb = self._thumbnail_at_viewport_pos(viewport_pos)
+        if thumb is not None and thumb._is_turnaround():
+            self._set_turnaround_hover_thumbnail(thumb)
+        else:
+            self._set_turnaround_hover_thumbnail(None)
+
+    def _set_turnaround_hover_thumbnail(
+        self, thumb: Optional[ImageThumbnail]
+    ) -> None:
+        """
+        Activate hover cycling on at most one turnaround thumbnail.
+
+        Args:
+            thumb: Turnaround under the pointer, or None.
+        """
+        current = getattr(self, "_turnaround_hover_thumb", None)
+        if current is thumb:
+            if thumb is not None:
+                thumb.set_turnaround_hover(True)
+            return
+        if current is not None:
+            current.set_turnaround_hover(False)
+        self._turnaround_hover_thumb = thumb
+        if thumb is not None:
+            thumb.set_turnaround_hover(True)
 
     def wheelEvent(self, event):
         """Let wheel events reach the scroll area (preload is not paused on scroll)."""

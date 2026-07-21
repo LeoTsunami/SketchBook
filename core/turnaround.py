@@ -78,8 +78,7 @@ def create_turnaround(
         members.append(meta)
 
     ordered_ids = [m.id for m in members]
-    mid_idx = middle_pose_index(len(ordered_ids))
-    middle = members[mid_idx]
+    first = members[0]
     root_id = f"turnaround_{uuid.uuid4().hex[:12]}"
 
     # Union tags from all members, plus Turnaround.
@@ -90,15 +89,15 @@ def create_turnaround(
 
     root = ImageMetadata(
         id=root_id,
-        path=middle.path,
+        path=first.path,
         original_filename=f"Turnaround ({len(ordered_ids)} poses)",
-        width=middle.width,
-        height=middle.height,
-        file_size=middle.file_size,
-        format=middle.format,
-        original_path=middle.original_path,
+        width=first.width,
+        height=first.height,
+        file_size=first.file_size,
+        format=first.format,
+        original_path=first.original_path,
         tags=union_tags,
-        import_date=datetime.now().isoformat(),
+        import_date=first.import_date or datetime.now().isoformat(),
         kind=TURNAROUND_KIND,
         member_ids=ordered_ids,
         group_id="",

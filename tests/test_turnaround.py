@@ -43,6 +43,11 @@ def test_middle_pose_index():
 def test_create_turnaround_hides_members_and_tags_root(image_manager, tmp_path):
     """Creating a turnaround hides members and tags the root."""
     metas = _import_n(image_manager, tmp_path, 3)
+    # Stamp a stable import date on the first member.
+    first_date = "2024-01-15T12:00:00"
+    image_manager.db.update_image(metas[0].id, import_date=first_date)
+    metas[0] = image_manager.db.get_image(metas[0].id)
+
     member_ids = [m.id for m in metas]
     root = create_turnaround(image_manager, member_ids)
 
@@ -50,6 +55,8 @@ def test_create_turnaround_hides_members_and_tags_root(image_manager, tmp_path):
     assert root.member_ids == member_ids
     assert TURNAROUND_TAG in root.tags
     assert not root.hidden
+    assert root.import_date == first_date
+    assert root.path == metas[0].path
 
     for mid in member_ids:
         member = image_manager.db.get_image(mid)
@@ -61,9 +68,6 @@ def test_create_turnaround_hides_members_and_tags_root(image_manager, tmp_path):
     visible_ids = {m.id for m in visible}
     assert root.id in visible_ids
     assert not (set(member_ids) & visible_ids)
-
-    mid_idx = middle_pose_index(3)
-    assert root.path == metas[mid_idx].path
 
 
 def test_decompose_restores_members(image_manager, tmp_path):

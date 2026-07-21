@@ -33,9 +33,9 @@ from qtpy.QtGui import (
     QColor,
 )
 from core.settings import settings
-from gui.icon_utils import find_tag_icon, invert_icon, load_white_icon
+from gui.icon_utils import find_tag_icon, invert_icon, tint_icon
 from gui.thumbnail_fitting import FitMode, fit_pixmap_in_view
-from core.turnaround import TURNAROUND_KIND, get_pose_ids, middle_pose_index
+from core.turnaround import TURNAROUND_KIND, TURNAROUND_TAG, get_pose_ids
 
 
 class TagChip(QFrame):
@@ -307,29 +307,47 @@ class ImageThumbnail(QFrame):
 
         self._turnaround_pose_ids: List[str] = []
         self._turnaround_pose_index: int = 0
-        self._turnaround_middle_index: int = 0
         self._turnaround_pose_cache: dict = {}
+        self._turnaround_hover_active: bool = False
         self._turnaround_cycle_timer = QTimer(self)
         self._turnaround_cycle_timer.setInterval(280)
         self._turnaround_cycle_timer.timeout.connect(self._on_turnaround_cycle_tick)
 
         self._turnaround_icon = QLabel(self)
+        self._turnaround_icon.setObjectName("TurnaroundBadge")
         self._turnaround_icon.setAttribute(Qt.WA_TransparentForMouseEvents, True)
-        self._turnaround_icon.setFixedSize(28, 28)
-        icon = load_white_icon("tags/turnaround.png", 24)
-        if icon.isNull():
-            # Fallback: direct path under tags/
-            from gui.icon_utils import find_tag_icon
-
-            raw = find_tag_icon("Turnaround")
-            icon = invert_icon(raw, 24) if not raw.isNull() else QIcon()
-        self._turnaround_icon.setPixmap(icon.pixmap(24, 24))
+        self._turnaround_icon.setAttribute(Qt.WA_TranslucentBackground, True)
+        self._turnaround_icon.setFixedSize(32, 32)
+        self._turnaround_icon.setAlignment(Qt.AlignCenter)
+        self._turnaround_icon.setStyleSheet(
+            "QLabel#TurnaroundBadge { background: transparent; border: none; }"
+        )
+        badge_pm = self._build_turnaround_badge_pixmap(24)
+        if not badge_pm.isNull():
+            self._turnaround_icon.setPixmap(badge_pm)
         icon_shadow = QGraphicsDropShadowEffect(self._turnaround_icon)
-        icon_shadow.setBlurRadius(10)
+        icon_shadow.setBlurRadius(12)
         icon_shadow.setOffset(0, 1)
-        icon_shadow.setColor(QColor(0, 0, 0, 180))
+        icon_shadow.setColor(QColor(0, 0, 0, 200))
         self._turnaround_icon.setGraphicsEffect(icon_shadow)
         self._turnaround_icon.hide()
+
+    @staticmethod
+    def _build_turnaround_badge_pixmap(size: int = 24) -> QPixmap:
+        """
+        Build a white turnaround badge pixmap from the tag icon asset.
+
+        Args:
+            size: Icon size in pixels.
+
+        Returns:
+            QPixmap: White-tinted icon, or null pixmap if missing.
+        """
+        raw = find_tag_icon("Turnaround")
+        if raw.isNull():
+            return QPixmap()
+        tinted = tint_icon(raw, QColor(255, 255, 255), size)
+        return tinted.pixmap(size, size)
 
     @classmethod
     def content_dimensions(
@@ -369,6 +387,8 @@ class ImageThumbnail(QFrame):
             fit_pixmap_in_view(
                 self.graphics_view, self.scene, self.pixmap_item, self._fit_mode
             )
+        if self._is_turnaround():
+            self._show_turnaround_badge(True)
 
     def set_fit_mode(self, mode: FitMode) -> None:
         """
@@ -407,6 +427,8 @@ class ImageThumbnail(QFrame):
             fit_pixmap_in_view(
                 self.graphics_view, self.scene, self.pixmap_item, self._fit_mode
             )
+            if self._is_turnaround():
+                self._show_turnaround_badge(True)
 
         except Exception as e:
             self.set_error(str(e))
@@ -456,7 +478,7 @@ class ImageThumbnail(QFrame):
 
     def clear_pixmap(self) -> None:
         """Clear the displayed image (e.g. before reloading after rotate)."""
-        self._stop_turnaround_cycle(restore_middle=False)
+        self._stop_turnaround_cycle()
         if self.scene:
             self.scene.clear()
         self.original_pixmap = None
@@ -469,7 +491,7 @@ class ImageThumbnail(QFrame):
         Args:
             metadata: New image metadata (ImageMetadata) to display.
         """
-        self._stop_turnaround_cycle(restore_middle=False)
+        self._stop_turnaround_cycle()
         self.image_id = metadata.id
         self.clear_pixmap()
         self.set_tags_visible(False)
@@ -485,20 +507,40 @@ class ImageThumbnail(QFrame):
         """
         self._turnaround_pose_cache.clear()
         if getattr(metadata, "kind", "") == TURNAROUND_KIND and metadata.member_ids:
-            self._turnaround_pose_ids = get_pose_ids(metadata)
-            self._turnaround_middle_index = middle_pose_index(
-                len(self._turnaround_pose_ids)
-            )
-            self._turnaround_pose_index = self._turnaround_middle_index
+            self._turnaround_pose_ids = list(get_pose_ids(metadata))
+            self._turnaround_pose_index = 0
+            self._show_turnaround_badge(True)
+        elif (
+            getattr(metadata, "member_ids", None)
+            and len(metadata.member_ids) >= 2
+            and TURNAROUND_TAG in getattr(metadata, "tags", set())
+        ):
+            # Fallback if kind was lost but member_ids remain.
+            self._turnaround_pose_ids = list(metadata.member_ids)
+            self._turnaround_pose_index = 0
+            self._show_turnaround_badge(True)
         else:
             self._turnaround_pose_ids = []
-            self._turnaround_middle_index = 0
             self._turnaround_pose_index = 0
-        self._turnaround_icon.hide()
+            self._show_turnaround_badge(False)
 
     def _is_turnaround(self) -> bool:
         """Return True when this thumbnail represents a turnaround group."""
         return len(self._turnaround_pose_ids) >= 2
+
+    def _show_turnaround_badge(self, visible: bool) -> None:
+        """
+        Show or hide the always-on turnaround badge.
+
+        Args:
+            visible: Whether the badge should be visible.
+        """
+        if visible and self._is_turnaround():
+            self._position_turnaround_icon()
+            self._turnaround_icon.show()
+            self._turnaround_icon.raise_()
+        else:
+            self._turnaround_icon.hide()
 
     def _position_turnaround_icon(self) -> None:
         """Place the turnaround badge in the bottom-right corner of the image area."""
@@ -508,17 +550,39 @@ class ImageThumbnail(QFrame):
         self._turnaround_icon.move(x, y)
         self._turnaround_icon.raise_()
 
-    def _stop_turnaround_cycle(self, *, restore_middle: bool) -> None:
+    def set_turnaround_hover(self, active: bool) -> None:
         """
-        Stop hover pose cycling.
+        Start or stop pose cycling while the pointer is over this turnaround.
+
+        Driven by ImageGrid hit-testing so it works even when child views
+        swallow enter/leave events.
 
         Args:
-            restore_middle: If True, show the middle pose again.
+            active: True while the pointer is over this thumbnail.
         """
+        if not self._is_turnaround():
+            self._turnaround_hover_active = False
+            self._stop_turnaround_cycle()
+            return
+        if active == self._turnaround_hover_active:
+            if active and not self._turnaround_cycle_timer.isActive():
+                self._turnaround_cycle_timer.start()
+            return
+        self._turnaround_hover_active = active
+        self._show_turnaround_badge(True)
+        if active:
+            self._turnaround_cycle_timer.start()
+        else:
+            self._stop_turnaround_cycle()
+
+    def is_turnaround_hover_active(self) -> bool:
+        """Return True while turnaround hover cycling is running."""
+        return self._turnaround_hover_active
+
+    def _stop_turnaround_cycle(self) -> None:
+        """Stop hover pose cycling; keep the last displayed pose."""
         self._turnaround_cycle_timer.stop()
-        if restore_middle and self._is_turnaround():
-            self._turnaround_pose_index = self._turnaround_middle_index
-            self._show_turnaround_pose(self._turnaround_pose_index)
+        self._turnaround_hover_active = False
 
     def _show_turnaround_pose(self, pose_index: int) -> None:
         """
@@ -617,8 +681,8 @@ class ImageThumbnail(QFrame):
 
         if self.tag_chips and not fast:
             self._relayout_tags()
-        if self._is_turnaround() and self._turnaround_icon.isVisible():
-            self._position_turnaround_icon()
+        if self._is_turnaround():
+            self._show_turnaround_badge(True)
 
     def _sync_selection_overlay_geometry(self) -> None:
         """Position the selection overlay around the image (inside the cell padding)."""
@@ -637,6 +701,8 @@ class ImageThumbnail(QFrame):
             self._sync_selection_overlay_geometry()
             self._selection_overlay.raise_()
             self.tags_container.raise_()
+            if self._is_turnaround():
+                self._show_turnaround_badge(True)
 
     def set_selected(self, selected: bool):
         """Set the selection state of the thumbnail (overlay above the image)."""
@@ -650,8 +716,12 @@ class ImageThumbnail(QFrame):
                 self._selection_overlay.show()
                 self._selection_overlay.raise_()
                 self.tags_container.raise_()
+                if self._is_turnaround():
+                    self._show_turnaround_badge(True)
             else:
                 self._selection_overlay.hide()
+                if self._is_turnaround():
+                    self._show_turnaround_badge(True)
 
     def _set_hovered(self, hovered: bool) -> None:
         """Update hovered visual state (handled by theme QSS)."""
@@ -847,11 +917,7 @@ class ImageThumbnail(QFrame):
         """When mouse enters, ask parent grid to show this image's tags."""
         self._set_hovered(True)
         if self._is_turnaround():
-            self._position_turnaround_icon()
-            self._turnaround_icon.show()
-            self._turnaround_icon.raise_()
-            self._turnaround_pose_index = self._turnaround_middle_index
-            self._turnaround_cycle_timer.start()
+            self.set_turnaround_hover(True)
         parent = self.parent()
         while parent:
             if hasattr(parent, "set_active_image"):
@@ -865,9 +931,7 @@ class ImageThumbnail(QFrame):
         # On ne force pas ici la désactivation des tags pour éviter les
         # effets de flicker si d'autres logiques décident de l'image active.
         self._set_hovered(False)
-        if self._is_turnaround():
-            self._turnaround_icon.hide()
-            self._stop_turnaround_cycle(restore_middle=True)
+        # Hover cycle stop is owned by ImageGrid hit-testing (more reliable).
         super().leaveEvent(event)
 
     def dragEnterEvent(self, event: QDragEnterEvent):
