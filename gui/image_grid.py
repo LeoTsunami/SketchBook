@@ -323,6 +323,32 @@ class ImageGrid(QScrollArea):
         """Rebuild the O(1) image-id-to-index mapping after any change to ``all_images``."""
         self._image_id_to_index = {m.id: i for i, m in enumerate(self.all_images)}
 
+    def scroll_to_image(self, image_id: str, *, center: bool = True) -> None:
+        """
+        Scroll the grid so ``image_id`` is visible (optionally centered vertically).
+
+        Args:
+            image_id: Target image metadata id.
+            center: When True, place the row near the middle of the viewport.
+        """
+        idx = self._image_id_to_index.get(image_id)
+        if idx is None:
+            return
+        row = idx // max(1, self.columns)
+        _thumb_w, row_height = self._calculate_optimal_dimensions()
+        spacing = self.grid.spacing()
+        margins = self.grid.contentsMargins()
+        row_pitch = row_height + spacing
+        y = margins.top() + row * row_pitch
+        bar = self.verticalScrollBar()
+        if bar is None:
+            return
+        if center:
+            viewport_h = self.viewport().height()
+            y = max(0, y - max(0, (viewport_h - row_height) // 2))
+        bar.setValue(max(bar.minimum(), min(bar.maximum(), y)))
+        self._check_visible_thumbnails()
+
     def _schedule_idle_resume(self) -> None:
         """Pause low-priority grid preloads until the next idle window."""
         self._bg_idle_mode = False

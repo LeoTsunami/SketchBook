@@ -1969,6 +1969,7 @@ class MainWindow(QMainWindow):
         if hasattr(self, "image_grid"):
             self.image_grid.selected_images = {root.id}
             self.image_grid._update_selection()
+            QTimer.singleShot(0, lambda: self.image_grid.scroll_to_image(root.id))
 
     def _on_decompose_turnaround(self, root_id: str) -> None:
         """

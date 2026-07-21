@@ -245,11 +245,20 @@ class SlideshowWindow(QMainWindow):
         self.session_manager = session_manager
         self.image_manager = image_manager
         # Initialize critical state before installing any event filters.
+        self._init_complete: bool = False
         self._is_fullscreen = False
         self._session_viewer_open: bool = False
         self._session_image_viewer: Optional[_SessionImageViewerWindow] = None
         self._last_play_pause_toggle_time: float = 0.0
         self._resize_margin_px: int = 6
+        self._turnaround_pose_ids: List[str] = []
+        self._turnaround_pose_index: int = 0
+        self._turnaround_root_id: Optional[str] = None
+        self._turnaround_scrubbing: bool = False
+        self._turnaround_scrub_start_x: float = 0.0
+        self._turnaround_scrub_start_index: int = 0
+        self._showing_get_ready: bool = False
+        self._showing_phase_title: bool = False
 
         self.setWindowTitle("SketchBook - Drawing Session")
         enable_frameless_window(self)
@@ -302,12 +311,6 @@ class SlideshowWindow(QMainWindow):
         self._first_image = True
         self._fade_animation: Optional[QVariantAnimation] = None
         self._fade_in_progress: bool = False
-        self._turnaround_pose_ids: List[str] = []
-        self._turnaround_pose_index: int = 0
-        self._turnaround_root_id: Optional[str] = None
-        self._turnaround_scrubbing: bool = False
-        self._turnaround_scrub_start_x: float = 0.0
-        self._turnaround_scrub_start_index: int = 0
         # Title screen countdown (Get ready / phase): ticks every second, then calls done callback
         self._title_countdown_timer = QTimer(self)
         self._title_countdown_timer.setInterval(1000)
@@ -318,10 +321,9 @@ class SlideshowWindow(QMainWindow):
             None  # Callable[[], None] when countdown reaches 0
         )
         # Step navigation: Get ready, phase titles and images are all steps (Next/Previous move one step)
-        self._showing_get_ready: bool = False
-        self._showing_phase_title: bool = False
 
         self._apply_theme()
+        self._init_complete = True
 
     def _setup_image_display(self):
         """Set up the image display (two layers for crossfade). Will be placed full-size in container."""
@@ -1400,6 +1402,8 @@ class SlideshowWindow(QMainWindow):
 
     def eventFilter(self, obj, event):
         """Catch Space on graphics view; show UI on any key, mouse move, or mouse click."""
+        if not self._init_complete:
+            return super().eventFilter(obj, event)
         if not self._is_fullscreen and event.type() == QEvent.MouseMove:
             global_pos = (
                 event.globalPosition().toPoint()

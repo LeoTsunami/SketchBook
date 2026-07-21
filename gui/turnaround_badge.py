@@ -5,8 +5,13 @@ Turnaround badge overlay (white icon + drop shadow) for grid, viewer, and sessio
 from __future__ import annotations
 
 from qtpy.QtCore import Qt
-from qtpy.QtGui import QColor, QPixmap
-from qtpy.QtWidgets import QGraphicsDropShadowEffect, QLabel, QWidget
+from qtpy.QtGui import QColor, QFont, QPixmap
+from qtpy.QtWidgets import (
+    QGraphicsDropShadowEffect,
+    QHBoxLayout,
+    QLabel,
+    QWidget,
+)
 
 from gui.icon_utils import find_tag_icon, tint_icon
 
@@ -71,6 +76,90 @@ class TurnaroundBadgeOverlay(QLabel):
 
         Args:
             visible: Whether the current context is a turnaround.
+        """
+        if visible:
+            self.reposition()
+            self.show()
+            self.raise_()
+        else:
+            self.hide()
+
+
+class TurnaroundViewerHintOverlay(QWidget):
+    """
+    Top-left turnaround hint for the expanded image viewer (icon + drag hint text).
+    """
+
+    HINT_TEXT = "Click and drag to turn around"
+    ICON_PX = TurnaroundBadgeOverlay.BADGE_ICON_LARGE
+    MARGIN = 14
+
+    def __init__(self, parent: QWidget) -> None:
+        """
+        Initialize the viewer hint strip.
+
+        Args:
+            parent: Host widget (typically the graphics view).
+        """
+        super().__init__(parent)
+        self.setObjectName("TurnaroundViewerHint")
+        self.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self.setAttribute(Qt.WA_TranslucentBackground, True)
+
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 8, 12, 8)
+        layout.setSpacing(10)
+
+        self._icon_label = QLabel()
+        self._icon_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        badge_pm = build_turnaround_badge_pixmap(self.ICON_PX)
+        if not badge_pm.isNull():
+            self._icon_label.setPixmap(badge_pm)
+            self._icon_label.setFixedSize(badge_pm.size())
+        icon_shadow = QGraphicsDropShadowEffect(self._icon_label)
+        icon_shadow.setBlurRadius(12)
+        icon_shadow.setOffset(0, 1)
+        icon_shadow.setColor(QColor(0, 0, 0, 200))
+        self._icon_label.setGraphicsEffect(icon_shadow)
+
+        self._hint_label = QLabel(self.HINT_TEXT)
+        self._hint_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        font = QFont()
+        font.setPointSize(11)
+        font.setBold(True)
+        self._hint_label.setFont(font)
+        self._hint_label.setStyleSheet("color: rgba(255, 255, 255, 0.92);")
+        hint_shadow = QGraphicsDropShadowEffect(self._hint_label)
+        hint_shadow.setBlurRadius(10)
+        hint_shadow.setOffset(0, 1)
+        hint_shadow.setColor(QColor(0, 0, 0, 180))
+        self._hint_label.setGraphicsEffect(hint_shadow)
+
+        layout.addWidget(self._icon_label)
+        layout.addWidget(self._hint_label)
+        self.adjustSize()
+        self.hide()
+
+    def reposition(self, host: QWidget | None = None) -> None:
+        """
+        Place the hint strip in the top-left corner of the host.
+
+        Args:
+            host: Optional widget whose size defines placement; defaults to parent.
+        """
+        self.adjustSize()
+        target = host or self.parentWidget()
+        if target is None:
+            return
+        self.move(self.MARGIN, self.MARGIN)
+        self.raise_()
+
+    def set_visible_for_turnaround(self, visible: bool) -> None:
+        """
+        Show or hide the viewer hint.
+
+        Args:
+            visible: Whether the current image is a turnaround.
         """
         if visible:
             self.reposition()

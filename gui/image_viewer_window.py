@@ -35,7 +35,7 @@ from gui.turnaround_scrub import (
     scrub_index_from_drag,
     turnaround_pose_setup,
 )
-from gui.turnaround_badge import TurnaroundBadgeOverlay
+from gui.turnaround_badge import TurnaroundViewerHintOverlay
 from gui.window_chrome import (
     WindowChromeBar,
     apply_glass_button_style,
@@ -199,7 +199,7 @@ class ImageViewerWindow(QMainWindow):
         self.scene.setBackgroundBrush(Qt.transparent)
         self.graphics_view.setScene(self.scene)
         self.pixmap_item: Optional[QGraphicsPixmapItem] = None
-        self._turnaround_badge = TurnaroundBadgeOverlay(self.graphics_view, large=True)
+        self._turnaround_badge = TurnaroundViewerHintOverlay(self.graphics_view)
 
         center_layout.addWidget(self.graphics_view, 1)
 
