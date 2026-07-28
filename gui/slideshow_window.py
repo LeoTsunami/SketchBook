@@ -64,6 +64,13 @@ from gui.window_chrome import (
     apply_glass_button_style,
     enable_frameless_window,
 )
+from gui.thumbnail_fitting import FitMode
+from gui.slideshow_image_layout import (
+    display_scale_factor,
+    layout_pixmap_item_in_rect,
+    scene_display_rect,
+)
+from gui.session_countdown_sound import SessionCountdownSound
 from utils.keep_awake import prevent_sleep, allow_sleep
 
 
@@ -312,6 +319,10 @@ class SlideshowWindow(QMainWindow):
         self._first_image = True
         self._fade_animation: Optional[QVariantAnimation] = None
         self._fade_in_progress: bool = False
+        self._hq_reload_timer = QTimer(self)
+        self._hq_reload_timer.setSingleShot(True)
+        self._hq_reload_timer.setInterval(200)
+        self._hq_reload_timer.timeout.connect(self._maybe_reload_current_image_for_scale)
         # Title screen countdown (Get ready / phase): ticks every second, then calls done callback
         self._title_countdown_timer = QTimer(self)
         self._title_countdown_timer.setInterval(1000)
@@ -333,6 +344,7 @@ class SlideshowWindow(QMainWindow):
         self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.graphics_view.setRenderHint(QPainter.SmoothPixmapTransform)
         self.graphics_view.setViewportUpdateMode(QGraphicsView.FullViewportUpdate)
+        self.graphics_view.setAlignment(Qt.AlignCenter)
         self.graphics_view.setFrameShape(QFrame.NoFrame)
         self.graphics_view.setBackgroundBrush(Qt.transparent)
         self.graphics_view.setStyleSheet("""
@@ -359,8 +371,10 @@ class SlideshowWindow(QMainWindow):
         self.graphics_view.setScene(self.scene)
 
         self.pixmap_item = QGraphicsPixmapItem()
+        self.pixmap_item.setTransformationMode(Qt.SmoothTransformation)
         self.scene.addItem(self.pixmap_item)
         self.pixmap_item_next = QGraphicsPixmapItem()
+        self.pixmap_item_next.setTransformationMode(Qt.SmoothTransformation)
         self.pixmap_item_next.setZValue(1)
         self.pixmap_item_next.setOpacity(0.0)
         self.scene.addItem(self.pixmap_item_next)
@@ -495,6 +509,7 @@ class SlideshowWindow(QMainWindow):
         self.timer_widget.setVisible(False)
         self.timer_widget.timer_finished.connect(self._on_timer_finished)
         self.timer_widget.timer_updated.connect(self._on_timer_updated)
+        self._countdown_sound = SessionCountdownSound(self)
 
     def _set_session_nav_visible(self, visible: bool) -> None:
         """Show or hide Précédent / Pause / Suivant (Éditer handled separately)."""
@@ -956,7 +971,15 @@ class SlideshowWindow(QMainWindow):
             image_path = self.image_manager.image_dir / (rel or metadata.path)
         else:
             image_path = self.image_manager.image_dir / metadata.path
-        worker = ImageLoaderWorker(image_id, image_path, (1920, 1080))  # Full HD max
+        vw, vh = self._get_viewport_size()
+        target_w, target_h = self._get_image_load_target()
+        worker = ImageLoaderWorker(
+            image_id,
+            image_path,
+            (target_w, target_h),
+            FitMode.FIT_ALL,
+            emit_fast=False,
+        )
 
         worker.signals.finished.connect(self._on_image_loaded)
         worker.signals.error.connect(self._on_image_error)
@@ -1000,15 +1023,70 @@ class SlideshowWindow(QMainWindow):
         self.current_pixmap = placeholder
         self._update_image_display()
 
+    def _get_image_load_target(self) -> tuple[int, int]:
+        """
+        Target box for ``ImageLoaderWorker`` (logical pixels, fit-all inside box).
+
+        Uses current viewport size with a Full HD floor so HQ pixmaps are not
+        upscaled on large displays (avoids blocky edges).
+        """
+        vw, vh = self._get_viewport_size()
+        return (max(vw, 1920), max(vh, 1080))
+
+    def _needs_higher_res_reload(self) -> bool:
+        """True when the cached pixmap would be upscaled noticeably on screen."""
+        if self.current_pixmap is None or self.current_pixmap.isNull():
+            return False
+        scale = display_scale_factor(
+            self.current_pixmap, self._get_scene_display_rect(), FitMode.FIT_ALL
+        )
+        return scale > 1.05
+
+    def _maybe_reload_current_image_for_scale(self) -> None:
+        """Reload the slide at higher resolution if the viewport grew."""
+        if (
+            self._fade_in_progress
+            or self._showing_get_ready
+            or self._showing_phase_title
+            or self._session_viewer_open
+        ):
+            return
+        if not self._needs_higher_res_reload():
+            return
+        if not self.session_manager.get_current_image_id():
+            return
+        self._do_load_current_image()
+
     def _get_viewport_size(self):
-        """Return (width, height) in logical pixels. Use container size if viewport not yet sized (e.g. before show/fullscreen)."""
+        """Return (width, height) in logical pixels for the graphics viewport."""
         vp = self.graphics_view.viewport()
         vw, vh = vp.width(), vp.height()
         if vw > 0 and vh > 0:
             return (vw, vh)
-        # Fallback: container rect (viewport may be 0 before show/fullscreen resize)
+        # Fallback: container rect (viewport may be 0 before first show/fullscreen).
         r = self._overlay_container.rect()
         return (max(1, r.width()), max(1, r.height()))
+
+    def _get_scene_display_rect(self) -> QRectF:
+        """Return the fixed viewport-sized scene rect used for all slide layouts."""
+        vw, vh = self._get_viewport_size()
+        return scene_display_rect(vw, vh)
+
+    def _sync_view_transform_to_viewport(self) -> None:
+        """
+        Map scene coordinates 1:1 onto the viewport (no fitInView letterboxing).
+
+        Reason: fitInView(scene_rect, KeepAspectRatio) letterboxes the whole scene
+        when scene and viewport sizes differ slightly, shrinking already-fitted images.
+        """
+        rect = self._get_scene_display_rect()
+        self.scene.setSceneRect(rect)
+        self.graphics_view.resetTransform()
+        vp_w = self.graphics_view.viewport().width()
+        vp_h = self.graphics_view.viewport().height()
+        if vp_w > 0 and vp_h > 0 and rect.width() > 0 and rect.height() > 0:
+            self.graphics_view.scale(vp_w / rect.width(), vp_h / rect.height())
+        self._debug_dimensions("_sync_view_transform_to_viewport")
 
     def _get_screen_dpr(self):
         """Device pixel ratio of the screen this window is on."""
@@ -1091,15 +1169,29 @@ class SlideshowWindow(QMainWindow):
         w, h = vp.width(), vp.height()
         return (max(1, int(round(w * dpr))), max(1, int(round(h * dpr))))
 
+    def _layout_pixmap_item_in_scene(
+        self, item: QGraphicsPixmapItem, pixmap: QPixmap
+    ) -> None:
+        """Scale and center ``pixmap`` on ``item`` inside the fixed scene rect."""
+        layout_pixmap_item_in_rect(item, pixmap, self._get_scene_display_rect())
+
+    def _relayout_scene_pixmaps(self) -> None:
+        """Re-layout visible pixmap layers after viewport resize."""
+        if not self.pixmap_item.pixmap().isNull():
+            self._layout_pixmap_item_in_scene(
+                self.pixmap_item, self.pixmap_item.pixmap()
+            )
+        if (
+            not self.pixmap_item_next.pixmap().isNull()
+            and self.pixmap_item_next.opacity() > 0.0
+        ):
+            self._layout_pixmap_item_in_scene(
+                self.pixmap_item_next, self.pixmap_item_next.pixmap()
+            )
+
     def _fit_scene_in_view(self) -> None:
-        """Fit the scene (items rect) in the viewport via fitInView (full-area display)."""
-        rect = self.scene.itemsBoundingRect()
-        if rect.isEmpty():
-            return
-        self.scene.setSceneRect(rect)
-        self.graphics_view.resetTransform()
-        self.graphics_view.fitInView(rect, Qt.KeepAspectRatio)
-        self._debug_dimensions("_fit_scene_in_view")
+        """Sync scene rect to viewport and map scene coords 1:1 (images fill via layout)."""
+        self._sync_view_transform_to_viewport()
 
     def _debug_dimensions(self, label: str) -> None:
         """Print viewport, scene rect, itemsBoundingRect (fitInView maps this to viewport)."""
@@ -1125,20 +1217,16 @@ class SlideshowWindow(QMainWindow):
         _dbg("")
 
     def _scale_and_display_pixmap(self, pixmap: QPixmap) -> None:
-        """Set pixmap at original size on both layers, then fitInView (real fullscreen)."""
+        """Lay out pixmap on the back layer at full viewport size; hide front layer."""
         if pixmap.isNull():
             return
         vw, vh = self._get_viewport_size()
         if vw <= 0 or vh <= 0:
             QTimer.singleShot(50, lambda: self._scale_and_display_pixmap(pixmap))
             return
-        self.pixmap_item.setPixmap(pixmap)
-        self.pixmap_item_next.setPixmap(pixmap)
+        self._layout_pixmap_item_in_scene(self.pixmap_item, pixmap)
+        self.pixmap_item.setOpacity(1.0)
         self.pixmap_item_next.setOpacity(0.0)
-        self.pixmap_item.setScale(1.0)
-        self.pixmap_item.setPos(0, 0)
-        self.pixmap_item_next.setScale(1.0)
-        self.pixmap_item_next.setPos(0, 0)
         self._fit_scene_in_view()
 
     def _give_focus_to_view(self) -> None:
@@ -1149,9 +1237,16 @@ class SlideshowWindow(QMainWindow):
         )
 
     def _on_container_resized(self) -> None:
-        """On resize: refit scene in viewport (fitInView)."""
-        _dbg("_on_container_resized: fitInView")
+        """On resize: defer relayout until viewport geometry is final."""
+        _dbg("_on_container_resized: scheduling relayout")
+        QTimer.singleShot(0, self._relayout_and_sync_view)
+
+    def _relayout_and_sync_view(self) -> None:
+        """Re-layout pixmaps for the current viewport, then sync the view transform."""
+        self._relayout_scene_pixmaps()
         self._fit_scene_in_view()
+        if self._needs_higher_res_reload():
+            self._hq_reload_timer.start()
 
     def _update_image_display(self):
         """Update the image display: set pixmap, fit in view; optional crossfade for subsequent images."""
@@ -1170,18 +1265,19 @@ class SlideshowWindow(QMainWindow):
         # Stop any running fade
         if self._fade_animation:
             self._fade_animation.stop()
-            self.pixmap_item.setPixmap(self.pixmap_item_next.pixmap())
+            if not self.pixmap_item_next.pixmap().isNull():
+                self._layout_pixmap_item_in_scene(
+                    self.pixmap_item, self.pixmap_item_next.pixmap()
+                )
+            self.pixmap_item.setOpacity(1.0)
             self.pixmap_item_next.setOpacity(0.0)
 
-        # Crossfade: set new image, fitInView (real fullscreen), then fade after paint (évite resize pendant le fondu).
-        self.pixmap_item_next.setPixmap(self.current_pixmap)
+        # Crossfade: both layers at full fit-in-view size; old fades out as new fades in.
+        self.pixmap_item.setOpacity(1.0)
+        self._layout_pixmap_item_in_scene(self.pixmap_item_next, self.current_pixmap)
         self.pixmap_item_next.setOpacity(0.0)
-        self.pixmap_item_next.setScale(1.0)
-        self.pixmap_item_next.setPos(0, 0)
         self._fit_scene_in_view()
-        self.graphics_view.viewport().repaint()
-        QApplication.processEvents()
-        QTimer.singleShot(80, self._start_fade_animation)
+        self._start_fade_animation()
 
     def _start_fade_animation(self):
         """Start the crossfade (called after resize/repaint so image is at correct size)."""
@@ -1196,14 +1292,18 @@ class SlideshowWindow(QMainWindow):
         self._fade_animation.start()
 
     def _on_fade_value_changed(self, value):
-        """Update overlay opacity during fade."""
-        self.pixmap_item_next.setOpacity(float(value))
+        """Cross-dissolve: new layer fades in while old layer fades out."""
+        opacity = float(value)
+        self.pixmap_item_next.setOpacity(opacity)
+        self.pixmap_item.setOpacity(1.0 - opacity)
 
     def _on_fade_finished(self):
-        """After fade: move new image to back layer, refit."""
-        self.pixmap_item.setPixmap(self.pixmap_item_next.pixmap())
+        """After fade: move new image to back layer (already at correct scale)."""
+        self._layout_pixmap_item_in_scene(
+            self.pixmap_item, self.pixmap_item_next.pixmap()
+        )
+        self.pixmap_item.setOpacity(1.0)
         self.pixmap_item_next.setOpacity(0.0)
-        self._fit_scene_in_view()
         self._fade_in_progress = False
         self._sync_session_edit_visibility()
         if self._fade_animation:
@@ -1239,6 +1339,7 @@ class SlideshowWindow(QMainWindow):
         dur = self.session_manager.get_current_duration()
         self.timer_widget.set_duration(dur)
         self.timer_widget.reset_timer()
+        self._countdown_sound.reset()
         m, s = dur // 60, dur % 60
         self.countdown_label.setText(f"{m:02d}:{s:02d}")
         self._apply_countdown_color(dur)
@@ -1370,7 +1471,7 @@ class SlideshowWindow(QMainWindow):
     def _apply_countdown_color(
         self, remaining_seconds: int, total_seconds: Optional[int] = None
     ):
-        """Set countdown label color: more red as remaining time approaches 0."""
+        """Set countdown label color and session background tint toward red near end."""
         total = max(
             1,
             (
@@ -1393,13 +1494,39 @@ class SlideshowWindow(QMainWindow):
             self.countdown_label.setStyleSheet(
                 f"color: rgb({r}, 0, 0); font-weight: bold;"
             )
+        self._apply_session_urgency_background(ratio)
+
+    def _apply_session_urgency_background(self, time_left_ratio: float) -> None:
+        """
+        Shift the letterbox background toward red as the image timer runs out.
+
+        Args:
+            time_left_ratio: Seconds remaining divided by total duration (1 → start, 0 → end).
+        """
+        from core.settings import settings
+
+        theme = settings.get("ui.theme", "dark")
+        urgency = max(0.0, min(1.0, 1.0 - time_left_ratio))
+        if theme == "dark":
+            br, bg, bb = 30, 30, 30
+            er, eg, eb = 88, 22, 22
+        else:
+            br, bg, bb = 245, 245, 245
+            er, eg, eb = 255, 215, 215
+        r = int(br + (er - br) * urgency)
+        g = int(bg + (eg - bg) * urgency)
+        b = int(bb + (eb - bb) * urgency)
+        if hasattr(self, "_overlay_container"):
+            self._overlay_container.setStyleSheet(f"background-color: rgb({r}, {g}, {b});")
 
     def _on_timer_updated(self, remaining_seconds: int):
-        """Sync countdown label (top-left) with timer; color shifts to red as time approaches 0."""
+        """Sync countdown label, background tint, and optional final-second ticks."""
         m = remaining_seconds // 60
         s = remaining_seconds % 60
         self.countdown_label.setText(f"{m:02d}:{s:02d}")
         self._apply_countdown_color(remaining_seconds)
+        if self.timer_widget.is_timer_running():
+            self._countdown_sound.play_tick_if_needed(remaining_seconds)
 
     def _on_timer_finished(self):
         """Handle timer completion: auto-advance to next image or end session."""

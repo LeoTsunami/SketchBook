@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-04-19 (Session view: cross dissolve, urgency tint, countdown ticks)
+### ✅ Tasks:
+- **Cross dissolve**: each slide is scaled/centered in a fixed viewport-sized scene rect so both images keep correct size during the fade (no post-dissolve recrop when aspect ratios differ).
+- **Urgency background**: letterbox background shifts toward red as the per-image timer runs out.
+- **Countdown sound**: soft tick on the last 10 seconds of each image timer (silent when paused).
+
+  - Added: `gui/slideshow_image_layout.py`, `gui/session_countdown_sound.py`.
+  - Updated: `gui/slideshow_window.py`.
+  - Added tests: `tests/test_slideshow_session_polish.py`.
+→ Result: smoother transitions and clearer end-of-pose feedback (visual + audio).
+---
+
 ## 2026-04-13
 ### ✅ Tasks:
 - Make workspace Python run configuration machine-agnostic

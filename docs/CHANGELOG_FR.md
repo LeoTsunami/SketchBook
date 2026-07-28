@@ -1,5 +1,17 @@
 # Journal des modifications
 
+## 2026-04-19 (Session view : fondu, teinte d'urgence, ticks sonores)
+### ✅ Tâches :
+- **Fondu enchaîné** : mise à l'échelle/centrage dans un rect de scène fixe (viewport) pour garder la bonne taille pendant le fondu.
+- **Fond d'urgence** : le fond (letterbox) devient progressivement plus rouge à la fin du timer par image.
+- **Ticks sonores** : tick léger sur les 10 dernières secondes (silencieux en pause).
+
+  - Ajout : `gui/slideshow_image_layout.py`, `gui/session_countdown_sound.py`.
+  - Modifié : `gui/slideshow_window.py`.
+  - Tests : `tests/test_slideshow_session_polish.py`.
+→ Résultat : transitions plus fluides et fin de pose plus lisible.
+---
+
 ## 2026-04-13
 ### ✅ Tâches :
 - Rendre la configuration Python du workspace agnostique entre machines
