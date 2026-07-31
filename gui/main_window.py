@@ -5872,7 +5872,14 @@ class MainWindow(QMainWindow):
             if new_theme != old_theme:
                 # Apply the theme immediately
                 apply_global_stylesheet()
-
+            if getattr(dialog, "data_dir_changed", False):
+                QMessageBox.information(
+                    self,
+                    "Restart required",
+                    "The image library location was updated.\n\n"
+                    "Please quit and reopen SketchBook so the app loads images "
+                    "and metadata from the new folder.",
+                )
     def _set_theme(self, theme: str):
         """
         Set application theme.
