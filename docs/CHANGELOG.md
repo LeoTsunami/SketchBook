@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-07-31 (v0.1.1)
+### ✅ Tasks:
+- First Windows package: automated packager (PyInstaller zip), version from VERSION file, About dialog reads app version.
+→ Result: Windows build packaged for distribution.
+---
+
 ## 2026-04-19 (Session view: cross dissolve, urgency tint, countdown ticks)
 ### ✅ Tasks:
 - **Cross dissolve**: each slide is scaled/centered in a fixed viewport-sized scene rect so both images keep correct size during the fade (no post-dissolve recrop when aspect ratios differ).

@@ -5852,11 +5852,13 @@ class MainWindow(QMainWindow):
 
     def _show_about(self):
         """Show about dialog."""
+        from core.version import get_version
+
         QMessageBox.about(
             self,
             "About SketchBook",
             "SketchBook - A desktop application for timed life drawing sessions.\n\n"
-            "Version: 0.1.0",
+            f"Version: {get_version()}",
         )
 
     def _show_settings(self):

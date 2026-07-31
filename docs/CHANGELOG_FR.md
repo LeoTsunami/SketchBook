@@ -1,5 +1,11 @@
 # Journal des modifications
 
+## 2026-07-31 (v0.1.1)
+### ✅ Tâches:
+- First Windows package: automated packager (PyInstaller zip), version from VERSION file, About dialog reads app version.
+→ Résultat: build Windows packagé pour distribution.
+---
+
 ## 2026-04-19 (Session view : fondu, teinte d'urgence, ticks sonores)
 ### ✅ Tâches :
 - **Fondu enchaîné** : mise à l'échelle/centrage dans un rect de scène fixe (viewport) pour garder la bonne taille pendant le fondu.
