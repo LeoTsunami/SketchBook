@@ -42,6 +42,7 @@ from qtpy.QtGui import (
     QImage,
     QResizeEvent,
     QIcon,
+    QKeySequence,
     QDragEnterEvent,
     QDropEvent,
 )
@@ -297,6 +298,9 @@ class ImageGrid(QScrollArea):
         self.group_as_turnaround_action = self.context_menu.addAction(
             "Group as Turnaround"
         )
+        self.group_as_turnaround_action.setShortcut(QKeySequence("Ctrl+T"))
+        self.group_as_turnaround_action.setShortcutContext(Qt.WindowShortcut)
+        self.addAction(self.group_as_turnaround_action)
         self.group_as_turnaround_action.triggered.connect(
             self._group_selected_as_turnaround
         )
@@ -1880,6 +1884,226 @@ class ImageGrid(QScrollArea):
         self.layout_timer.start()
         self.visibility_timer.start()
 
+    def _drop_image_id_local_caches(self, image_id: str) -> None:
+        """
+        Drop per-id caches and non-pooled thumbnail widgets for one image.
+
+        Args:
+            image_id: Image id to purge from local caches.
+        """
+        self.pixmap_cache.pop(image_id, None)
+        self.loading_images.discard(image_id)
+        self._load_failed_images.discard(image_id)
+        self.selected_images.discard(image_id)
+        if image_id in self._tier0_queue:
+            try:
+                while image_id in self._tier0_queue:
+                    self._tier0_queue.remove(image_id)
+            except ValueError:
+                pass
+        if image_id in self._tier3_queue:
+            try:
+                while image_id in self._tier3_queue:
+                    self._tier3_queue.remove(image_id)
+            except ValueError:
+                pass
+        thumb = self.thumbnails.pop(image_id, None)
+        if thumb is None:
+            return
+        if self.thumbnail_pool and thumb in self.thumbnail_pool:
+            thumb.clear_pixmap()
+            thumb.hide()
+            return
+        # Non-pooled widget: remove from grid layout and delete.
+        for i in range(self.grid.count()):
+            item = self.grid.itemAt(i)
+            if item is not None and item.widget() is thumb:
+                self.grid.takeAt(i)
+                break
+        thumb.setParent(None)
+        thumb.deleteLater()
+        self.loaded_count = max(0, self.loaded_count - 1)
+
+    def _create_non_virtual_thumbnail(self, metadata: ImageMetadata) -> ImageThumbnail:
+        """
+        Build a non-virtualized thumbnail widget for ``metadata``.
+
+        Args:
+            metadata: Image metadata for the new thumbnail.
+
+        Returns:
+            ImageThumbnail: Configured thumbnail (not yet placed in the grid).
+        """
+        thumbnail_width, thumbnail_height = self._calculate_optimal_dimensions()
+        thumbnail = ImageThumbnail(
+            metadata.id,
+            metadata.original_filename,
+            self.content,
+            self.image_manager,
+            remove_tag_callback=self._remove_tag_from_selection,
+            get_selected_images_callback=lambda: self.selected_images,
+            show_tag_popover_callback=self._show_tag_popover,
+            import_drop_callback=self._import_drop_callback,
+            tag_drop_flash_callback=self._flash_tag_drop,
+        )
+        thumbnail._fit_mode = self._fit_mode
+        thumbnail._configure_turnaround(metadata)
+        thumbnail.apply_outer_geometry(thumbnail_width, thumbnail_height)
+        thumbnail.clicked.connect(self.image_clicked.emit)
+        if metadata.id in self.pixmap_cache:
+            thumbnail.set_image(self.pixmap_cache[metadata.id])
+        self.thumbnails[metadata.id] = thumbnail
+        self.loaded_count += 1
+        return thumbnail
+
+    def _relayout_non_virtual_grid(self) -> None:
+        """Re-place non-virtualized thumbnails in grid order matching ``all_images``."""
+        old_widgets: List[QWidget] = []
+        while self.grid.count():
+            item = self.grid.takeAt(0)
+            if item.widget():
+                old_widgets.append(item.widget())
+        by_id = {
+            w.image_id: w
+            for w in old_widgets
+            if isinstance(w, ImageThumbnail)
+        }
+        for i, meta in enumerate(self.all_images):
+            thumb = by_id.get(meta.id) or self.thumbnails.get(meta.id)
+            if thumb is None:
+                continue
+            row = i // self.columns
+            col = i % self.columns
+            self.grid.addWidget(thumb, row, col)
+
+    def replace_ids_with_image(
+        self,
+        remove_ids: Set[str],
+        new_meta: ImageMetadata,
+        insert_at: Optional[int] = None,
+    ) -> int:
+        """
+        Remove images by id and insert one replacement without a full ``clear()``.
+
+        Used for Group as Turnaround so untouched pixmap caches stay warm.
+
+        Args:
+            remove_ids: Image ids to remove from the displayed list.
+            new_meta: Metadata for the replacement image (e.g. turnaround root).
+            insert_at: Optional insert index; defaults to the first removed
+                member's former index, else 0.
+
+        Returns:
+            int: Index where ``new_meta`` was inserted.
+        """
+        if not remove_ids:
+            insert_idx = 0 if insert_at is None else max(0, min(insert_at, len(self.all_images)))
+            self.all_images.insert(insert_idx, new_meta)
+            self._rebuild_image_id_index()
+            self._rebuild_extract_indices()
+            if not self._is_virtualized():
+                self._create_non_virtual_thumbnail(new_meta)
+                self._relayout_non_virtual_grid()
+            self.layout_timer.start()
+            self.visibility_timer.start()
+            return insert_idx
+
+        # Prefer reusing the first removed member's pixmap for the new root
+        # (turnaround roots share the first pose path).
+        first_cached: Optional[QPixmap] = None
+        first_remove_index: Optional[int] = None
+        for i, meta in enumerate(self.all_images):
+            if meta.id in remove_ids:
+                first_remove_index = i
+                first_cached = self.pixmap_cache.get(meta.id)
+                break
+
+        if insert_at is not None:
+            insert_idx = max(0, min(insert_at, len(self.all_images)))
+        elif first_remove_index is not None:
+            insert_idx = first_remove_index
+        else:
+            insert_idx = 0
+
+        # Drop removed entries while adjusting insert_idx for prior removals.
+        new_list: List[ImageMetadata] = []
+        removed_before_insert = 0
+        for i, meta in enumerate(self.all_images):
+            if meta.id in remove_ids:
+                if i < insert_idx:
+                    removed_before_insert += 1
+                self._drop_image_id_local_caches(meta.id)
+                continue
+            new_list.append(meta)
+        insert_idx = max(0, insert_idx - removed_before_insert)
+        insert_idx = min(insert_idx, len(new_list))
+        new_list.insert(insert_idx, new_meta)
+        self.all_images = new_list
+
+        if first_cached is not None and not first_cached.isNull():
+            self.pixmap_cache[new_meta.id] = first_cached
+
+        self._rebuild_image_id_index()
+        self._rebuild_extract_indices()
+
+        if self._is_virtualized():
+            self.layout_timer.start()
+            self.visibility_timer.start()
+            return insert_idx
+
+        self._create_non_virtual_thumbnail(new_meta)
+        self._relayout_non_virtual_grid()
+        self.layout_timer.start()
+        self.visibility_timer.start()
+        return insert_idx
+
+    def replace_image_with_ids(
+        self, root_id: str, member_metas: List[ImageMetadata]
+    ) -> int:
+        """
+        Replace one displayed image with several members without a full ``clear()``.
+
+        Used for Decompose Turnaround.
+
+        Args:
+            root_id: Image id to remove.
+            member_metas: Metadata rows to insert at the root's former index.
+
+        Returns:
+            int: Index where the first member was inserted (0 if empty).
+        """
+        root_index = next(
+            (i for i, m in enumerate(self.all_images) if m.id == root_id), None
+        )
+        insert_idx = 0 if root_index is None else root_index
+        root_pix = self.pixmap_cache.get(root_id)
+
+        self.all_images = [m for m in self.all_images if m.id != root_id]
+        self._drop_image_id_local_caches(root_id)
+
+        insert_idx = max(0, min(insert_idx, len(self.all_images)))
+        for offset, meta in enumerate(member_metas):
+            self.all_images.insert(insert_idx + offset, meta)
+            # First restored member often shares the root display path.
+            if offset == 0 and root_pix is not None and not root_pix.isNull():
+                self.pixmap_cache[meta.id] = root_pix
+
+        self._rebuild_image_id_index()
+        self._rebuild_extract_indices()
+
+        if self._is_virtualized():
+            self.layout_timer.start()
+            self.visibility_timer.start()
+            return insert_idx
+
+        for meta in member_metas:
+            if meta.id not in self.thumbnails:
+                self._create_non_virtual_thumbnail(meta)
+        self._relayout_non_virtual_grid()
+        self.layout_timer.start()
+        self.visibility_timer.start()
+        return insert_idx
+
     def _check_visible_thumbnails(self):
         """Compute which thumbnails are visible and enqueue their pixmap loads (or update virtualized view)."""
         if self._is_scrolling():
@@ -2483,7 +2707,8 @@ class ImageGrid(QScrollArea):
 
             can_group = self._selection_can_group_as_turnaround()
             self.group_as_turnaround_action.setVisible(can_group)
-            self.group_as_turnaround_action.setEnabled(can_group)
+            # Keep enabled so Ctrl+T works without reopening the context menu;
+            # _group_selected_as_turnaround() still no-ops when selection is invalid.
 
             turnaround_id = self._selected_turnaround_root_id()
             self.decompose_turnaround_action.setVisible(turnaround_id is not None)

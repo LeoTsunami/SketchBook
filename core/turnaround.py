@@ -106,8 +106,9 @@ def create_turnaround(
     if not db.add_image(root):
         raise ValueError(f"Failed to add turnaround root: {root_id}")
 
-    for m in members:
-        db.update_image(m.id, group_id=root_id, hidden=True)
+    db.update_images(
+        {m.id: {"group_id": root_id, "hidden": True} for m in members}
+    )
 
     return root
 
@@ -136,11 +137,14 @@ def decompose_turnaround(
         raise ValueError(f"Image is not a turnaround: {root_id}")
 
     member_ids = list(root.member_ids)
+    restore: dict = {}
     for mid in member_ids:
         member = db.get_image(mid)
         if member is None:
             continue
-        db.update_image(mid, group_id="", hidden=False)
+        restore[mid] = {"group_id": "", "hidden": False}
+    if restore:
+        db.update_images(restore)
 
     # Root reuses a member path — do not delete the file, only metadata.
     db.delete_image(root_id)

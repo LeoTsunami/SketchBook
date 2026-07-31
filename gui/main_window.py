@@ -1952,9 +1952,72 @@ class MainWindow(QMainWindow):
         """Open session settings and start a session from the selected grid image."""
         self._on_session_settings_clicked(start_from_image_id=image_id)
 
+    @staticmethod
+    def _patch_metadata_list_replace_ids(
+        images: List[ImageMetadata],
+        remove_ids: Set[str],
+        new_meta: ImageMetadata,
+    ) -> List[ImageMetadata]:
+        """
+        Remove ids from a metadata list and insert ``new_meta`` at the first
+        removed member's former index (no reshuffle).
+
+        Args:
+            images: Source ordered list.
+            remove_ids: Ids to remove.
+            new_meta: Replacement metadata.
+
+        Returns:
+            New list with local edit applied.
+        """
+        if not images:
+            return [new_meta]
+        insert_at = next(
+            (i for i, m in enumerate(images) if m.id in remove_ids), len(images)
+        )
+        out: List[ImageMetadata] = []
+        removed_before = 0
+        for i, m in enumerate(images):
+            if m.id in remove_ids:
+                if i < insert_at:
+                    removed_before += 1
+                continue
+            out.append(m)
+        idx = max(0, min(insert_at - removed_before, len(out)))
+        out.insert(idx, new_meta)
+        return out
+
+    @staticmethod
+    def _patch_metadata_list_replace_one(
+        images: List[ImageMetadata],
+        root_id: str,
+        member_metas: List[ImageMetadata],
+    ) -> List[ImageMetadata]:
+        """
+        Replace one metadata row with several members at the same index.
+
+        Args:
+            images: Source ordered list.
+            root_id: Id to remove.
+            member_metas: Rows to insert in order.
+
+        Returns:
+            New list with local edit applied.
+        """
+        insert_at = next(
+            (i for i, m in enumerate(images) if m.id == root_id), len(images)
+        )
+        out = [m for m in images if m.id != root_id]
+        idx = max(0, min(insert_at, len(out)))
+        for offset, meta in enumerate(member_metas):
+            out.insert(idx + offset, meta)
+        return out
+
     def _on_group_as_turnaround(self, member_ids: list) -> None:
         """
         Group selected grid images into a Turnaround entry.
+
+        Uses a local grid/list patch instead of a full filter reload.
 
         Args:
             member_ids: Ordered pose image IDs.
@@ -1964,16 +2027,38 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             QMessageBox.warning(self, "Turnaround", str(exc))
             return
-        self._initialize_course_random_list()
-        self._apply_category_filters()
-        if hasattr(self, "image_grid"):
-            self.image_grid.selected_images = {root.id}
-            self.image_grid._update_selection()
-            QTimer.singleShot(0, lambda: self.image_grid.scroll_to_image(root.id))
+
+        remove_ids = set(member_ids)
+        if self._course_random_images_list:
+            self._course_random_images_list = self._patch_metadata_list_replace_ids(
+                self._course_random_images_list, remove_ids, root
+            )
+        if self._filtered_course_random_list:
+            self._filtered_course_random_list = self._patch_metadata_list_replace_ids(
+                self._filtered_course_random_list, remove_ids, root
+            )
+
+        if not hasattr(self, "image_grid"):
+            return
+
+        grid = self.image_grid
+        members_in_grid = any(m.id in remove_ids for m in grid.all_images)
+        if not members_in_grid:
+            # Selection was outside the current filtered view — fall back.
+            self._apply_category_filters()
+        else:
+            grid.replace_ids_with_image(remove_ids, root)
+            self._update_session_images_count(grid.all_images)
+
+        grid.selected_images = {root.id}
+        grid._update_selection()
+        QTimer.singleShot(0, lambda: grid.scroll_to_image(root.id))
 
     def _on_decompose_turnaround(self, root_id: str) -> None:
         """
         Decompose a Turnaround back into individual images.
+
+        Uses a local grid/list patch instead of a full filter reload.
 
         Args:
             root_id: Turnaround root id.
@@ -1983,11 +2068,36 @@ class MainWindow(QMainWindow):
         except ValueError as exc:
             QMessageBox.warning(self, "Turnaround", str(exc))
             return
-        self._initialize_course_random_list()
-        self._apply_category_filters()
-        if hasattr(self, "image_grid") and member_ids:
-            self.image_grid.selected_images = set(member_ids)
-            self.image_grid._update_selection()
+
+        member_metas: List[ImageMetadata] = []
+        for mid in member_ids:
+            meta = self.image_manager.get_image_metadata(mid)
+            if meta is not None:
+                member_metas.append(meta)
+
+        if self._course_random_images_list and member_metas:
+            self._course_random_images_list = self._patch_metadata_list_replace_one(
+                self._course_random_images_list, root_id, member_metas
+            )
+        if self._filtered_course_random_list and member_metas:
+            self._filtered_course_random_list = self._patch_metadata_list_replace_one(
+                self._filtered_course_random_list, root_id, member_metas
+            )
+
+        if not hasattr(self, "image_grid"):
+            return
+
+        grid = self.image_grid
+        root_in_grid = any(m.id == root_id for m in grid.all_images)
+        if not root_in_grid or not member_metas:
+            self._apply_category_filters()
+        else:
+            grid.replace_image_with_ids(root_id, member_metas)
+            self._update_session_images_count(grid.all_images)
+
+        if member_ids:
+            grid.selected_images = set(member_ids)
+            grid._update_selection()
 
     def _on_session_settings_clicked(
         self, start_from_image_id: Optional[str] = None

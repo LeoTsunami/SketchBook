@@ -300,6 +300,29 @@ class ImageDatabase:
 
         self._request_save()
         return True
+
+    def update_images(self, updates: Dict[str, dict]) -> int:
+        """
+        Update multiple image metadata rows, then request a single save.
+
+        Args:
+            updates: Mapping of image_id -> field kwargs to apply.
+
+        Returns:
+            Number of images successfully updated.
+        """
+        updated = 0
+        for image_id, fields in updates.items():
+            if image_id not in self._images:
+                continue
+            metadata = self._images[image_id]
+            for key, value in fields.items():
+                if hasattr(metadata, key):
+                    setattr(metadata, key, value)
+            updated += 1
+        if updated:
+            self._request_save()
+        return updated
     
     def delete_image(self, image_id: str) -> bool:
         """

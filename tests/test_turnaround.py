@@ -192,3 +192,21 @@ def test_crop_images_proportional_on_turnaround(image_manager, tmp_path):
     updated_root = image_manager.db.get_image(root.id)
     assert updated_root.width == 60
     assert updated_root.height == 60
+
+
+def test_update_images_batches_member_hides(image_manager, tmp_path, monkeypatch):
+    """create_turnaround should hide all members via a single update_images call."""
+    metas = _import_n(image_manager, tmp_path, 3)
+    calls = {"n": 0}
+    original = image_manager.db.update_images
+
+    def _counting_update_images(updates):
+        calls["n"] += 1
+        return original(updates)
+
+    monkeypatch.setattr(image_manager.db, "update_images", _counting_update_images)
+    create_turnaround(image_manager, [m.id for m in metas])
+    assert calls["n"] == 1
+    for m in metas:
+        member = image_manager.db.get_image(m.id)
+        assert member.hidden is True

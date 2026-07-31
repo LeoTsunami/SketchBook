@@ -177,3 +177,68 @@ def test_tag_drag_scroll_lock_blocks_scroll_contents_by(image_grid):
     image_grid.scrollContentsBy(0, 40)
     assert bar.value() == locked
     image_grid.set_tag_drag_scroll_lock(None)
+
+
+def _make_meta(image_id: str, name: str = "img.jpg") -> ImageMetadata:
+    """Build a minimal ImageMetadata for grid list tests."""
+    return ImageMetadata(
+        id=image_id,
+        path=name,
+        original_filename=name,
+        width=10,
+        height=10,
+        file_size=1,
+        format="jpg",
+    )
+
+
+def test_replace_ids_with_image_preserves_other_order_and_cache(qtbot, image_manager):
+    """replace_ids_with_image should patch locally without wiping unrelated caches."""
+    from qtpy.QtGui import QPixmap
+
+    metas = [_make_meta(f"id_{i}", f"p{i}.jpg") for i in range(5)]
+    grid = ImageGrid(image_manager)
+    qtbot.addWidget(grid)
+    grid.load_images_from_list(metas, filter_key=("list",))
+    # Seed pixmap cache as if thumbs were already loaded.
+    keep_pix = QPixmap(8, 8)
+    keep_pix.fill(Qt.red)
+    gone_pix = QPixmap(8, 8)
+    gone_pix.fill(Qt.blue)
+    grid.pixmap_cache["id_0"] = keep_pix
+    grid.pixmap_cache["id_1"] = gone_pix
+    grid.pixmap_cache["id_2"] = gone_pix
+    grid.pixmap_cache["id_4"] = keep_pix
+
+    root = _make_meta("turnaround_x", "root.jpg")
+    root.kind = "turnaround"
+    insert_idx = grid.replace_ids_with_image({"id_1", "id_2"}, root)
+
+    ids = [m.id for m in grid.all_images]
+    assert ids == ["id_0", "turnaround_x", "id_3", "id_4"]
+    assert insert_idx == 1
+    assert "id_0" in grid.pixmap_cache
+    assert "id_4" in grid.pixmap_cache
+    assert "id_1" not in grid.pixmap_cache
+    assert "id_2" not in grid.pixmap_cache
+    # Root reuses first removed member pixmap when available.
+    assert "turnaround_x" in grid.pixmap_cache
+
+
+def test_replace_image_with_ids_restores_members(qtbot, image_manager):
+    """replace_image_with_ids should expand a root back into members in place."""
+    metas = [
+        _make_meta("a"),
+        _make_meta("root"),
+        _make_meta("z"),
+    ]
+    metas[1].kind = "turnaround"
+    grid = ImageGrid(image_manager)
+    qtbot.addWidget(grid)
+    grid.load_images_from_list(metas, filter_key=("list",))
+
+    members = [_make_meta("m0"), _make_meta("m1"), _make_meta("m2")]
+    idx = grid.replace_image_with_ids("root", members)
+    assert idx == 1
+    assert [m.id for m in grid.all_images] == ["a", "m0", "m1", "m2", "z"]
+    assert "root" not in {m.id for m in grid.all_images}
