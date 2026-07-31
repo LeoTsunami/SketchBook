@@ -169,6 +169,7 @@ class _OverlayContainer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("sessionOverlayContainer")
+        self._urgency_tint = None
         self._graphics_view = None
         self._countdown_frame = None
         self._fullscreen_btn = None
@@ -184,6 +185,7 @@ class _OverlayContainer(QWidget):
         controls_frame: QFrame,
         get_ready_frame: Optional[QFrame] = None,
         phase_title_frame: Optional[QFrame] = None,
+        urgency_tint: Optional[QWidget] = None,
     ) -> None:
         self._graphics_view = graphics_view
         self._countdown_frame = countdown_frame
@@ -191,6 +193,9 @@ class _OverlayContainer(QWidget):
         self._controls_frame = controls_frame
         self._get_ready_frame = get_ready_frame
         self._phase_title_frame = phase_title_frame
+        self._urgency_tint = urgency_tint
+        if urgency_tint:
+            urgency_tint.setParent(self)
         graphics_view.setParent(self)
         countdown_frame.setParent(self)
         fullscreen_btn.setParent(self)
@@ -203,8 +208,12 @@ class _OverlayContainer(QWidget):
     def resizeEvent(self, event):
         super().resizeEvent(event)
         r = self.rect()
+        if self._urgency_tint:
+            self._urgency_tint.setGeometry(r)
+            self._urgency_tint.lower()
         if self._graphics_view:
             self._graphics_view.setGeometry(r)
+            self._graphics_view.raise_()
         if self._countdown_frame:
             self._countdown_frame.setGeometry(16, 16, 120, 56)
         if self._fullscreen_btn:
@@ -292,6 +301,11 @@ class SlideshowWindow(QMainWindow):
         self._setup_phase_title_overlay()
         self._setup_fullscreen_button()
         self._setup_controls()  # Previous, Next, Play/Pause (timer) + Éditer
+        self._urgency_tint_overlay = QWidget()
+        self._urgency_tint_overlay.setObjectName("sessionUrgencyTint")
+        self._urgency_tint_overlay.setAttribute(Qt.WA_TransparentForMouseEvents, True)
+        self._urgency_tint_overlay.setAttribute(Qt.WA_StyledBackground, True)
+        self._urgency_tint_overlay.hide()
         self._overlay_container = _OverlayContainer(self)
         self._overlay_container.set_content(
             self.graphics_view,
@@ -300,6 +314,7 @@ class SlideshowWindow(QMainWindow):
             self.controls_frame,
             self.get_ready_frame,
             self.phase_title_frame,
+            urgency_tint=self._urgency_tint_overlay,
         )
         self._overlay_container.resized.connect(self._on_container_resized)
         layout.addWidget(self._overlay_container, 1)
@@ -340,6 +355,7 @@ class SlideshowWindow(QMainWindow):
     def _setup_image_display(self):
         """Set up the image display (two layers for crossfade). Will be placed full-size in container."""
         self.graphics_view = QGraphicsView()
+        self.graphics_view.setObjectName("sessionGraphicsView")
         self.graphics_view.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.graphics_view.setVerticalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         self.graphics_view.setRenderHint(QPainter.SmoothPixmapTransform)
@@ -353,7 +369,6 @@ class SlideshowWindow(QMainWindow):
                 border: none;
             }
             """)
-        # Letterboxing uses session window theme (see _apply_theme); viewport must not paint opaque gray.
         self.graphics_view.viewport().setAutoFillBackground(False)
         self.graphics_view.viewport().setStyleSheet("background: transparent;")
         self.graphics_view.setFocusPolicy(
@@ -640,7 +655,7 @@ class SlideshowWindow(QMainWindow):
                 QWidget#sessionOverlayContainer {
                     background: transparent;
                 }
-                QGraphicsView {
+                QGraphicsView#sessionGraphicsView {
                     background: transparent;
                     border: none;
                 }
@@ -743,6 +758,8 @@ class SlideshowWindow(QMainWindow):
                     color: #ffffff;
                 }
             """)
+        if hasattr(self, "graphics_view"):
+            self._apply_session_urgency_tint(0.0)
 
     def start_session(
         self,
@@ -1315,8 +1332,8 @@ class SlideshowWindow(QMainWindow):
         self._close_session_viewer_if_open()
         if self._showing_get_ready:
             self._cancel_get_ready_if_visible()
-            self.timer_widget.start_timer()
             self._sync_timer_to_current_image()
+            self.timer_widget.start_timer()
             self._load_current_image()
             return
         if self._showing_phase_title:
@@ -1494,42 +1511,48 @@ class SlideshowWindow(QMainWindow):
             self.countdown_label.setStyleSheet(
                 f"color: rgb({r}, 0, 0); font-weight: bold;"
             )
-        self._apply_session_urgency_background(ratio)
+        self._apply_session_urgency_tint(ratio)
 
-    def _apply_session_urgency_background(self, time_left_ratio: float) -> None:
+    def _apply_session_urgency_tint(self, time_left_ratio: float) -> None:
         """
-        Shift the letterbox background toward red as the image timer runs out.
+        Apply a light red wash over the theme gradient as the timer runs out.
+
+        The window gradient ramp stays visible underneath; only letterbox areas
+        pick up the tint (via a transparent overlay under the graphics view).
 
         Args:
             time_left_ratio: Seconds remaining divided by total duration (1 → start, 0 → end).
         """
-        from core.settings import settings
-
-        theme = settings.get("ui.theme", "dark")
         urgency = max(0.0, min(1.0, 1.0 - time_left_ratio))
-        if theme == "dark":
-            br, bg, bb = 30, 30, 30
-            er, eg, eb = 88, 22, 22
-        else:
-            br, bg, bb = 245, 245, 245
-            er, eg, eb = 255, 215, 215
-        r = int(br + (er - br) * urgency)
-        g = int(bg + (eg - bg) * urgency)
-        b = int(bb + (eb - bb) * urgency)
-        if hasattr(self, "_overlay_container"):
-            self._overlay_container.setStyleSheet(f"background-color: rgb({r}, {g}, {b});")
+        max_alpha = 0.16
+        alpha = urgency * max_alpha
+        tint = getattr(self, "_urgency_tint_overlay", None)
+        if tint is None:
+            return
+        if alpha < 0.02:
+            tint.hide()
+            return
+        alpha_i = int(alpha * 255)
+        tint.show()
+        tint.setStyleSheet(f"background-color: rgba(210, 55, 55, {alpha_i});")
+        tint.lower()
+        if hasattr(self, "graphics_view"):
+            self.graphics_view.raise_()
 
     def _on_timer_updated(self, remaining_seconds: int):
-        """Sync countdown label, background tint, and optional final-second ticks."""
+        """Sync countdown label, urgency tint, and final-second ticks."""
         m = remaining_seconds // 60
         s = remaining_seconds % 60
         self.countdown_label.setText(f"{m:02d}:{s:02d}")
         self._apply_countdown_color(remaining_seconds)
-        if self.timer_widget.is_timer_running():
+        if remaining_seconds == 0:
+            self._countdown_sound.play_final_tick()
+        elif remaining_seconds <= 10 and self.timer_widget.is_timer_running():
             self._countdown_sound.play_tick_if_needed(remaining_seconds)
 
     def _on_timer_finished(self):
-        """Handle timer completion: auto-advance to next image or end session."""
+        """Handle timer completion: final tick, then auto-advance."""
+        self._countdown_sound.play_final_tick()
         self._next_image()
         if self.controls_frame.isVisible():
             self._sync_play_pause_button()

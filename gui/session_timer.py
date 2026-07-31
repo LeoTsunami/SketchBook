@@ -242,13 +242,18 @@ class SessionTimer(QWidget):
             return
         
         self.remaining_seconds -= 1  # Decrease by one second per tick
-        
+
         if self.remaining_seconds <= 0:
             self.remaining_seconds = 0
+            self._update_display()
+            self._update_progress()
+            # Emit 0 before stopping so listeners can play the final tick.
+            self.timer_updated.emit(0)
             self.stop_timer()
             self.status_label.setText("Time's up!")
             self.timer_finished.emit()
-        
+            return
+
         self._update_display()
         self._update_progress()
         self.timer_updated.emit(int(self.remaining_seconds))

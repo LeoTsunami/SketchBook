@@ -977,7 +977,7 @@ class TagLibraryPanel(QWidget):
         if not bar:
             return
         margin = 48
-        speed = 14
+        speed = 28
         y = cursor_vp.y()
         h = vp.height()
         if y < margin:

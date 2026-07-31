@@ -2996,7 +2996,7 @@ class MainWindow(QMainWindow):
         if not viewport or vbar is None:
             return
         margin = 48
-        step = 28
+        step = 56
         pos = QCursor.pos()
         # Prefer scroll viewport edges; fall back to whole panel when viewport is narrow.
         scroll_rect = QRect(viewport.mapToGlobal(QPoint(0, 0)), viewport.size())

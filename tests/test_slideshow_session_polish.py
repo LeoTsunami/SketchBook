@@ -12,7 +12,13 @@ from gui.slideshow_image_layout import (
     logical_pixmap_size,
     scene_display_rect,
 )
-from gui.session_countdown_sound import _ensure_tick_wav, SessionCountdownSound
+from gui.session_countdown_sound import (
+    _ensure_final_tick_wav,
+    _ensure_tick_wav,
+    SessionCountdownSound,
+    _FINAL_TICK_FREQUENCY_HZ,
+    _TICK_FREQUENCY_HZ,
+)
 
 
 def test_scene_display_rect_minimum_size():
@@ -124,8 +130,39 @@ def test_countdown_sound_plays_once_per_second():
     """play_tick_if_needed should not double-fire for the same second."""
     sound = SessionCountdownSound()
     sound.play_tick_if_needed(10)
-    first = sound._last_played_second
+    assert 10 in sound._played_seconds
     sound.play_tick_if_needed(10)
-    assert sound._last_played_second == first
+    assert sound._played_seconds == {10}
     sound.play_tick_if_needed(9)
-    assert sound._last_played_second == 9
+    assert sound._played_seconds == {10, 9}
+
+
+def test_countdown_sound_reset_allows_replay():
+    """After reset (e.g. skip), the same seconds can tick again."""
+    sound = SessionCountdownSound()
+    sound.play_tick_if_needed(10)
+    sound.play_final_tick()
+    sound.reset()
+    assert sound._played_seconds == set()
+    assert not sound._final_played_this_pose
+    sound.play_tick_if_needed(10)
+    assert 10 in sound._played_seconds
+
+
+def test_countdown_sound_final_tick_at_zero():
+    """play_final_tick should fire once per pose."""
+    sound = SessionCountdownSound()
+    sound.play_final_tick()
+    assert sound._final_played_this_pose
+    sound.play_final_tick()
+    assert 0 in sound._played_seconds
+
+
+def test_final_tick_frequency_higher_than_regular(tmp_path):
+    """Final tick WAV should use a higher frequency than the regular tick."""
+    regular = tmp_path / "regular.wav"
+    final = tmp_path / "final.wav"
+    _ensure_tick_wav(regular)
+    _ensure_final_tick_wav(final)
+    assert _FINAL_TICK_FREQUENCY_HZ > _TICK_FREQUENCY_HZ
+    assert final.stat().st_size > 100
