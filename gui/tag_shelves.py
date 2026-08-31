@@ -11,7 +11,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 from collections import OrderedDict
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 MISCELLANEOUS_SHELF = "Miscellaneous:"
 SHELF_FILTER_AND = "and"
@@ -172,3 +172,108 @@ def merge_custom_shelves(
         for name, tags, _mode in pending:
             out[name] = list(tags)
     return dict(out)
+
+
+def collect_default_tag_names(categories: Dict[str, Any]) -> Set[str]:
+    """
+    Collect every tag name defined in default_tags.json (flat list entries only).
+
+    Args:
+        categories: Category map from ``load_default_tags_taxonomy``.
+
+    Returns:
+        Set[str]: Built-in tag names (excludes category/shelf keys themselves).
+    """
+    names: Set[str] = set()
+
+    def walk(value: Any) -> None:
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, str):
+                    names.add(item)
+                else:
+                    walk(item)
+        elif isinstance(value, dict):
+            for key, nested in value.items():
+                if key in ("tags", "filter"):
+                    continue
+                if isinstance(nested, str):
+                    names.add(nested)
+                else:
+                    walk(nested)
+
+    for key, value in categories.items():
+        if is_metadata_key(key):
+            continue
+        tags_data, _ = parse_category_tags(value)
+        walk(tags_data)
+    return names
+
+
+def load_default_tag_names(path: Path) -> Set[str]:
+    """
+    Load built-in tag names from default_tags.json.
+
+    Args:
+        path: Path to default_tags.json.
+
+    Returns:
+        Set[str]: Default tag names.
+    """
+    categories, _ = load_default_tags_taxonomy(path)
+    return collect_default_tag_names(categories)
+
+
+def build_subtags_for_category(
+    category: str,
+    default_subtags: List[str],
+    user_tags: List[str],
+    placements: Dict[str, Any],
+    default_tags: Optional[Set[str]] = None,
+) -> List[str]:
+    """
+    Build ordered subtag list for a category.
+
+    Default tags keep their JSON category and ignore user placement overrides.
+    User tags with ``{"category": cat}`` are appended; with ``parent_tag`` inserted
+    after their parent (multiple passes handle chains).
+
+    Args:
+        category: Category or shelf name.
+        default_subtags: Tags from default_tags.json for this category.
+        user_tags: User-owned tag names.
+        placements: User placement config.
+        default_tags: Built-in tag names that cannot be reparented.
+
+    Returns:
+        List[str]: Ordered subtag names without duplicates.
+    """
+    built_in = default_tags or set()
+    user_placements = {
+        tag: pl for tag, pl in placements.items() if tag not in built_in
+    }
+    result = list(dict.fromkeys(default_subtags))
+    for ut in user_tags:
+        if ut in built_in:
+            continue
+        pl = user_placements.get(ut)
+        if pl is None:
+            if category == MISCELLANEOUS_SHELF:
+                result.append(ut)
+            continue
+        if pl.get("category") == category and ut not in result:
+            result.append(ut)
+    changed = True
+    while changed:
+        changed = False
+        for ut in user_tags:
+            if ut in built_in:
+                continue
+            pl = user_placements.get(ut)
+            if pl is None or "parent_tag" not in pl:
+                continue
+            parent = pl["parent_tag"]
+            if parent in result and ut not in result:
+                result.insert(result.index(parent) + 1, ut)
+                changed = True
+    return result

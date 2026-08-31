@@ -42,12 +42,15 @@ from core.settings import settings
 from gui.icon_utils import find_tag_icon
 from gui.tag_shelves import (
     MISCELLANEOUS_SHELF,
+    build_subtags_for_category,
+    collect_default_tag_names,
     is_tag_shelf,
     load_default_tags_taxonomy,
     merge_custom_shelves,
     normalize_shelf_name,
     parse_category_tags,
 )
+from gui.tag_library.active_filters_bar import ActiveFiltersBar
 from gui.tag_library.chip import (
     WrappingDraggableTagButton,
     apply_chip_style,
@@ -141,44 +144,12 @@ def _build_subtags_for_category(
     default_subtags: List[str],
     user_tags: List[str],
     placements: Dict[str, Any],
+    default_tags: Optional[Set[str]] = None,
 ) -> List[str]:
-    """
-    Build the ordered subtag list for a category.
-
-    Default tags come first; user tags with ``{"category": cat}`` placement are
-    appended; user tags with ``{"parent_tag": …}`` are inserted after their
-    parent (multiple passes handle chains).
-
-    Args:
-        category: Category name.
-        default_subtags: Tags from the taxonomy JSON.
-        user_tags: All user-owned tags.
-        placements: User tag placement config.
-
-    Returns:
-        List[str]: Ordered subtag names without duplicates.
-    """
-    result = list(dict.fromkeys(default_subtags))
-    for ut in user_tags:
-        pl = placements.get(ut)
-        if pl is None:
-            if category == MISCELLANEOUS_SHELF:
-                result.append(ut)
-            continue
-        if pl.get("category") == category and ut not in result:
-            result.append(ut)
-    changed = True
-    while changed:
-        changed = False
-        for ut in user_tags:
-            pl = placements.get(ut)
-            if pl is None or "parent_tag" not in pl:
-                continue
-            parent = pl["parent_tag"]
-            if parent in result and ut not in result:
-                result.insert(result.index(parent) + 1, ut)
-                changed = True
-    return result
+    """Delegate to shared shelf helper (see ``gui.tag_shelves``)."""
+    return build_subtags_for_category(
+        category, default_subtags, user_tags, placements, default_tags
+    )
 
 
 def _normalize_tag(tag: str) -> str:
@@ -209,6 +180,7 @@ class TagLibraryPanel(QWidget):
     """
 
     filter_changed = Signal(object)                  # TagFilterState
+    reset_filters_requested = Signal()
     tag_delete_requested = Signal(object)            # set[str]
     tag_rename_requested = Signal(str, str)          # old_name, new_name
     tag_icon_change_requested = Signal(str)          # tag_name
@@ -228,6 +200,8 @@ class TagLibraryPanel(QWidget):
         # ---- filter state (owned by panel) ----
         self._active_categories: Set[str] = set()
         self._active_subtags: Dict[str, Set[str]] = {}
+        self._extra_and_tags: Set[str] = set()
+        self._extra_or_tags: Set[str] = set()
         self._tag_library_selection: Set[str] = set()
         self._last_selected_tag: Optional[str] = None
         self._tag_drag_in_progress: bool = False
@@ -280,7 +254,13 @@ class TagLibraryPanel(QWidget):
 
         self._scroll_area.setWidget(self._content)
         self._scroll_area.viewport().setObjectName("TagLibraryScrollViewport")
-        outer.addWidget(self._scroll_area)
+        outer.addWidget(self._scroll_area, 1)
+
+        self._active_filters_bar = ActiveFiltersBar()
+        self._active_filters_bar.reset_clicked.connect(
+            self.reset_filters_requested.emit
+        )
+        outer.addWidget(self._active_filters_bar)
 
         # Autoscroll during drag
         self._drag_scroll_timer: Optional[QTimer] = None
@@ -360,6 +340,7 @@ class TagLibraryPanel(QWidget):
             self._tag_shelf_filter_modes,
             user_tags_config_data.get("custom_shelves", []),
         )
+        default_tag_names = collect_default_tag_names(taxonomy_raw)
 
         # --- Build TagLibraryTaxonomy ---
         taxonomy = TagLibraryTaxonomy()
@@ -373,7 +354,7 @@ class TagLibraryPanel(QWidget):
             _collect_subtags(tags_data, flat)
             flat = list(dict.fromkeys(flat))
             ordered = _build_subtags_for_category(
-                category, flat, user_tags_list, placements
+                category, flat, user_tags_list, placements, default_tag_names
             )
             taxonomy.categories_order.append(category)
             taxonomy.subtag_order[category] = ordered
@@ -383,6 +364,8 @@ class TagLibraryPanel(QWidget):
             # Parent/child edges from nested JSON + user placements
             _walk_taxonomy_children(tags_data, None, taxonomy.children_map)
         for tag, pl in placements.items():
+            if tag in default_tag_names:
+                continue
             if isinstance(pl, dict) and "parent_tag" in pl:
                 parent = pl["parent_tag"]
                 _append_taxonomy_child(taxonomy.children_map, parent, tag)
@@ -412,6 +395,7 @@ class TagLibraryPanel(QWidget):
             self._active_subtags = {k: set(v) for k, v in restore_subtags.items()}
 
         self._apply_all_states()
+        self._update_active_filters_bar()
 
         def _post_layout() -> None:
             self._apply_widths()
@@ -991,10 +975,67 @@ class TagLibraryPanel(QWidget):
 
     def _emit_filter(self) -> None:
         """Build and emit the current filter state."""
+        self._update_active_filters_bar()
         state = TagFilterState.from_mutable(
             self._active_categories, self._active_subtags
         )
         self.filter_changed.emit(state)
+
+    def set_extra_filter_tags(
+        self, and_tags: Set[str], or_tags: Set[str]
+    ) -> None:
+        """
+        Mirror AND/OR drop-zone tags in the active-filters bar.
+
+        Args:
+            and_tags: Tags required on every matching image.
+            or_tags: Tags where at least one must match.
+        """
+        self._extra_and_tags = set(and_tags)
+        self._extra_or_tags = set(or_tags)
+        self._update_active_filters_bar()
+
+    def _collect_active_filter_tag_names(self) -> List[str]:
+        """
+        Flatten current library + AND/OR filters for the summary bar.
+
+        Returns:
+            List[str]: Display labels in stable order.
+        """
+        result: List[str] = []
+        seen: Set[str] = set()
+
+        def add(label: str) -> None:
+            if label and label not in seen:
+                seen.add(label)
+                result.append(label)
+
+        for category in sorted(self._active_categories):
+            subtags = self._active_subtags.get(category, set())
+            if subtags:
+                for tag in sorted(subtags):
+                    add(tag)
+            else:
+                add(category)
+
+        for category, subtags in sorted(self._active_subtags.items()):
+            if category in self._active_categories:
+                continue
+            for tag in sorted(subtags):
+                add(tag)
+
+        for tag in sorted(self._extra_and_tags):
+            add(f"AND {tag}")
+        for tag in sorted(self._extra_or_tags):
+            add(f"OR {tag}")
+        return result
+
+    def _update_active_filters_bar(self) -> None:
+        """Refresh the bottom active-filters summary."""
+        if hasattr(self, "_active_filters_bar"):
+            self._active_filters_bar.set_active_tags(
+                self._collect_active_filter_tag_names()
+            )
 
     # ------------------------------------------------------------------
     # Public query helpers (for MainWindow compatibility)
@@ -1031,6 +1072,8 @@ class TagLibraryPanel(QWidget):
         """Clear all active filters and collapse all categories."""
         self._active_categories.clear()
         self._active_subtags.clear()
+        self._extra_and_tags.clear()
+        self._extra_or_tags.clear()
         self._apply_all_states()
         self._emit_filter()
 
@@ -1053,6 +1096,7 @@ class TagLibraryPanel(QWidget):
         if selection is not None:
             self._tag_library_selection = set(selection)
         self._apply_all_states()
+        self._update_active_filters_bar()
 
     def map_point_to_content(self, panel_pos: QPoint) -> QPoint:
         """

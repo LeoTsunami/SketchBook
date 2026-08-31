@@ -390,34 +390,16 @@ class ImportDialog(QDialog):
         user_tags: List[str],
         placements: Dict[str, Any],
     ) -> List[str]:
-        """
-        Build ordered subtag list for a category: default tags + user tags by placement.
-        User tags with placement "category" are appended; with "parent_tag" inserted after parent.
-        Same logic as main window tag library.
-        """
-        result = list(dict.fromkeys(default_subtags))
-        for ut in user_tags:
-            pl = placements.get(ut)
-            if pl is None:
-                if category == MISCELLANEOUS_SHELF:
-                    result.append(ut)
-                continue
-            if pl.get("category") == category:
-                if ut not in result:
-                    result.append(ut)
-        changed = True
-        while changed:
-            changed = False
-            for ut in user_tags:
-                pl = placements.get(ut)
-                if pl is None or "parent_tag" not in pl:
-                    continue
-                parent = pl["parent_tag"]
-                if parent in result and ut not in result:
-                    idx = result.index(parent) + 1
-                    result.insert(idx, ut)
-                    changed = True
-        return result
+        """Build ordered subtag list; default tags ignore user placement overrides."""
+        from gui.tag_shelves import build_subtags_for_category
+
+        return build_subtags_for_category(
+            category,
+            default_subtags,
+            user_tags,
+            placements,
+            self._get_default_tags(),
+        )
 
     def _get_children_of_tag(self, tag: str) -> List[str]:
         """Return list of tags whose placement has parent_tag = tag (sub-category children)."""

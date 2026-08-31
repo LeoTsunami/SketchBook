@@ -65,3 +65,17 @@ def test_rename_in_config():
     user_tags_config.rename_in_config(placements, icons, "Old", "New")
     assert "Old" not in placements and placements.get("New") == {"category": "Human"}
     assert "Old" not in icons and icons.get("New") == "Hand.png"
+
+
+def test_sanitize_for_default_tags_removes_builtin_overrides():
+    """Built-in tags cannot keep user placement or registered_only rows."""
+    cfg = {
+        "placements": {"Turnaround": {"category": "Miscellaneous:"}},
+        "icons": {"Turnaround": "turn.png"},
+        "registered_only": ["Turnaround", "MyTag"],
+    }
+    cfg, changed = user_tags_config.sanitize_for_default_tags(cfg, {"Turnaround"})
+    assert changed is True
+    assert "Turnaround" not in cfg["placements"]
+    assert cfg["registered_only"] == ["MyTag"]
+    assert cfg["icons"]["Turnaround"] == "turn.png"

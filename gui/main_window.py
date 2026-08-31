@@ -1382,6 +1382,9 @@ class MainWindow(QMainWindow):
 
         # Connect panel signals to MainWindow handlers
         self._tag_library_panel.filter_changed.connect(self._on_panel_filter_changed)
+        self._tag_library_panel.reset_filters_requested.connect(
+            self._clear_all_tag_filters
+        )
         self._tag_library_panel.tag_delete_requested.connect(self._delete_user_tags)
         self._tag_library_panel.tag_rename_requested.connect(self._on_panel_tag_rename)
         self._tag_library_panel.shelf_edit_requested.connect(self._on_panel_shelf_edit)
@@ -1595,7 +1598,22 @@ class MainWindow(QMainWindow):
         registered = set(
             getattr(self, "_user_tags_config", {}).get("registered_only", [])
         )
-        return from_db | registered
+        return (from_db | registered) - default_tags
+
+    def _reload_user_tags_config(self) -> None:
+        """Load user tag config and drop placements for built-in default tags."""
+        cfg = user_tags_config.load_config()
+        default_tags = self._get_default_tags()
+        cfg, changed = user_tags_config.sanitize_for_default_tags(cfg, default_tags)
+        if changed:
+            user_tags_config.save_config(
+                cfg.get("placements", {}),
+                cfg.get("icons", {}),
+                cfg.get("registered_only"),
+                cfg.get("custom_shelves"),
+                cfg.get("shelf_colors"),
+            )
+        self._user_tags_config = cfg
 
     def _get_all_tag_names(self) -> Set[str]:
         """All tag names in the system (default + user). Used to enforce unique names."""
@@ -2209,35 +2227,16 @@ class MainWindow(QMainWindow):
         user_tags: List[str],
         placements: Dict[str, Any],
     ) -> List[str]:
-        """
-        Build ordered subtag list for a category: default tags + user tags by placement.
-        User tags with placement "category" are appended; with "parent_tag" inserted after parent.
-        Multiple passes ensure nested parent_tag (child of a user tag) is inserted after its parent.
-        """
-        result = list(dict.fromkeys(default_subtags))
-        for ut in user_tags:
-            pl = placements.get(ut)
-            if pl is None:
-                if category == MISCELLANEOUS_SHELF:
-                    result.append(ut)
-                continue
-            if pl.get("category") == category:
-                if ut not in result:
-                    result.append(ut)
-        # Multiple passes so tags with parent_tag are inserted after their parent (parent may be user tag)
-        changed = True
-        while changed:
-            changed = False
-            for ut in user_tags:
-                pl = placements.get(ut)
-                if pl is None or "parent_tag" not in pl:
-                    continue
-                parent = pl["parent_tag"]
-                if parent in result and ut not in result:
-                    idx = result.index(parent) + 1
-                    result.insert(idx, ut)
-                    changed = True
-        return result
+        """Build ordered subtag list; default tags ignore user placement overrides."""
+        from gui.tag_shelves import build_subtags_for_category
+
+        return build_subtags_for_category(
+            category,
+            default_subtags,
+            user_tags,
+            placements,
+            self._get_default_tags(),
+        )
 
     def _load_tags_into_grid(
         self, skip_sync: bool = False, scroll_to: Optional[str] = None
@@ -2252,7 +2251,7 @@ class MainWindow(QMainWindow):
             scroll_to: Tag/shelf/category name to centre in the viewport after
                 the rebuild (used when creating a tag or shelf).
         """
-        self._user_tags_config = user_tags_config.load_config()
+        self._reload_user_tags_config()
         user_tags_set = self._get_user_tags()
 
         # Preserve filter state across reload
@@ -2795,6 +2794,11 @@ class MainWindow(QMainWindow):
         Args:
             tag: Tag that was added/removed (optional, for tag_dropped signal).
         """
+        panel = getattr(self, "_tag_library_panel", None)
+        if panel is not None:
+            panel.set_extra_filter_tags(
+                set(self.and_zone.get_tags()), set(self.or_zone.get_tags())
+            )
         self._sync_tag_grid_state()
         self._flush_tag_library_repaint()
         self._schedule_apply_category_filters()
@@ -3995,7 +3999,10 @@ class MainWindow(QMainWindow):
             return
         cfg = self._user_tags_config
         placements = dict(cfg.get("placements", {}))
+        default_tags = self._get_default_tags()
         for tag in self._tags_to_parent:
+            if tag in default_tags:
+                continue
             if self._parent_select_role == "category":
                 placements[tag] = {"category": self._parent_select_key}
             else:
@@ -4229,7 +4236,10 @@ class MainWindow(QMainWindow):
             return
         cfg = self._user_tags_config
         placements = dict(cfg.get("placements", {}))
+        default_tags = self._get_default_tags()
         for tag in tags_to_reparent:
+            if tag in default_tags:
+                continue
             placements[tag] = placement
         user_tags_config.save_config(
             placements,

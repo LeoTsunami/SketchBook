@@ -38,9 +38,8 @@
     "Full-Body",
     "Portrait",
     "Hands",
-    "Feet"
-  ],
-  "Miscellaneous:": [
+    "Feet",
     "Turnaround"
-  ]
+  ],
+  "Miscellaneous:": []
 }

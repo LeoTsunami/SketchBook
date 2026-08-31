@@ -4,6 +4,7 @@ from pathlib import Path
 
 from gui.tag_shelves import (
     MISCELLANEOUS_SHELF,
+    build_subtags_for_category,
     is_tag_shelf,
     load_default_tags_taxonomy,
     merge_custom_shelves,
@@ -70,3 +71,34 @@ def test_shelf_categories_with_filter() -> None:
     modes = {MISCELLANEOUS_SHELF: "and", "Camera-Angle:": "or", "Lighting:": "or"}
     assert shelf_categories_with_filter(modes, "and") == [MISCELLANEOUS_SHELF]
     assert "Camera-Angle:" in shelf_categories_with_filter(modes, "or")
+
+
+def test_turnaround_is_default_camera_angle_tag() -> None:
+    path = Path(__file__).resolve().parents[1] / "gui" / "ressources" / "default_tags.json"
+    categories, _ = load_default_tags_taxonomy(path)
+    camera_tags, _ = parse_category_tags(categories["Camera-Angle:"])
+    misc_tags, _ = parse_category_tags(categories[MISCELLANEOUS_SHELF])
+    assert "Turnaround" in camera_tags
+    assert "Turnaround" not in misc_tags
+
+
+def test_build_subtags_ignores_default_tag_user_placement() -> None:
+    default_tags = {"Turnaround", "Portrait"}
+    placements = {"Turnaround": {"category": "Miscellaneous:"}}
+    user_tags = ["Turnaround", "MyTag"]
+    camera = build_subtags_for_category(
+        "Camera-Angle:",
+        ["Portrait", "Turnaround"],
+        user_tags,
+        placements,
+        default_tags,
+    )
+    misc = build_subtags_for_category(
+        MISCELLANEOUS_SHELF,
+        [],
+        user_tags,
+        placements,
+        default_tags,
+    )
+    assert camera == ["Portrait", "Turnaround"]
+    assert "Turnaround" not in misc

@@ -3,7 +3,7 @@ User tags configuration: placements (category or parent tag) and optional icons.
 Stored in user data config dir as user_tags_config.json.
 """
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Set, Tuple
 
 from core.user_data import user_data
 
@@ -138,6 +138,33 @@ def set_placement(config_placements: Dict[str, Any], tag: str, category: Optiona
         config_placements[tag] = {"parent_tag": parent_tag}
     else:
         config_placements.pop(tag, None)
+
+
+def sanitize_for_default_tags(
+    config: Dict[str, Any], default_tags: Set[str]
+) -> Tuple[Dict[str, Any], bool]:
+    """
+    Remove user placements / registration rows that override built-in tags.
+
+    Args:
+        config: Loaded user tags config dict (mutated in place).
+        default_tags: Tag names owned by default_tags.json.
+
+    Returns:
+        Tuple of (config, changed).
+    """
+    changed = False
+    placements = config.get("placements", {})
+    for tag in list(placements.keys()):
+        if tag in default_tags:
+            del placements[tag]
+            changed = True
+    registered = config.get("registered_only", [])
+    filtered = [t for t in registered if t not in default_tags]
+    if filtered != registered:
+        config["registered_only"] = filtered
+        changed = True
+    return config, changed
 
 
 def rename_in_config(
