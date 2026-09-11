@@ -21,6 +21,9 @@ datas = [
     (str(ROOT / "VERSION"), "."),
     (str(ROOT / "gui" / "styles"), "gui/styles"),
 ]
+_feed = ROOT / "update_feed.json"
+if _feed.is_file():
+    datas.append((str(_feed), "."))
 
 # gui/ressources without heavy WIP/PSD assets
 _ressources = ROOT / "gui" / "ressources"

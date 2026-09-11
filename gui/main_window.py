@@ -510,6 +510,9 @@ class MainWindow(QMainWindow):
         self.thread_pool = QThreadPool()
         self._startup_sort_signals = StartupSortSignals()
         self._startup_sort_signals.finished.connect(self._on_startup_sort_finished)
+        from gui.update_coordinator import UpdateCoordinator
+
+        self._update_coordinator = UpdateCoordinator(self)
         self._startup_load_done = False
         self._startup_scheduled = False
 
@@ -724,6 +727,8 @@ class MainWindow(QMainWindow):
         self._startup_load_done = True
         self.statusBar().showMessage("Ready")
         self.image_manager.run_import_date_backfill()
+        if settings.get("updates.check_on_startup", True):
+            QTimer.singleShot(2500, lambda: self._update_coordinator.check(manual=False))
 
     def run_startup_load_for_tests(self) -> None:
         """
@@ -5836,6 +5841,12 @@ class MainWindow(QMainWindow):
         about_action = QAction("&About", self)
         about_action.triggered.connect(self._show_about)
         self._help_menu.addAction(about_action)
+
+        check_updates_action = QAction("Check for &updates…", self)
+        check_updates_action.triggered.connect(
+            lambda: self._update_coordinator.check(manual=True)
+        )
+        self._help_menu.addAction(check_updates_action)
 
     def _setup_statusbar(self):
         """Set up the status bar."""

@@ -18,6 +18,7 @@ from qtpy.QtWidgets import (
     QLineEdit,
     QFileDialog,
     QMessageBox,
+    QCheckBox,
 )
 from qtpy.QtCore import Qt
 from core.settings import settings
@@ -175,6 +176,16 @@ class SettingsDialog(QDialog):
         compression_group.setLayout(compression_layout)
         layout.addWidget(compression_group)
 
+        updates_group = QGroupBox("Updates")
+        updates_layout = QVBoxLayout()
+        self.check_updates_box = QCheckBox("Check GitHub Releases when the app starts")
+        self.check_updates_box.setChecked(
+            bool(settings.get("updates.check_on_startup", True))
+        )
+        updates_layout.addWidget(self.check_updates_box)
+        updates_group.setLayout(updates_layout)
+        layout.addWidget(updates_group)
+
         # Buttons
         button_layout = QHBoxLayout()
         button_layout.addStretch()
@@ -323,6 +334,7 @@ class SettingsDialog(QDialog):
         settings.set("images.max_width", self.get_max_width())
         settings.set("images.max_height", self.get_max_height())
         settings.set("images.compression.quality", self.get_compression_quality())
+        settings.set("updates.check_on_startup", self.check_updates_box.isChecked())
         settings.save()
 
         super().accept()

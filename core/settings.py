@@ -3,6 +3,7 @@ Settings manager for the SketchBook application.
 Handles loading, saving, and validating application settings.
 """
 
+import copy
 import json
 import os
 from pathlib import Path
@@ -80,6 +81,10 @@ class Settings:
                 "type": "sqlite",
                 "path": str(user_data.get_images_sqlite_path()),
             },
+            "updates": {
+                "check_on_startup": True,
+                "skipped_version": "",
+            },
         }
 
     def get(self, key: str, default: Any = None) -> Any:
@@ -133,12 +138,13 @@ class Settings:
 
     @property
     def all(self) -> Dict[str, Any]:
-        """Get all settings.
+        """
+        Get a deep copy of all settings.
 
         Returns:
-            Dict containing all settings
+            Dict containing all settings (nested values are independent).
         """
-        return self._settings.copy()
+        return copy.deepcopy(self._settings)
 
 
 # Create global settings instance

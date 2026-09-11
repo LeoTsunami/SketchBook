@@ -21,6 +21,7 @@ def test_settings_creation(temp_settings_file):
     assert settings.get("version") == "0.1.0"
     assert settings.get("ui.theme") == "dark"
     assert settings.get("database.type") == "sqlite"
+    assert settings.get("updates.check_on_startup") is True
 
 
 def test_settings_get_default(temp_settings_file):

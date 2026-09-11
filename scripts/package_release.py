@@ -15,7 +15,6 @@ from __future__ import annotations
 
 import argparse
 import os
-import re
 import shutil
 import subprocess
 import sys
@@ -25,6 +24,18 @@ from pathlib import Path
 from typing import Optional
 
 ROOT = Path(__file__).resolve().parents[1]
+if str(ROOT) not in sys.path:
+    sys.path.insert(0, str(ROOT))
+if str(ROOT / "scripts") not in sys.path:
+    sys.path.insert(0, str(ROOT / "scripts"))
+
+from core.semver import bump_version, parse_semver
+from windows_installer import (
+    compile_installer,
+    detect_github_repo,
+    write_update_feed,
+)
+
 VERSION_FILE = ROOT / "VERSION"
 CHANGELOG_EN = ROOT / "docs" / "CHANGELOG.md"
 CHANGELOG_FR = ROOT / "docs" / "CHANGELOG_FR.md"
@@ -32,6 +43,7 @@ DIST_DIR = ROOT / "dist"
 BUILD_DIR = ROOT / "build"
 SPEC_FILE = ROOT / "SketchBook.spec"
 APP_FOLDER_NAME = "SketchBook"
+FEED_FILE = ROOT / "update_feed.json"
 
 
 def run(
@@ -69,46 +81,6 @@ def read_version() -> str:
         str: Current semantic version.
     """
     return VERSION_FILE.read_text(encoding="utf-8").strip().splitlines()[0].strip()
-
-
-def parse_semver(version: str) -> tuple[int, int, int]:
-    """
-    Parse a X.Y.Z version string.
-
-    Args:
-        version: Version text.
-
-    Returns:
-        tuple[int, int, int]: Major, minor, patch.
-
-    Raises:
-        ValueError: If the format is invalid.
-    """
-    match = re.fullmatch(r"(\d+)\.(\d+)\.(\d+)", version.strip())
-    if not match:
-        raise ValueError(f"Invalid version (expected X.Y.Z): {version!r}")
-    return int(match.group(1)), int(match.group(2)), int(match.group(3))
-
-
-def bump_version(current: str, part: str) -> str:
-    """
-    Bump major, minor, or patch.
-
-    Args:
-        current: Current X.Y.Z version.
-        part: One of ``major``, ``minor``, ``patch``.
-
-    Returns:
-        str: New version string.
-    """
-    major, minor, patch = parse_semver(current)
-    if part == "major":
-        return f"{major + 1}.0.0"
-    if part == "minor":
-        return f"{major}.{minor + 1}.0"
-    if part == "patch":
-        return f"{major}.{minor}.{patch + 1}"
-    raise ValueError(f"Unknown bump part: {part}")
 
 
 def write_version(version: str) -> None:
@@ -263,7 +235,7 @@ def which(cmd: str) -> Optional[str]:
 
 def git_release_steps(
     version: str,
-    zip_path: Path,
+    assets: list[Path],
     notes: str,
     *,
     dry_run: bool,
@@ -275,7 +247,7 @@ def git_release_steps(
 
     Args:
         version: Release version.
-        zip_path: Built zip asset.
+        assets: Files to attach (Setup.exe, zip).
         notes: Release notes.
         dry_run: Print actions only.
         no_push: Do not push remotes.
@@ -286,17 +258,34 @@ def git_release_steps(
         VERSION_FILE,
         CHANGELOG_EN,
         CHANGELOG_FR,
+        FEED_FILE,
         ROOT / "bootstrap.py",
         ROOT / "SketchBook.spec",
         ROOT / "core" / "version.py",
-        ROOT / "core" / "__init__.py",
+        ROOT / "core" / "semver.py",
+        ROOT / "core" / "settings.py",
+        ROOT / "core" / "update_check.py",
         ROOT / "gui" / "main_window.py",
+        ROOT / "gui" / "settings_dialog.py",
+        ROOT / "gui" / "update_coordinator.py",
+        ROOT / "gui" / "update_dialog.py",
+        ROOT / "gui" / "update_worker.py",
+        ROOT / "installer" / "sketchbook.iss",
         ROOT / "scripts" / "package_release.py",
         ROOT / "scripts" / "package_release.ps1",
+        ROOT / "scripts" / "package_release.bat",
+        ROOT / "scripts" / "windows_installer.py",
         ROOT / "requirements-packaging.txt",
         ROOT / ".cursor" / "PACKAGING_AND_RELEASE_STRATEGY.md",
+        ROOT / ".cursor" / "TASKS.md",
+        ROOT / "docs" / "USER_DATA_DIRECTORY.md",
+        ROOT / "tests" / "test_semver.py",
+        ROOT / "tests" / "test_settings.py",
+        ROOT / "tests" / "test_update_check.py",
+        ROOT / "tests" / "test_windows_installer.py",
     ]
     existing = [str(p.relative_to(ROOT)) for p in files if p.exists()]
+    asset_names = " ".join(path.name for path in assets)
 
     if dry_run:
         print(f"[dry-run] git add {' '.join(existing)}")
@@ -305,19 +294,17 @@ def git_release_steps(
         if not no_push:
             print("[dry-run] git push && git push origin tag")
         if not skip_github:
-            print(f"[dry-run] gh release create {tag} {zip_path.name}")
+            print(f"[dry-run] gh release create {tag} {asset_names}")
         return
 
     if existing:
         run(["git", "add", *existing])
-        # Commit only if there is something staged
         status = run(["git", "status", "--porcelain"], capture=True)
         if status.stdout.strip():
             run(["git", "commit", "-m", f"Release {tag}"])
         else:
             print("Nothing to commit (version files already up to date).")
 
-    # Recreate tag if it exists locally
     run(["git", "tag", "-f", tag])
     if not no_push:
         run(["git", "push"])
@@ -325,21 +312,22 @@ def git_release_steps(
 
     if skip_github:
         print("Skipped GitHub Release (--skip-github).")
-        print(f"Local asset: {zip_path}")
+        for asset in assets:
+            print(f"Local asset: {asset}")
         return
 
     gh = which("gh")
     if not gh:
+        quoted = " ".join(f'"{a}"' for a in assets)
         print(
             "\nWARNING: `gh` CLI not found. Tag was pushed (if allowed) but "
             "no GitHub Release was created.\n"
             "Install GitHub CLI, then run:\n"
-            f'  gh release create {tag} "{zip_path}" --title "SketchBook {tag}" '
+            f'  gh release create {tag} {quoted} --title "SketchBook {tag}" '
             f'--notes "{notes}"\n'
         )
         return
 
-    # Replace release if it already exists
     check = subprocess.run(
         [gh, "release", "view", tag],
         cwd=ROOT,
@@ -349,20 +337,18 @@ def git_release_steps(
     )
     if check.returncode == 0:
         run([gh, "release", "delete", tag, "--yes"], check=False)
-        # tag still exists remotely; recreate release only
-    run(
-        [
-            gh,
-            "release",
-            "create",
-            tag,
-            str(zip_path),
-            "--title",
-            f"SketchBook {tag}",
-            "--notes",
-            notes,
-        ]
-    )
+    cmd = [
+        gh,
+        "release",
+        "create",
+        tag,
+        *[str(asset) for asset in assets],
+        "--title",
+        f"SketchBook {tag}",
+        "--notes",
+        notes,
+    ]
+    run(cmd)
 
 
 def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
@@ -397,6 +383,11 @@ def parse_args(argv: Optional[list[str]] = None) -> argparse.Namespace:
         "--skip-build",
         action="store_true",
         help="Skip PyInstaller (zip an existing dist/SketchBook if present).",
+    )
+    parser.add_argument(
+        "--skip-installer",
+        action="store_true",
+        help="Skip Inno Setup (zip only; no Setup.exe).",
     )
     parser.add_argument(
         "--skip-github",
@@ -451,12 +442,20 @@ def main(argv: Optional[list[str]] = None) -> int:
         print(f"[dry-run] notes={args.notes!r}")
         print(
             f"[dry-run] zip=dist/SketchBook-Windows-v{new_version}.zip "
-            f"skip_build={args.skip_build} skip_github={args.skip_github} "
-            f"no_push={args.no_push}"
+            f"setup=dist/SketchBook-Setup-v{new_version}.exe "
+            f"skip_build={args.skip_build} skip_installer={args.skip_installer} "
+            f"skip_github={args.skip_github} no_push={args.no_push}"
         )
         return 0
 
     write_version(new_version)
+
+    repo = detect_github_repo(run)
+    if repo:
+        write_update_feed(repo[0], repo[1], FEED_FILE)
+        print(f"Update feed: {repo[0]}/{repo[1]}")
+    else:
+        print("No GitHub origin remote; update_feed.json not written.")
 
     if not args.skip_changelog:
         prepend_changelog(CHANGELOG_EN, new_version, args.notes, "en")
@@ -478,9 +477,22 @@ def main(argv: Optional[list[str]] = None) -> int:
     size_mb = zip_path.stat().st_size / (1024 * 1024)
     print(f"Created {zip_path} ({size_mb:.1f} MiB)")
 
+    assets = [zip_path]
+    if args.skip_installer:
+        print("Skipped Inno Setup (--skip-installer).")
+    else:
+        try:
+            setup_path = compile_installer(new_version, DIST_DIR)
+        except (FileNotFoundError, RuntimeError) as exc:
+            print(str(exc))
+            return 1
+        setup_mb = setup_path.stat().st_size / (1024 * 1024)
+        print(f"Created {setup_path} ({setup_mb:.1f} MiB)")
+        assets.insert(0, setup_path)
+
     git_release_steps(
         new_version,
-        zip_path,
+        assets,
         args.notes,
         dry_run=False,
         no_push=args.no_push,

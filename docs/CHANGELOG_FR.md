@@ -1,5 +1,21 @@
 # Journal des modifications
 
+## 2026-09-11 (v0.1.2)
+### ✅ Tâches:
+- Windows installer (Setup.exe) with in-app GitHub updates. Image library catalog now uses SQLite with a one-shot migration from images.json.
+→ Résultat: build Windows packagé pour distribution.
+---
+
+## 2026-09-11 (Installateur Windows + mises à jour GitHub)
+### ✅ Tâches :
+- Ajouter un wizard Inno Setup (dossier app + dossier library) et publier le Setup.exe sur GitHub Releases via le packager existant.
+
+  - `installer/sketchbook.iss` ; le packager compile ISCC et envoie Setup.exe + zip.
+  - Check update in-app via `releases/latest` ; téléchargement du Setup en `/VERYSILENT`.
+  - SemVer dans `core/semver.py` ; `update_feed.json` depuis le remote git.
+→ Résultat : les testeurs installent / mettent à jour avec un Setup.exe ; leur dossier library n’est pas écrasé.
+---
+
 ## 2026-09-11 (Bibliothèque d'images SQLite)
 ### ✅ Tâches :
 - Remplacer `images.json` par un catalogue SQLite local (`config/library.db`) en conservant l'API publique de `ImageDatabase` et le filtrage en mémoire.

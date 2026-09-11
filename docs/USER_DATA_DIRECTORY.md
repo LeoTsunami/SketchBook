@@ -67,25 +67,21 @@ else:
     print("Erreur lors de la configuration")
 ```
 
-## Utilisation dans l'installer
+## Utilisation dans l'installer Windows
 
-L'installer peut utiliser la fonction `set_user_data_directory()` pour configurer le dossier lors de l'installation :
+Le wizard Inno Setup (`installer/sketchbook.iss`) demande **où installer l’application** (Program Files par défaut) et **où stocker la library d’images** (`Documents\SketchBook` par défaut).
 
-```python
-from core.user_data import set_user_data_directory, get_user_data_directory
+À la première installation seulement, il écrit `%USERPROFILE%\.sketchbook_config.json` :
 
-# Obtenir le dossier par défaut
-default_dir = get_user_data_directory()
-print(f"Dossier par défaut: {default_dir}")
-
-# Demander à l'utilisateur de choisir un dossier
-user_choice = input(f"Choisir un dossier (défaut: {default_dir}): ").strip()
-if user_choice:
-    if set_user_data_directory(user_choice):
-        print(f"Dossier configuré: {user_choice}")
-    else:
-        print("Erreur: impossible de configurer le dossier")
+```json
+{
+  "data_dir": "C:\\Users\\Username\\Documents\\SketchBook"
+}
 ```
+
+Une mise à jour (Setup relancé, y compris depuis l’app) **ne réécrit pas** ce fichier s’il existe déjà. La désinstallation ne supprime pas le dossier library.
+
+Le même chemin reste changeable plus tard dans Settings. API Python équivalente : `set_user_data_directory()` dans `core/user_data.py`.
 
 ## Migration des données existantes
 

@@ -8,6 +8,7 @@ Update this file via prompt:
 
 ## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
 
+- [x] Windows installer + GitHub updates: Inno Setup wizard (app dir + library dir), one-command packager uploads Setup.exe, in-app check of releases/latest (2026-09-11)
 - [x] Image library storage: migrate `images.json` to SQLite `library.db` behind the existing `ImageDatabase` API; one-shot JSON import; schema reserved for purchased/shared libraries (2026-09-11)
 - [x] Session view polish: fixed-scene cross dissolve, red urgency background tint, soft tick sound last 10s (2026-04-19)
 - [x] Workspace Python launch config: remove hard dependency on `.venv\Scripts\python.exe` to support multi-PC setups with different Python environments (2026-04-13)
