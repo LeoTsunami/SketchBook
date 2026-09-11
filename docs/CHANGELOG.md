@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-09-11 (SQLite image library)
+### ✅ Tasks:
+- Replace `images.json` with a local SQLite catalog (`config/library.db`) while keeping the `ImageDatabase` public API and in-memory filtering.
+
+  - Added `core/db/` (connection, schema v1, images repository, one-shot JSON migration).
+  - Writes flush only dirty rows; backups use the SQLite backup API.
+  - Schema reserves `vendors`, `entitlements`, `tag_taxonomy`, `tag_shelves` for later marketplace / sharing.
+  - Tests: `tests/test_db_migration.py`, `tests/test_images_repository.py`; fixtures isolate `library.db`.
+→ Result: existing libraries migrate once on launch; tagging no longer rewrites the whole catalog file.
+---
+
 ## 2026-07-31 (v0.1.1)
 ### ✅ Tasks:
 - First Windows package: automated packager (PyInstaller zip), version from VERSION file, About dialog reads app version.

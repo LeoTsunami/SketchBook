@@ -13,14 +13,17 @@ def image_manager(tmp_path, monkeypatch):
     ImageManager with isolated temp storage.
 
     Patches user data paths before the DB is created so lazy loading never
-    touches the real images.json library.
+    touches the real library.db / images.json files.
     """
     images_dir = tmp_path / "images"
     images_dir.mkdir(parents=True, exist_ok=True)
-    db_path = tmp_path / "db" / "images.json"
-    db_path.parent.mkdir(parents=True, exist_ok=True)
+    config_dir = tmp_path / "db"
+    config_dir.mkdir(parents=True, exist_ok=True)
+    json_path = config_dir / "images.json"
+    sqlite_path = config_dir / "library.db"
     monkeypatch.setattr(user_data, "get_images_dir", lambda: images_dir)
-    monkeypatch.setattr(user_data, "get_images_db_path", lambda: db_path)
+    monkeypatch.setattr(user_data, "get_images_db_path", lambda: json_path)
+    monkeypatch.setattr(user_data, "get_images_sqlite_path", lambda: sqlite_path)
     manager = ImageManager()
     manager.image_dir = images_dir
     return manager

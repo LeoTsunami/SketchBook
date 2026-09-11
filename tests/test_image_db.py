@@ -1,19 +1,18 @@
 """
 Tests for the image metadata database.
 """
-import json
-from datetime import datetime
-from pathlib import Path
+
 import pytest
 from core.image_db import ImageDatabase, ImageMetadata
-from core.user_data import user_data
+
 
 @pytest.fixture
 def image_db(tmp_path):
-    """Create a test image database."""
-    db = ImageDatabase()
-    db.db_path = tmp_path / "test_images.json"
-    return db
+    """Create an isolated SQLite image database."""
+    db = ImageDatabase(tmp_path / "library.db")
+    yield db
+    db.close()
+
 
 @pytest.fixture
 def sample_metadata():
@@ -25,52 +24,55 @@ def sample_metadata():
         width=1920,
         height=1080,
         file_size=1024,
-        format="JPEG"
+        format="JPEG",
     )
+
 
 def test_add_image(image_db, sample_metadata):
     """Test adding image metadata."""
     # Add image
     assert image_db.add_image(sample_metadata)
-    
+
     # Verify it was added
     saved = image_db.get_image(sample_metadata.id)
     assert saved is not None
     assert saved.path == sample_metadata.path
     assert saved.original_filename == sample_metadata.original_filename
-    
+
     # Try adding same image again
     assert not image_db.add_image(sample_metadata)
+
 
 def test_update_image(image_db, sample_metadata):
     """Test updating image metadata."""
     # Add image
     image_db.add_image(sample_metadata)
-    
+
     # Update tags
     assert image_db.update_image(
-        sample_metadata.id,
-        tags={"test", "update"}  # Use set instead of list
+        sample_metadata.id, tags={"test", "update"}  # Use set instead of list
     )
-    
+
     # Verify updates
     updated = image_db.get_image(sample_metadata.id)
     assert updated.tags == {"test", "update"}
-    
+
     # Try updating non-existent image
     assert not image_db.update_image("nonexistent", tags={"test"})
+
 
 def test_delete_image(image_db, sample_metadata):
     """Test deleting image metadata."""
     # Add and then delete image
     image_db.add_image(sample_metadata)
     assert image_db.delete_image(sample_metadata.id)
-    
+
     # Verify it was deleted
     assert image_db.get_image(sample_metadata.id) is None
-    
+
     # Try deleting non-existent image
     assert not image_db.delete_image("nonexistent")
+
 
 def test_list_images(image_db):
     """Test listing all images."""
@@ -84,15 +86,16 @@ def test_list_images(image_db):
             width=1920,
             height=1080,
             file_size=1024,
-            format="JPEG"
+            format="JPEG",
         )
         image_db.add_image(metadata)
         images.append(metadata)
-    
+
     # List all images
     listed = image_db.list_images()
     assert len(listed) == 3
     assert all(img.id in [m.id for m in listed] for img in images)
+
 
 def test_search_images(image_db):
     """Test searching images by tags."""
@@ -105,9 +108,9 @@ def test_search_images(image_db):
         height=1080,
         file_size=1024,
         format="JPEG",
-        tags={"nature", "landscape"}
+        tags={"nature", "landscape"},
     )
-    
+
     metadata2 = ImageMetadata(
         id="test_2",
         path="test_2.jpg",
@@ -116,44 +119,56 @@ def test_search_images(image_db):
         height=1080,
         file_size=1024,
         format="JPEG",
-        tags={"nature", "wildlife"}
+        tags={"nature", "wildlife"},
     )
-    
+
     image_db.add_image(metadata1)
     image_db.add_image(metadata2)
-    
+
     # Search by single tag
     nature_images = image_db.search_images(["nature"])
     assert len(nature_images) == 2
-    
+
     # Search by multiple tags
     landscape_images = image_db.search_images(["nature", "landscape"])
     assert len(landscape_images) == 1
     assert landscape_images[0].id == "test_1"
-    
+
     # Search with no matches
     no_matches = image_db.search_images(["portrait"])
     assert len(no_matches) == 0
 
-def test_persistence(image_db, sample_metadata, tmp_path):
-    """Test database persistence."""
-    # Add image
-    image_db.add_image(sample_metadata)
-    
-    # Create new instance with same path
-    new_db = ImageDatabase()
-    new_db._db_path = image_db._db_path  # Set the same path
-    
-    # Verify data was loaded
-    loaded = new_db.get_image(sample_metadata.id)
+
+def test_persistence(tmp_path, sample_metadata):
+    """Flushed rows survive a close and reopen of the same SQLite file."""
+    db_path = tmp_path / "library.db"
+    db = ImageDatabase(db_path)
+    sample_metadata.tags = {"nature"}
+    db.add_image(sample_metadata)
+    db.flush_pending_save()
+    db.close()
+
+    reopened = ImageDatabase(db_path)
+    loaded = reopened.get_image(sample_metadata.id)
     assert loaded is not None
     assert loaded.path == sample_metadata.path
-    
-    # Test invalid JSON handling
-    image_db._db_path.write_text("invalid json")
-    new_db = ImageDatabase()
-    new_db._db_path = image_db._db_path
-    assert len(new_db.list_images()) == 0
+    assert loaded.tags == {"nature"}
+    reopened.close()
+
+
+def test_corrupt_sqlite_starts_empty(tmp_path, sample_metadata):
+    """A non-SQLite file is replaced by an empty usable library."""
+    db_path = tmp_path / "library.db"
+    db_path.write_text("invalid json", encoding="utf-8")
+    db = ImageDatabase(db_path)
+    assert db.list_images() == []
+    assert db.add_image(sample_metadata)
+    db.flush_pending_save()
+    db.close()
+
+    reopened = ImageDatabase(db_path)
+    assert reopened.get_image(sample_metadata.id) is not None
+    reopened.close()
 
 
 def test_rename_tag(image_db):
@@ -213,15 +228,11 @@ def test_snapshot_metadata_values_matches_list(image_db, sample_metadata):
     assert {m.id for m in snap} == {m.id for m in listed}
 
 
-def test_snapshot_metadata_values_empty(tmp_path, monkeypatch):
+def test_snapshot_metadata_values_empty(tmp_path):
     """Empty database snapshot is an empty list (isolated DB path)."""
-    cfg = tmp_path / "config"
-    cfg.mkdir(parents=True)
-    db_file = cfg / "images.json"
-    db_file.write_text("{}")
-    monkeypatch.setattr(user_data, "get_images_db_path", lambda: db_file)
-    isolated = ImageDatabase()
+    isolated = ImageDatabase(tmp_path / "library.db")
     assert isolated.snapshot_metadata_values() == []
+    isolated.close()
 
 
 def test_add_tags_to_images_single_save(image_db):

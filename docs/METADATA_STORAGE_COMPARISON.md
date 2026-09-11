@@ -150,38 +150,30 @@ SketchBook doit permettre de :
 
 ## Recommandation
 
-### 🏆 Solution Recommandée : **Hybride (JSON + Export XMP)**
+### Décision actuelle : **SQLite local** (`config/library.db`)
 
-**Pourquoi ?**
+Le catalogue d'images a quitté `images.json`. `ImageDatabase` garde le même cache
+mémoire (filtres / tri inchangés) ; seules les lignes modifiées sont écrites.
+Le schéma inclut déjà `libraries`, `vendors`, `entitlements` et une source de
+tag (`user` / `vendor`) pour les packs achetés ou partagés. La taxonomie UI
+reste dans `user_tags_config.json`. Un `images.json` existant est importé une
+fois puis archivé.
 
-1. **Performance locale** : JSON permet des recherches et modifications rapides
-2. **Portabilité à l'export** : XMP permet de partager les images avec leurs tags
-3. **Sécurité** : Les originaux ne sont pas modifiés en local
-4. **Flexibilité** : L'utilisateur choisit quand exporter avec métadonnées
-5. **Rétrocompatibilité** : Peut importer des images avec XMP existant
-
-### Implémentation Proposée
-
-1. **Stockage principal** : JSON (comme actuellement) pour performance
-2. **Export** : Option "Exporter avec métadonnées" qui :
-   - Copie les images
-   - Ajoute les tags en XMP
-   - Crée un package prêt à partager
-3. **Import** : Détecte et lit les métadonnées XMP des images importées
-4. **Synchronisation optionnelle** : Option pour synchroniser XMP avec JSON (si l'utilisateur veut modifier les originaux)
+L'export XMP / pack ZIP reste le bon complément pour le **partage fichier par
+fichier** ; ce n'est pas encore implémenté.
 
 ### Alternatives selon les besoins
 
-- **Si priorité performance locale** : JSON pur (actuel)
-- **Si priorité portabilité** : XMP pur (mais plus lent)
-- **Si très grande bibliothèque** : SQLite (meilleure scalabilité)
+- **Partage d'une image isolée** : XMP / sidecar (plus tard)
+- **Pack de bibliothèque** : ZIP + `library.db` (ou export JSON de secours)
+- **Catalogue en ligne** : Postgres / Supabase ; SQLite reste le cache client
 
 ---
 
 ## Détails Techniques
 
-### JSON (Actuel)
-- Format : `images.json` dans `config/`
+### JSON (legacy)
+- Format : `images.json` dans `config/` (migré vers SQLite au premier lancement)
 - Structure : `{image_id: {metadata}}`
 - Bibliothèque : `json` standard Python
 
@@ -190,17 +182,16 @@ SketchBook doit permettre de :
 - Bibliothèque : `pyexiv2` ou `Pillow` avec `piexif`
 - Standard : ISO 16684-1
 
-### SQLite
-- Format : `images.db` dans `config/`
-- Bibliothèque : `sqlite3` (standard Python) ou `SQLAlchemy`
-- Schéma : Table `images` avec colonnes pour métadonnées
+### SQLite (actuel)
+- Format : `library.db` dans `config/`
+- Bibliothèque : `sqlite3` (stdlib), WAL
+- Schéma : `libraries`, `images`, `image_tags` (+ tables réservées marketplace)
+- Accès : `core/db/` (`connection`, `schema`, `images_repository`, `migrate_json`)
 
 ---
 
 ## Conclusion
 
-La solution hybride offre le meilleur compromis entre performance locale et portabilité pour le partage, répondant parfaitement aux besoins exprimés :
-- ✅ Bibliothèque personnelle performante (JSON)
-- ✅ Modification facile des tags (JSON)
-- ✅ Export avec tags pour partage (XMP)
-- ✅ Import de bibliothèques partagées (XMP)
+SQLite est le stockage local du catalogue. Il prépare le multi-bibliothèques et
+un store plus tard, sans changer le filtrage UI. Le partage portable (XMP / pack)
+reste une couche d'export à ajouter par-dessus.

@@ -20,9 +20,11 @@ SketchBook/
 ├── sessions/        # Fichiers de sessions
 └── config/          # Fichiers de configuration
     ├── settings.json
-    ├── images.json
+    ├── library.db           # Métadonnées images (SQLite)
+    ├── images.json          # Legacy ; migré une fois puis archivé
     ├── session_presets.json
-    └── session_history.json
+    ├── session_history.json
+    └── user_tags_config.json
 ```
 
 ## Configuration du dossier

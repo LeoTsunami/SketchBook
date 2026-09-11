@@ -5962,8 +5962,7 @@ class MainWindow(QMainWindow):
                             file.unlink()
 
                 # Clear metadata database
-                self.image_manager.db._images = {}
-                self.image_manager.db._save_db()
+                self.image_manager.db.purge_all()
 
                 QMessageBox.information(
                     self,

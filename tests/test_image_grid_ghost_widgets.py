@@ -86,8 +86,7 @@ def test_clear_without_pool_still_empties_thumbnail_dict(qtbot, image_manager):
     grid = ImageGrid(image_manager)
     qtbot.addWidget(grid)
     grid.resize(800, 600)
-    images = image_manager.db.list_images()
-    grid.load_images_from_list(images, ("no_pool",))
+    grid.load_images_from_list(_fake_metadata(3), ("no_pool",))
     QApplication.processEvents()
     assert grid.thumbnails
 

@@ -29,8 +29,8 @@ class ImageManager:
         ensure_dir(self.image_dir)
         self._db: Optional[ImageDatabase] = None
         self._db_preload_thread: Optional[threading.Thread] = None
-        # Reason: images.json is loaded on first `.db` access (or via `start_db_preload`)
-        # so the main window can paint before parsing a large library.
+        # Reason: the library database is opened on first `.db` access (or via
+        # `start_db_preload`) so the main window can paint before loading a large library.
 
     @property
     def db(self) -> ImageDatabase:
@@ -44,7 +44,7 @@ class ImageManager:
 
     def start_db_preload(self) -> None:
         """
-        Begin loading images.json on a background thread.
+        Begin loading the library database on a background thread.
 
         Overlaps DB I/O with main-window UI construction so the first `.db`
         access after show is often already complete.

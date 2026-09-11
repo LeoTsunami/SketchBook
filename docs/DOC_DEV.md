@@ -297,21 +297,29 @@ Image processing settings can be customized via the settings system:
 - `images.compression.quality`: JPEG compression quality (default: 75)
 
 ### Image Database
-The image database system is implemented in `core/image_db.py` and provides a JSON-based storage solution for image metadata.
+The image database is implemented in `core/image_db.py`. Persistence is SQLite
+(`config/library.db`, modules under `core/db/`). `ImageDatabase` still keeps the
+full catalog in memory for sorting and tag filtering; writes are flushed as
+small transactions on the rows that changed. A first launch with a legacy
+`images.json` imports it once and archives the file as `images.json.migrated-<timestamp>`.
 
 #### Data Model
 ```python
-class ImageMetadata(BaseModel):
+@dataclass
+class ImageMetadata:
     id: str                  # Unique identifier (filename without extension)
-    path: Path              # Path to image file relative to storage directory
+    path: str                # Path to image file relative to storage directory
     original_filename: str   # Original filename before import
-    import_date: datetime   # Import timestamp
-    width: int              # Image width in pixels
-    height: int             # Image height in pixels
-    file_size: int         # File size in bytes
-    format: str            # Image format (e.g., 'JPEG', 'PNG')
-    tags: List[str]        # User-defined tags
-    notes: str             # User notes about the image
+    import_date: str         # ISO import timestamp
+    width: int               # Image width in pixels
+    height: int              # Image height in pixels
+    file_size: int           # File size in bytes
+    format: str              # Image format (e.g., 'JPEG', 'PNG')
+    tags: Set[str]           # User-defined tags
+    kind: str                # "single" | "turnaround"
+    member_ids: List[str]    # Turnaround pose ids
+    group_id: str            # Turnaround root id (members only)
+    hidden: bool             # Hidden turnaround members
 ```
 
 #### Database Operations
@@ -359,28 +367,16 @@ The `ImageDatabase` class provides the following operations:
    - Returns all images if no tags specified
 
 #### Storage Format
-The database is stored in JSON format with the following structure:
-```json
-{
-  "image_id_1": {
-    "id": "image_id_1",
-    "path": "relative/path/to/image.jpg",
-    "original_filename": "original.jpg",
-    "import_date": "2024-03-26T12:34:56",
-    "width": 1920,
-    "height": 1080,
-    "file_size": 1024000,
-    "format": "JPEG",
-    "tags": ["landscape", "nature"],
-    "notes": "Mountain vista"
-  },
-  // ... more images ...
-}
-```
+SQLite file `config/library.db` (WAL). Active tables: `libraries`, `images`,
+`image_tags`. Reserved (empty) for later marketplace / sharing: `vendors`,
+`entitlements`, `tag_taxonomy`, `tag_shelves`. Tag taxonomy UI still uses
+`user_tags_config.json`. `export_library_to_json()` can write the legacy JSON
+shape for inspection or a future pack export.
 
 #### Configuration
-Database settings can be customized via the settings system:
-- `images.db_path`: Path to the JSON database file (default: user data directory + "/config/images.json")
+- `database.type`: `"sqlite"`
+- `database.path`: user data directory + `/config/library.db`
+- Legacy JSON path (migration only): `config/images.json`
 
 ## Image Grid Component
 
@@ -398,7 +394,7 @@ The `ImageGrid` class manages the display of image thumbnails in a responsive gr
 ### Application startup sequence
 
 - **`main.py`**: Builds `QApplication`, theme/QSS, then `MainWindow()` + `show()` + `exec()`. No longer schedules `run_import_date_backfill` here.
-- **`MainWindow`**: `ImageManager()` still loads `images.json` synchronously in its constructor (unavoidable without a larger DB refactor). UI shell (menus, chrome, empty `ImageGrid`, overlays) builds in `__init__`. **Tag grid content** and **image list** are **not** loaded in `_setup_ui`; first **`showEvent`** sets `_startup_scheduled` and **`QTimer.singleShot(0, _deferred_startup_load)`**.
+- **`MainWindow`**: `ImageManager()` opens `library.db` lazily (or via `start_db_preload`). UI shell (menus, chrome, empty `ImageGrid`, overlays) builds in `__init__`. **Tag grid content** and **image list** are **not** loaded in `_setup_ui`; first **`showEvent`** sets `_startup_scheduled` and **`QTimer.singleShot(0, _deferred_startup_load)`**.
 - **`_deferred_startup_load()`**: Status *Loading library…*, `_load_tags_into_grid()`, then either **`StartupSortRunnable`** on `QThreadPool.globalInstance()` (non-`course_random`) — snapshot via **`ImageDatabase.snapshot_metadata_values()`** + **`_sort_images`** off the GUI thread — or synchronous `_apply_category_filters()` for **`course_random`**. **`_finalize_startup_load()`** sets *Ready*, runs **`run_import_date_backfill`**, sets **`_startup_load_done`**. **`run_startup_load_for_tests()`** performs the same steps synchronously (pytest fixture).
 - **`gui/startup_sort_worker.py`**: `StartupSortSignals` lives on the main thread; `StartupSortRunnable.run()` emits `finished` with a sorted `list` or an `Exception` (fallback to unsorted path).
 

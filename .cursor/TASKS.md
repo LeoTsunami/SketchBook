@@ -8,6 +8,7 @@ Update this file via prompt:
 
 ## 📌 CURRENT TASKS (Sprint 4: Advanced Features)
 
+- [x] Image library storage: migrate `images.json` to SQLite `library.db` behind the existing `ImageDatabase` API; one-shot JSON import; schema reserved for purchased/shared libraries (2026-09-11)
 - [x] Session view polish: fixed-scene cross dissolve, red urgency background tint, soft tick sound last 10s (2026-04-19)
 - [x] Workspace Python launch config: remove hard dependency on `.venv\Scripts\python.exe` to support multi-PC setups with different Python environments (2026-04-13)
 - [x] UI polish: image-grid left margin +15px; Tag filters trigger and Tag library +10px width (+25px height); lighter blue Tag filters color; theme-matched bottom fade; glassy Start session button with stronger blue shadow and animated border glow (2026-04-13)

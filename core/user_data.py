@@ -148,8 +148,12 @@ class UserDataManager:
         return self.get_config_dir() / "settings.json"
 
     def get_images_db_path(self) -> Path:
-        """Get the images database file path."""
+        """Get the legacy JSON images database path (kept for one-shot migration)."""
         return self.get_config_dir() / "images.json"
+
+    def get_images_sqlite_path(self) -> Path:
+        """Get the SQLite image library path (current metadata storage)."""
+        return self.get_config_dir() / "library.db"
 
     def get_session_presets_path(self) -> Path:
         """Get the session presets file path."""

@@ -1,5 +1,16 @@
 # Journal des modifications
 
+## 2026-09-11 (Bibliothèque d'images SQLite)
+### ✅ Tâches :
+- Remplacer `images.json` par un catalogue SQLite local (`config/library.db`) en conservant l'API publique de `ImageDatabase` et le filtrage en mémoire.
+
+  - Ajout de `core/db/` (connexion, schéma v1, repository, migration JSON one-shot).
+  - Les écritures ne touchent que les lignes modifiées ; les backups passent par l'API backup SQLite.
+  - Le schéma réserve `vendors`, `entitlements`, `tag_taxonomy`, `tag_shelves` pour un store / partage plus tard.
+  - Tests : `tests/test_db_migration.py`, `tests/test_images_repository.py` ; fixtures isolées sur `library.db`.
+→ Résultat : une bibliothèque JSON existante est importée une fois au lancement ; taguer une image ne réécrit plus tout le catalogue.
+---
+
 ## 2026-07-31 (v0.1.1)
 ### ✅ Tâches:
 - First Windows package: automated packager (PyInstaller zip), version from VERSION file, About dialog reads app version.
