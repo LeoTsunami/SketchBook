@@ -14,9 +14,27 @@ from core.user_data import user_data
 
 from core.config_backup import run_config_backup
 
-# Force stdout to be unbuffered for immediate print output
-sys.stdout.reconfigure(line_buffering=True)
-sys.stderr.reconfigure(line_buffering=True)
+
+def _configure_stdio() -> None:
+    """
+    Enable line-buffered logs when a real console is attached.
+
+    Frozen GUI builds have no console; skip ``reconfigure`` if the stream is
+    missing or does not support it.
+    """
+    for stream in (sys.stdout, sys.stderr):
+        if stream is None:
+            continue
+        reconfigure = getattr(stream, "reconfigure", None)
+        if not callable(reconfigure):
+            continue
+        try:
+            reconfigure(line_buffering=True)
+        except (OSError, ValueError, AttributeError):
+            pass
+
+
+_configure_stdio()
 
 # Themes whose QSS sets font-family to Kalam (see gui/styles/style_*.qss).
 _KALAM_THEMES = frozenset({"neon_night", "sunset_glass", "midnight_ocean", "light"})

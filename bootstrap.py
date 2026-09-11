@@ -28,6 +28,20 @@ def resolve_app_root() -> Path:
     return Path(__file__).resolve().parent
 
 
+def ensure_stdio() -> None:
+    """
+    Attach dummy stdout/stderr when the process has no console.
+
+    PyInstaller windowed builds (``console=False``) set ``sys.stdout`` and
+    ``sys.stderr`` to ``None``. Importing ``main`` would then crash on
+    ``reconfigure`` / ``print``.
+    """
+    if sys.stdout is None:
+        sys.stdout = open(os.devnull, "w", encoding="utf-8")
+    if sys.stderr is None:
+        sys.stderr = open(os.devnull, "w", encoding="utf-8")
+
+
 def prepare_environment() -> Path:
     """
     Chdir and prepend sys.path for imports and relative resource paths.
@@ -45,6 +59,7 @@ def prepare_environment() -> Path:
 
 def main() -> None:
     """Prepare environment then launch the Qt application."""
+    ensure_stdio()
     prepare_environment()
     from main import main as app_main
 

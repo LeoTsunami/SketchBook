@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-11 (v0.1.3)
+### ✅ Tasks:
+- Fix startup crash on the installed Windows build: GUI processes have no console, so stdout/stderr are None.
+→ Result: Windows build packaged for distribution.
+---
+
 ## 2026-09-11 (v0.1.2)
 ### ✅ Tasks:
 - Windows installer (Setup.exe) with in-app GitHub updates. Image library catalog now uses SQLite with a one-shot migration from images.json.
