@@ -47,6 +47,7 @@ class UpdateCoordinator:
         self._signals.available.connect(self._on_available)
         self._signals.up_to_date.connect(self._on_up_to_date)
         self._signals.failed.connect(self._on_failed)
+        self._signals.debug.connect(self._on_debug)
         self._signals.download_progress.connect(self._on_progress)
         self._signals.download_finished.connect(self._on_downloaded)
         self._download_dialog: UpdateDownloadDialog | None = None
@@ -61,12 +62,29 @@ class UpdateCoordinator:
         """
         self._notify_errors = manual
         skipped = str(settings.get("updates.skipped_version", "") or "")
+        self._on_debug(
+            f"Requested {'manual' if manual else 'startup'} check "
+            f"(skipped_version={skipped!r})"
+        )
         worker = UpdateCheckRunnable(
             self._signals,
             skipped_version=skipped,
             notify_when_current=manual,
         )
         QThreadPool.globalInstance().start(worker)
+
+    def _on_debug(self, message: str) -> None:
+        """
+        Append an update diagnostic line to the developer log.
+
+        Args:
+            message: Diagnostic text from the worker or coordinator.
+        """
+        log = getattr(self._window, "add_log_message", None)
+        if not callable(log):
+            return
+        level = "ERROR" if "fail" in message.lower() else "INFO"
+        log(f"[update] {message}", level)
 
     def _on_available(self, release: object) -> None:
         """Prompt the user when a newer release exists."""

@@ -1,5 +1,11 @@
 # Journal des modifications
 
+## 2026-09-13 (v0.1.41)
+### ✅ Tâches:
+- Fix packaged GitHub update check (certifi SSL), Windows taskbar icon (AppUserModelID + dark ICO), and developer-mode update logs.
+→ Résultat: build Windows packagé pour distribution.
+---
+
 ## 2026-09-13 (v0.1.4)
 ### ✅ Tâches:
 - App icon from the SketchBook logo. Tag filters debounce image-grid refresh by 0.5s so rapid tag clicks update the gallery once.

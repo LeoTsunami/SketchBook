@@ -2,6 +2,7 @@
 Icon utility functions for SketchBook GUI.
 Centralized icon handling to avoid code duplication.
 """
+import sys
 from pathlib import Path
 from typing import Optional, Dict
 
@@ -9,9 +10,32 @@ from qtpy.QtCore import QSize, Qt
 from qtpy.QtGui import QIcon, QPixmap, QImage, QColor, QPainter
 from qtpy.QtWidgets import QComboBox, QStyle, QStyleOptionComboBox, QStylePainter
 
-_ICONS_DIR = Path(__file__).parent / "ressources" / "icones"
 APP_LOGO_PNG = "SketchBook_logo_B.png"
 APP_ICON_ICO = "SketchBook.ico"
+
+
+def _icons_dir() -> Path:
+    """
+    Resolve ``gui/ressources/icones`` in source and frozen builds.
+
+    Returns:
+        Path: Directory that contains the brand logo and ``.ico``.
+    """
+    here = Path(__file__).resolve().parent / "ressources" / "icones"
+    if here.is_dir():
+        return here
+    if getattr(sys, "frozen", False):
+        meipass = getattr(sys, "_MEIPASS", None)
+        candidates = []
+        if meipass:
+            candidates.append(Path(meipass) / "gui" / "ressources" / "icones")
+        exe_dir = Path(sys.executable).resolve().parent
+        candidates.append(exe_dir / "_internal" / "gui" / "ressources" / "icones")
+        candidates.append(exe_dir / "gui" / "ressources" / "icones")
+        for candidate in candidates:
+            if candidate.is_dir():
+                return candidate
+    return here
 
 
 def app_logo_path() -> Path:
@@ -21,7 +45,7 @@ def app_logo_path() -> Path:
     Returns:
         Path: ``gui/ressources/icones/SketchBook_logo_B.png``.
     """
-    return _ICONS_DIR / APP_LOGO_PNG
+    return _icons_dir() / APP_LOGO_PNG
 
 
 def app_icon_ico_path() -> Path:
@@ -31,27 +55,25 @@ def app_icon_ico_path() -> Path:
     Returns:
         Path: ``gui/ressources/icones/SketchBook.ico``.
     """
-    return _ICONS_DIR / APP_ICON_ICO
+    return _icons_dir() / APP_ICON_ICO
 
 
 def load_app_icon() -> QIcon:
     """
-    Load the window / taskbar / shortcut icon.
+    Load the window / taskbar icon from the dark-plate ``.ico``.
 
-    Prefers the multi-size ``.ico`` when present, and always includes the PNG
-    so Qt can pick a high-resolution pixmap.
+    The raw logo PNG is white-on-transparent and looks blank on the
+    Windows taskbar, so it is not added to this icon.
 
     Returns:
-        QIcon: Application icon, or empty if both files are missing.
+        QIcon: Application icon, or empty if the ``.ico`` is missing.
     """
-    icon = QIcon()
     ico = app_icon_ico_path()
     if ico.is_file():
-        icon.addFile(str(ico))
-    png = app_logo_path()
-    if png.is_file():
-        icon.addFile(str(png))
-    return icon
+        icon = QIcon(str(ico))
+        if not icon.isNull():
+            return icon
+    return QIcon()
 
 
 def find_tag_icon(tag: str, user_config: Optional[Dict] = None, icon_preview_override: Optional[Dict[str, Optional[str]]] = None) -> QIcon:
@@ -173,7 +195,7 @@ def load_white_icon(filename: str, size: int = 18) -> QIcon:
     Returns:
         White-tinted icon, or an empty icon if the file is missing.
     """
-    icon_path = _ICONS_DIR / filename
+    icon_path = _icons_dir() / filename
     if not icon_path.exists():
         return QIcon()
     return invert_icon(QIcon(str(icon_path)), size)

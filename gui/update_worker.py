@@ -6,14 +6,17 @@ Qt widgets must not be touched from ``run()``.
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 from qtpy.QtCore import QObject, QRunnable, Signal, Slot
 
 from core.update_check import (
     ReleaseInfo,
+    describe_ssl_context,
+    describe_update_feed_search,
     download_file,
-    fetch_latest_release,
+    fetch_latest_release_with_reason,
     is_update_available,
     load_update_feed,
 )
@@ -28,6 +31,7 @@ class UpdateCheckSignals(QObject):
     download_finished = Signal(str)
     failed = Signal(str)
     up_to_date = Signal()
+    debug = Signal(str)
 
 
 class UpdateCheckRunnable(QRunnable):
@@ -54,23 +58,51 @@ class UpdateCheckRunnable(QRunnable):
         self._notify_when_current = notify_when_current
         self.setAutoDelete(True)
 
+    def _log(self, message: str) -> None:
+        """
+        Emit a developer-log line (queued to the main thread).
+
+        Args:
+            message: Diagnostic text.
+        """
+        self._signals.debug.emit(message)
+
     @Slot()
     def run(self) -> None:
         """Query GitHub; never raise into the thread pool."""
+        current = get_version()
+        frozen = bool(getattr(sys, "frozen", False))
+        self._log(
+            f"Check start current={current} frozen={frozen} "
+            f"skipped={self._skipped!r} manual={self._notify_when_current}"
+        )
+        self._log(f"SSL {describe_ssl_context()}")
         feed = load_update_feed()
         if not feed:
+            detail = f"Update feed is not configured. Tried: {describe_update_feed_search()}"
+            self._log(detail)
             if self._notify_when_current:
-                self._signals.failed.emit("Update feed is not configured.")
+                self._signals.failed.emit(detail)
             return
-        release = fetch_latest_release(feed["owner"], feed["repo"])
+        owner, repo = feed["owner"], feed["repo"]
+        url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
+        self._log(f"Feed {owner}/{repo} GET {url}")
+        release, reason = fetch_latest_release_with_reason(owner, repo)
         if release is None:
+            detail = reason or "Could not reach GitHub Releases."
+            self._log(f"Fetch failed: {detail}")
             if self._notify_when_current:
-                self._signals.failed.emit("Could not reach GitHub Releases.")
+                self._signals.failed.emit(f"Could not reach GitHub Releases. {detail}")
             return
-        current = get_version()
+        self._log(
+            f"Latest tag={release.tag} version={release.version} "
+            f"setup={release.setup_name}"
+        )
         if is_update_available(release.version, current, self._skipped):
+            self._log(f"Update available: {release.version} > {current}")
             self._signals.available.emit(release)
             return
+        self._log(f"No update to install (current={current}, latest={release.version})")
         if self._notify_when_current:
             self._signals.up_to_date.emit()
 
@@ -106,8 +138,14 @@ class UpdateDownloadRunnable(QRunnable):
             def _progress(done: int, total: int) -> None:
                 self._signals.download_progress.emit(done, total)
 
+            self._signals.debug.emit(
+                f"Download {self._release.setup_name} from {self._release.setup_url} "
+                f"to {self._dest}"
+            )
             download_file(self._release.setup_url, self._dest, progress=_progress)
         except OSError as exc:
+            self._signals.debug.emit(f"Download failed: {exc}")
             self._signals.failed.emit(str(exc))
             return
+        self._signals.debug.emit(f"Download finished: {self._dest}")
         self._signals.download_finished.emit(str(self._dest))

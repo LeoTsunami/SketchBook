@@ -45,7 +45,14 @@ hiddenimports = [
     "qtpy.QtWidgets",
     "PySide6",
     "PIL",
+    "certifi",
 ]
+try:
+    import certifi
+
+    datas.append((certifi.where(), "certifi"))
+except ImportError:
+    pass
 tmp_ret = collect_all("PySide6")
 datas += tmp_ret[0]
 binaries += tmp_ret[1]

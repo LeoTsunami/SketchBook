@@ -8,9 +8,12 @@ paths (QSS, ressources) resolve correctly.
 
 from __future__ import annotations
 
+import ctypes
 import os
 import sys
 from pathlib import Path
+
+WINDOWS_APP_USER_MODEL_ID = "LeoTsunami.SketchBook"
 
 
 def resolve_app_root() -> Path:
@@ -42,6 +45,23 @@ def ensure_stdio() -> None:
         sys.stderr = open(os.devnull, "w", encoding="utf-8")
 
 
+def set_windows_app_user_model_id() -> None:
+    """
+    Pin the process to a stable Windows AppUserModelID.
+
+    Without this, the taskbar often shows a generic/Python icon and keeps
+    a stale cache after an in-place Setup upgrade.
+    """
+    if sys.platform != "win32":
+        return
+    try:
+        ctypes.windll.shell32.SetCurrentProcessExplicitAppUserModelID(
+            WINDOWS_APP_USER_MODEL_ID
+        )
+    except (AttributeError, OSError):
+        pass
+
+
 def prepare_environment() -> Path:
     """
     Chdir and prepend sys.path for imports and relative resource paths.
@@ -60,6 +80,7 @@ def prepare_environment() -> Path:
 def main() -> None:
     """Prepare environment then launch the Qt application."""
     ensure_stdio()
+    set_windows_app_user_model_id()
     prepare_environment()
     from main import main as app_main
 

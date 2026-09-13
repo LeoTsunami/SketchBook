@@ -280,6 +280,7 @@ def git_release_steps(
         ROOT / "scripts" / "package_release.ps1",
         ROOT / "scripts" / "package_release.bat",
         ROOT / "scripts" / "windows_installer.py",
+        ROOT / "requirements.txt",
         ROOT / "requirements-packaging.txt",
         ROOT / ".cursor" / "PACKAGING_AND_RELEASE_STRATEGY.md",
         ROOT / ".cursor" / "TASKS.md",
