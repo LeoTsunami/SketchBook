@@ -90,6 +90,7 @@ from gui.tag_widgets import DraggableTagChip
 from gui.add_tag_dialog import AddTagDialog, IconPickerDialog
 from gui.add_shelf_dialog import AddShelfDialog
 from gui.tag_apply_worker import TagApplyWorker, TagLibraryDeleteWorker
+from gui.tag_filter_debounce import TagFilterApplyDebouncer
 from gui.tag_panel_overlay import TagPanelOverlay
 from gui.tag_shelves import (
     MISCELLANEOUS_SHELF,
@@ -105,7 +106,13 @@ from core.session_manager import SessionManager
 from gui.grid_display_flyout import GridDisplayFlyout
 from gui.trace_icon_button import ORANGE_TRACE, TraceIconButton
 from gui.sort_flyout import SortFlyout
-from gui.icon_utils import find_tag_icon, invert_icon, load_white_icon
+from gui.icon_utils import (
+    app_logo_path,
+    find_tag_icon,
+    invert_icon,
+    load_app_icon,
+    load_white_icon,
+)
 from gui.tag_library.theme import tag_library_floating_button_stylesheet
 from gui.tag_library import (
     TagLibraryPanel,
@@ -498,6 +505,8 @@ class MainWindow(QMainWindow):
     # Small tag drops run synchronously; larger ones use a worker + optional progress bar.
     TAG_APPLY_SYNC_THRESHOLD = 20
     TAG_APPLY_PROGRESS_THRESHOLD = 20
+    # Restartable delay before the image grid follows tag activations.
+    TAG_FILTER_APPLY_DELAY_MS = 500
 
     def __init__(self):
         """Initialize the main window."""
@@ -579,6 +588,11 @@ class MainWindow(QMainWindow):
         self._tag_grid_hover_expand_timer: Optional[QTimer] = (
             None  # expand category/tag after 0.8s hover during drag
         )
+        self._tag_filter_debouncer = TagFilterApplyDebouncer(
+            self._on_tag_filter_apply_timeout,
+            delay_ms=self.TAG_FILTER_APPLY_DELAY_MS,
+            parent=self,
+        )
         self._tag_grid_hover_target: Optional[Tuple[str, str]] = (
             None  # (role, key) under cursor
         )
@@ -589,6 +603,9 @@ class MainWindow(QMainWindow):
 
         # Window setup
         self.setWindowTitle("SketchBook")
+        app_icon = load_app_icon()
+        if not app_icon.isNull():
+            self.setWindowIcon(app_icon)
         self.resize(1280, 800)
         self.setWindowFlags(self.windowFlags() | Qt.FramelessWindowHint)
         self._is_window_dragging = False
@@ -636,12 +653,7 @@ class MainWindow(QMainWindow):
         if not cw:
             return
         self._logo_float_height_px = 84
-        logo_path = (
-            Path(__file__).resolve().parent
-            / "ressources"
-            / "icones"
-            / "SketchBook_logo_B.png"
-        )
+        logo_path = app_logo_path()
         self._logo_label = QLabel(cw)
         self._logo_label.setAttribute(Qt.WA_TranslucentBackground)
         self._logo_label.setAttribute(Qt.WA_TransparentForMouseEvents, True)
@@ -1650,6 +1662,7 @@ class MainWindow(QMainWindow):
         sync_tags_after: bool = True,
     ) -> None:
         """Apply category/subtag filters to the image grid."""
+        self._cancel_pending_tag_filter_apply()
         # Get current sort order
         sort_by = self._get_current_sort_order()
 
@@ -1709,20 +1722,35 @@ class MainWindow(QMainWindow):
         if overlay is not None and overlay.isVisible():
             overlay.repaint()
 
+    def _cancel_pending_tag_filter_apply(self) -> None:
+        """Stop a pending tag-filter debounce without applying it."""
+        self._tag_filter_debouncer.cancel()
+
     def _schedule_apply_category_filters(
         self, _pre_sorted_images: Optional[List[ImageMetadata]] = None
     ) -> None:
         """
-        Defer image-grid filtering to the next event-loop tick.
+        Debounce image-grid filtering while tags are still being toggled.
 
-        Call after ``_sync_tag_grid_state()`` so tag chips repaint first.
+        Tag chips update immediately. The grid refreshes only after
+        ``TAG_FILTER_APPLY_DELAY_MS`` with no further activations.
+
+        Args:
+            _pre_sorted_images: Optional pre-sorted list forwarded to apply.
         """
-        QTimer.singleShot(
-            0,
-            lambda pre=_pre_sorted_images: self._apply_category_filters(
-                pre, sync_tags_after=False
-            ),
-        )
+        self._tag_filter_debouncer.delay_ms = self.TAG_FILTER_APPLY_DELAY_MS
+        self._tag_filter_debouncer.schedule(_pre_sorted_images)
+
+    def _on_tag_filter_apply_timeout(
+        self, _pre_sorted_images: Optional[List[ImageMetadata]] = None
+    ) -> None:
+        """
+        Apply the latest pending tag filter to the image grid.
+
+        Args:
+            _pre_sorted_images: Optional pre-sorted list forwarded to apply.
+        """
+        self._apply_category_filters(_pre_sorted_images, sync_tags_after=False)
 
     def _filter_images_by_category_from_list(
         self, images: List[ImageMetadata]

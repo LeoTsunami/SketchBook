@@ -1,5 +1,11 @@
 # Changelog
 
+## 2026-09-13 (v0.1.4)
+### ✅ Tasks:
+- App icon from the SketchBook logo. Tag filters debounce image-grid refresh by 0.5s so rapid tag clicks update the gallery once.
+→ Result: Windows build packaged for distribution.
+---
+
 ## 2026-09-11 (v0.1.3)
 ### ✅ Tasks:
 - Fix startup crash on the installed Windows build: GUI processes have no console, so stdout/stderr are None.

@@ -10,6 +10,48 @@ from qtpy.QtGui import QIcon, QPixmap, QImage, QColor, QPainter
 from qtpy.QtWidgets import QComboBox, QStyle, QStyleOptionComboBox, QStylePainter
 
 _ICONS_DIR = Path(__file__).parent / "ressources" / "icones"
+APP_LOGO_PNG = "SketchBook_logo_B.png"
+APP_ICON_ICO = "SketchBook.ico"
+
+
+def app_logo_path() -> Path:
+    """
+    Return the branded SketchBook logo used in the chrome and as app icon.
+
+    Returns:
+        Path: ``gui/ressources/icones/SketchBook_logo_B.png``.
+    """
+    return _ICONS_DIR / APP_LOGO_PNG
+
+
+def app_icon_ico_path() -> Path:
+    """
+    Return the Windows ``.ico`` generated from the brand logo.
+
+    Returns:
+        Path: ``gui/ressources/icones/SketchBook.ico``.
+    """
+    return _ICONS_DIR / APP_ICON_ICO
+
+
+def load_app_icon() -> QIcon:
+    """
+    Load the window / taskbar / shortcut icon.
+
+    Prefers the multi-size ``.ico`` when present, and always includes the PNG
+    so Qt can pick a high-resolution pixmap.
+
+    Returns:
+        QIcon: Application icon, or empty if both files are missing.
+    """
+    icon = QIcon()
+    ico = app_icon_ico_path()
+    if ico.is_file():
+        icon.addFile(str(ico))
+    png = app_logo_path()
+    if png.is_file():
+        icon.addFile(str(png))
+    return icon
 
 
 def find_tag_icon(tag: str, user_config: Optional[Dict] = None, icon_preview_override: Optional[Dict[str, Optional[str]]] = None) -> QIcon:

@@ -83,7 +83,11 @@ def load_theme_fonts(theme: str) -> None:
 def main():
     """Main entry point of the application."""
     app = QApplication(sys.argv)
+    from gui.icon_utils import load_app_icon
 
+    app_icon = load_app_icon()
+    if not app_icon.isNull():
+        app.setWindowIcon(app_icon)
 
     theme = settings.get("ui.theme", "dark")
     if theme not in ("dark", "light", "neon_night", "sunset_glass", "midnight_ocean"):
